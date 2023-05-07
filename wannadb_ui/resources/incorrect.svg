@@ -1,0 +1,10 @@
+<svg width="378" height="378" xmlns="http://www.w3.org/2000/svg" overflow="hidden">
+    <defs>
+        <clipPath id="clip0">
+            <rect x="294" y="138" width="378" height="378"/>
+        </clipPath>
+    </defs>
+    <g clip-path="url(#clip0)" transform="translate(-294 -138)">
+        <path d="M622.388 221.081 588.919 187.613 483 293.531 377.081 187.613 343.612 221.081 449.531 327 343.612 432.919 377.081 466.388 483 360.469 588.919 466.388 622.388 432.919 516.469 327Z"/>
+    </g>
+</svg>

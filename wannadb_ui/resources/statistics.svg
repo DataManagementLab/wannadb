@@ -1,0 +1,14 @@
+<svg width="96" height="96" xmlns="http://www.w3.org/2000/svg" overflow="hidden">
+    <defs>
+        <clipPath id="clip0">
+            <rect x="498" y="184" width="96" height="96"/>
+        </clipPath>
+    </defs>
+    <g clip-path="url(#clip0)" transform="translate(-498 -184)">
+        <path d="M518 198 512 198 512 266 580 266 580 260 518 260Z"/>
+        <path d="M524 219 535 219 535 254 524 254Z"/>
+        <path d="M539 198 550 198 550 254 539 254Z"/>
+        <path d="M554 219 565 219 565 254 554 254Z"/>
+        <path d="M569 236 580 236 580 254 569 254Z"/>
+    </g>
+</svg>
