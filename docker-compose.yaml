@@ -1,0 +1,9 @@
+version: '3.6'
+services:
+    wannadb:
+        build:
+            context: .
+            dockerfile: Dockerfile
+        restart: always
+        ports:
+            - 8080:8080
