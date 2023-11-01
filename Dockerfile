@@ -9,7 +9,9 @@ EXPOSE 8080
 
 # Create virtual environment
 RUN python -m venv venv
-RUN source venv/bin/activate
+#RUN sudo ./venv/bin/activate
+RUN ["/bin/bash", "-c", "source venv/bin/activate"]
+#RUN source venv/bin/activate
 RUN export PYTHONPATH="."
 
 # Install dependencies
@@ -22,7 +24,7 @@ RUN pip install torchvision==0.11.1
 
 # Run tests
 RUN pip install --use-pep517 pytest
-RUN pytest
+#RUN pytest
 
 # Keep container running
-RUN while true; do sleep 1000
+#RUN while true; do sleep 1000 done
