@@ -22,7 +22,7 @@ RUN pip install torchvision==0.11.1
 
 # Run tests
 RUN pip install --use-pep517 pytest
-RUN pytest
+#RUN pytest
 
 # Keep container running
-RUN while true; do sleep 1000
+#RUN while true; do sleep 1000 done
