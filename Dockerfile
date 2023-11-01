@@ -3,28 +3,30 @@ FROM python:3.9
 USER root
 RUN mkdir /home/wannadb
 WORKDIR /home/wannadb
-COPY . .
-
-EXPOSE 8080
-
-# Create virtual environment
-RUN python -m venv venv
-#RUN sudo ./venv/bin/activate
-RUN ["/bin/bash", "-c", "source venv/bin/activate"]
-#RUN source venv/bin/activate
-RUN export PYTHONPATH="."
+COPY requirements.txt requirements.txt
 
 # Install dependencies
-RUN pip install --upgrade pip
-RUN pip install --use-pep517 -r requirements.txt
+RUN pip install --use-pep517 torch==1.10.0
 
-# installing torch manually
-RUN pip install torch==1.10.0
-RUN pip install torchvision==0.11.1
+RUN pip install --use-pep517 -r requirements.txt
+##################################
+##      do not change above     ##
+##      changes above cause     ##
+##      long loading times      ##
+##################################
 
 # Run tests
 RUN pip install --use-pep517 pytest
 #RUN pytest
 
-# Keep container running
-#RUN while true; do sleep 1000 done
+#copy the rest
+COPY . .
+
+COPY entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+EXPOSE 8080
+EXPOSE 5000
+
+# Define the entrypoint.sh
+CMD ["/entrypoint.sh"]

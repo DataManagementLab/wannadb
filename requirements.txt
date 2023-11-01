@@ -231,3 +231,5 @@ wasabi==0.10.1
 
 # The following packages are considered to be unsafe in a requirements file:
 # setuptools
+
+flask==3.0.0
