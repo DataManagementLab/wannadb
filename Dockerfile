@@ -9,7 +9,7 @@ EXPOSE 8080
 
 # Create virtual environment
 RUN python -m venv venv
-RUN source venv/bin/activate
+RUN . venv/bin/activate
 RUN export PYTHONPATH="."
 
 # Install dependencies
