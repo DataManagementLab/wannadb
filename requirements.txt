@@ -233,3 +233,5 @@ wasabi==0.10.1
 # setuptools
 
 flask==3.0.0
+Flask_Cors==4.0.0
+gunicorn==21.2.0

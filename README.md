@@ -1,3 +1,26 @@
+# Start the docker
+
+beim ersten mal
+
+```
+docker compose build
+```
+
+zum weiter arbeiten
+
+```
+docker compose up
+```
+
+danach sollte das backend gestartet sein
+
+ihr könnt mit `code` den container attachen und dann im docker arbeiten
+
+git functioniert erst wenn ihr gh installiert und gh auth macht
+anschließend könnt ihr wie gewohn arbeiten
+
+ein docker rebuild ist nur nötig wenn sich dependencies geändert haben
+
 # WannaDB: Ad-hoc SQL Queries over Text Collections
 
 ![Document collection and corresponding table.](header_image.svg)
@@ -114,25 +137,23 @@ series = {SIGMOD '22}
 
 WannaDB is dually licensed under both AGPLv3 for the free usage by end users or the embedding in Open Source projects, and a commercial license for the integration in industrial projects and closed-source tool chains. More details can be found in [our licence agreement](LICENSE.md).
 
-
 ## Availability of Code & Datasets
 
 We publish the source code four our system as discussed in the papers here. Additionally, we publish code to reproduce our experiments in a separate repository (coming soon).
 
 Unfortunately, we cannot publish the datasets online due to copyright issues. We will send them via email on request to everyone interested and hope they can be of benefit for other research, too.
 
-
 ## Implementation details
 
-The core of WannaDB (extraction and matching) was previously developed by us under the name [ASET (Ad-hoc Structured Exploration of Text Collections)](https://link.tuda.systems/aset). To better reflect the whole application cycle vision we present with this paper, we switchted the name to WannaDB. 
+The core of WannaDB (extraction and matching) was previously developed by us under the name [ASET (Ad-hoc Structured Exploration of Text Collections)](https://link.tuda.systems/aset). To better reflect the whole application cycle vision we present with this paper, we switchted the name to WannaDB.
 
 ### Repository structure
 
 This repository is structured as follows:
 
-* `wannadb`, `wannadb_parsql`, and `wannadb_ui` contain the implementation of ASET and the GUI.
-* `scripts` contains helpers, like a stand-alone preprocessing script.
-* `tests` contains pytest tests.
+- `wannadb`, `wannadb_parsql`, and `wannadb_ui` contain the implementation of ASET and the GUI.
+- `scripts` contains helpers, like a stand-alone preprocessing script.
+- `tests` contains pytest tests.
 
 ### Architecture: Core
 
@@ -140,7 +161,7 @@ The core implementation of WannaDB is in the `wannadb` package and implemented a
 
 **Data model**
 
-`data` contains WannaDB's data model. The entities are `InformationNugget`s, `Attribute`s, `Document`s, and the `DocumentBase`. 
+`data` contains WannaDB's data model. The entities are `InformationNugget`s, `Attribute`s, `Document`s, and the `DocumentBase`.
 
 A nugget is an information piece obtained from a document. An attribute is a table column that gets
 populated with information from the documents. A document is a textual document, and the document base is a collection of documents and provides facilities for `BSON` serialization, consistency checks, and data access.
