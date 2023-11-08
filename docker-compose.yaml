@@ -1,10 +1,10 @@
-version: '3.6'
+version: "3.6"
 services:
-    wannadb:
-        build:
-            context: .
-            dockerfile: Dockerfile
-        restart: always
-        tty: true
-        ports:
-            - 8080:8080
+  wannadb:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: always
+    tty: true
+    ports:
+      - "8000:8000"

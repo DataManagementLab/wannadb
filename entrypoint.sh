@@ -7,6 +7,4 @@ export PYTHONPATH="."
 
 pytest
 
-flask --app backend/app.py run
-
-sleep infinity
+gunicorn -w 4 --bind 0.0.0.0:8000 app:app

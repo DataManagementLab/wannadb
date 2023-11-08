@@ -3,11 +3,12 @@ FROM python:3.9
 USER root
 RUN mkdir /home/wannadb
 WORKDIR /home/wannadb
-COPY requirements.txt requirements.txt
 
-# Install dependencies
+# install torch
 RUN pip install --use-pep517 torch==1.10.0
 
+# Install dependencies
+COPY requirements.txt requirements.txt
 RUN pip install --use-pep517 -r requirements.txt
 ##################################
 ##      do not change above     ##
@@ -22,11 +23,8 @@ RUN pip install --use-pep517 pytest
 #copy the rest
 COPY . .
 
-COPY entrypoint.sh /entrypoint.sh
-RUN chmod +x /entrypoint.sh
+RUN chmod +x entrypoint.sh
 
-EXPOSE 8080
-EXPOSE 5000
 
 # Define the entrypoint.sh
-CMD ["/entrypoint.sh"]
+ENTRYPOINT "/home/wannadb/entrypoint.sh" 
