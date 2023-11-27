@@ -342,3 +342,6 @@ PyOpenGL_accelerate==3.1.9
 flask==3.0.0
 Flask_Cors==4.0.0
 gunicorn==21.2.0
+psycopg2~=2.9.9
+bcrypt~=4.0.1
+PyJWT~=2.8.0
