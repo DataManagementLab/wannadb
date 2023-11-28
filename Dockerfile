@@ -1,4 +1,4 @@
-FROM python:3.9
+FROM python:3.9 as build
 
 USER root
 RUN mkdir /home/wannadb
@@ -23,8 +23,16 @@ RUN pip install --use-pep517 pytest
 #copy the rest
 COPY . .
 
+FROM build as dev 
+
+#CMD [ "python", "app.py" ]
+CMD ["flask", "--app", "app", "--debug", "run","--host","0.0.0.0", "--port", "8000" ]
+
+
+FROM build as prod
+
 RUN chmod +x entrypoint.sh
 
-
 # Define the entrypoint.sh
-ENTRYPOINT "/home/wannadb/entrypoint.sh" 
+CMD ["sh","./entrypoint.sh"]
+

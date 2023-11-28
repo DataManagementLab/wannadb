@@ -3,14 +3,16 @@ services:
   wannadb:
     build:
       context: .
-      dockerfile: Dockerfile-backend
+      dockerfile: Dockerfile
+      target: dev
     restart: always
     tty: true
     ports:
-      - "8000:8000"
+      - 8000:8000
     depends_on:
       - postgres
-
+    volumes:
+      - ./:/home/wannadb
 
   postgres:
     image: postgres
