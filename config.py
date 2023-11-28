@@ -1,4 +1,7 @@
 from enum import Enum
+from dataclasses import dataclass
+
+import jwt
 
 
 class Authorisation(Enum):
@@ -10,7 +13,18 @@ class Authorisation(Enum):
 jwtkey = "secret"
 
 
-class JWTFormat:
-	def __init__(self, user: str, id: int):
-		self.user = user
-		self.id = id
+def encode(obj):
+	return jwt.encode(obj, jwtkey, algorithm="HS256")
+
+
+def decode(string: str):
+	token: User = jwt.decode(string, jwtkey, algorithm="HS256")
+	return User(token.user, token.id)
+
+
+@dataclass
+class User:
+	user: str
+	id: int
+
+
