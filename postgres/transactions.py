@@ -58,7 +58,6 @@ def addUser(user: str, password: str):
 		data_to_insert = (user, pwHash)
 		execute_query(insert_data_query, data_to_insert, commit=True)
 
-
 	except Exception as e:
 		print("addUser failed because: \n", e)
 
@@ -105,7 +104,6 @@ def addOrganisation(organisationName: str, sessionToken: str):
 							   "INSERT INTO membership (userid,organisationid) select (%s),id from a")
 		execute_query(insert_query, (organisationName, userid), commit=True)
 
-
 	except Exception as e:
 		print("addOrganisation failed because: \n", e)
 
@@ -115,7 +113,6 @@ def addUserToOrganisation(organisationName: str, sessionToken: str, newUser: str
 		token: JWTFormat = jwt.decode(sessionToken, jwtkey, algorithm="HS256")
 		userid = token.id
 
-		# Combine the two queries into a single query
 		insert_query = sql.SQL("""
 			WITH org AS (
 				SELECT userid, organisationid 
@@ -135,8 +132,64 @@ def addUserToOrganisation(organisationName: str, sessionToken: str, newUser: str
 			AND %s >= %s
 		""")
 
-		execute_query(insert_query, (organisationName, newUser, userid, userid, str(Authorisation.Admin.value), userid),
+		execute_query(insert_query, (organisationName, newUser, userid, userid,
+									 str(Authorisation.Admin.value), userid),
 					  commit=True)
 
 	except Exception as e:
 		print("addUserToOrganisation failed because: \n", e)
+
+
+def removeUserFromOrganisation(organisationName: str, sessionToken: str, userToRemove: str):
+	try:
+		token: JWTFormat = jwt.decode(sessionToken, jwtkey, algorithm="HS256")
+		userid = token.id
+
+		delete_query = sql.SQL("""
+			DELETE FROM membership
+			USING (
+				SELECT userid, organisationid 
+				FROM membership 
+				WHERE organisationid = (SELECT id FROM organisations WHERE name = %s)
+			) AS org
+			WHERE membership.organisationid = org.organisationid 
+				AND membership.userid = (SELECT id FROM users WHERE username = %s)
+				AND membership.authorisation >= %s
+				AND %s >= %s
+		""")
+
+		execute_query(delete_query, (organisationName, userToRemove, userid, userid,
+									 str(Authorisation.Admin.value), userid),
+					  commit=True)
+
+	except Exception as e:
+		print("removeUserFromOrganisation failed because: \n", e)
+
+
+def adjUserAuthorisation(organisationName: str, sessionToken: str, userToAdjust: str, newAuthorisation: int):
+	try:
+		token: JWTFormat = jwt.decode(sessionToken, jwtkey, algorithm="HS256")
+		author_userid = token.id
+
+		# Combine the two queries into a single query
+		update_query = sql.SQL("""
+		            UPDATE membership
+		            SET authorisation = %s
+		            FROM (
+		                SELECT userid, organisationid, authorisation
+		                FROM membership 
+		                WHERE organisationid = (SELECT id FROM organisations WHERE name = %s)
+		            ) AS org
+		            WHERE membership.organisationid = org.organisationid 
+		                AND membership.userid = (SELECT id FROM users WHERE username = %s)
+		                AND org.authorisation >= %s  -- Ensure the admin has higher or equal authorization
+		                AND org.authorisation > %s  -- Ensure the admin has higher authorization than Member
+		                AND org.authorisation >= %s  -- Ensure the new authorization is not higher than admin's
+		        """)
+
+		execute_query(update_query, (newAuthorisation, organisationName, userToAdjust,
+									 str(Authorisation.Admin.value), str(Authorisation.Member.value), author_userid),
+					  commit=True)
+
+	except Exception as e:
+		print("adjUserAuthorisation failed because: \n", e)
