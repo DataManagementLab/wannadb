@@ -2,7 +2,7 @@ import psycopg2
 from psycopg2 import sql
 import bcrypt
 import jwt
-from config import jwtkey, JWTFormat
+from config import jwtkey, JWTFormat, Authorisation
 from postgres.queries import checkPassword
 
 # Replace these values with your own
@@ -110,14 +110,33 @@ def addOrganisation(organisationName: str, sessionToken: str):
 		print("addOrganisation failed because: \n", e)
 
 
-def addUserTooOrganisation(organisationName: str, sessionToken: str, newUser: str):
+def addUserToOrganisation(organisationName: str, sessionToken: str, newUser: str):
 	try:
 		token: JWTFormat = jwt.decode(sessionToken, jwtkey, algorithm="HS256")
 		userid = token.id
 
-		insert_query = sql.SQL("with a as (INSERT INTO organisations (name) VALUES (%s) returning id) "
-							   "INSERT INTO membership (userid,organisationid) select (%s),id from a")
-		execute_query(insert_query, (organisationName, userid), commit=True)
+		# Combine the two queries into a single query
+		insert_query = sql.SQL("""
+			WITH org AS (
+				SELECT userid, organisationid 
+				FROM membership 
+				WHERE organisationid = (SELECT id FROM organisations WHERE name = %s)
+			), user_info AS (
+				SELECT id 
+				FROM users 
+				WHERE username = %s
+			)
+			INSERT INTO membership (userid, organisationid)
+			SELECT %s, org.organisationid 
+			FROM org, user_info, membership AS m
+			WHERE org.organisationid = m.organisationid 
+			AND user_info.id = m.userid 
+			AND m.authorisation >= %s 
+			AND %s >= %s
+		""")
+
+		execute_query(insert_query, (organisationName, newUser, userid, userid, str(Authorisation.Admin.value), userid),
+					  commit=True)
 
 	except Exception as e:
-		print("addOrganisation failed because: \n", e)
+		print("addUserToOrganisation failed because: \n", e)
