@@ -2,7 +2,7 @@ import psycopg2
 from psycopg2 import sql
 import bcrypt
 import jwt
-from config import jwtkey, JWTFormat, Authorisation
+from config import jwtkey, User, Authorisation
 from postgres.queries import checkPassword
 
 # Replace these values with your own
@@ -38,6 +38,9 @@ def execute_query(query, params=None, commit=False):
 		if commit:
 			conn.commit()
 
+		result = cur.fetchall()
+		return result if result else None
+
 	except Exception as e:
 		raise Exception(f"Query execution failed for query: {query} \nParams: {params} \nError: {e}")
 
@@ -54,12 +57,14 @@ def addUser(user: str, password: str):
 		salt = bcrypt.gensalt()
 		pwHash = bcrypt.hashpw(pwBytes, salt)
 
-		insert_data_query = sql.SQL("INSERT INTO users (username, password) VALUES (%s, %s);")
+		insert_data_query = sql.SQL("INSERT INTO users (username, password) VALUES (%s, %s) returning id;")
 		data_to_insert = (user, pwHash)
-		execute_query(insert_data_query, data_to_insert, commit=True)
+		return int(execute_query(insert_data_query, data_to_insert, commit=True))
 
 	except Exception as e:
 		print("addUser failed because: \n", e)
+	finally:
+		return
 
 
 def changePassword(user: str, old_password: str, new_password: str):
@@ -97,7 +102,7 @@ def deleteUser(user: str, password: str):
 
 def addOrganisation(organisationName: str, sessionToken: str):
 	try:
-		token: JWTFormat = jwt.decode(sessionToken, jwtkey, algorithm="HS256")
+		token: User = jwt.decode(sessionToken, jwtkey, algorithm="HS256")
 		userid = token.id
 
 		insert_query = sql.SQL("with a as (INSERT INTO organisations (name) VALUES (%s) returning id) "
@@ -110,7 +115,7 @@ def addOrganisation(organisationName: str, sessionToken: str):
 
 def addUserToOrganisation(organisationName: str, sessionToken: str, newUser: str):
 	try:
-		token: JWTFormat = jwt.decode(sessionToken, jwtkey, algorithm="HS256")
+		token: User = jwt.decode(sessionToken, jwtkey, algorithm="HS256")
 		userid = token.id
 
 		insert_query = sql.SQL("""
@@ -142,7 +147,7 @@ def addUserToOrganisation(organisationName: str, sessionToken: str, newUser: str
 
 def removeUserFromOrganisation(organisationName: str, sessionToken: str, userToRemove: str):
 	try:
-		token: JWTFormat = jwt.decode(sessionToken, jwtkey, algorithm="HS256")
+		token: User = jwt.decode(sessionToken, jwtkey, algorithm="HS256")
 		userid = token.id
 
 		delete_query = sql.SQL("""
@@ -168,7 +173,7 @@ def removeUserFromOrganisation(organisationName: str, sessionToken: str, userToR
 
 def adjUserAuthorisation(organisationName: str, sessionToken: str, userToAdjust: str, newAuthorisation: int):
 	try:
-		token: JWTFormat = jwt.decode(sessionToken, jwtkey, algorithm="HS256")
+		token: User = jwt.decode(sessionToken, jwtkey, algorithm="HS256")
 		author_userid = token.id
 
 		# Combine the two queries into a single query
