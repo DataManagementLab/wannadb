@@ -8,11 +8,13 @@ services:
     restart: always
     tty: true
     ports:
-      - 8000:8000
+      - "8000:8000"
     depends_on:
       - postgres
     volumes:
       - ./:/home/wannadb
+    networks:
+      - mynetwork
 
   postgres:
     image: postgres
