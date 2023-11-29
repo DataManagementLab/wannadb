@@ -1,54 +1,9 @@
-import psycopg2
-from psycopg2 import sql
 import bcrypt
 import jwt
-from config import jwtkey, User, Authorisation
+from psycopg2 import sql
+from config import jwtkey, Token, Authorisation
 from postgres.queries import checkPassword
-
-# Replace these values with your own
-DB_NAME = "userManagement"
-DB_USER = "postgres"
-DB_PASSWORD = "0"
-DB_HOST = "127.0.0.1"
-DB_PORT = "5432"
-
-
-def connectPG():
-	try:
-		conn = psycopg2.connect(
-			dbname=DB_NAME,
-			user=DB_USER,
-			password=DB_PASSWORD,
-			host=DB_HOST,
-			port=DB_PORT)
-		return conn
-	except Exception as e:
-		print("Connection failed because: \n", e)
-
-
-def execute_query(query, params=None, commit=False):
-	conn = None
-	cur = None
-	try:
-		conn = connectPG()
-		cur = conn.cursor()
-
-		cur.execute(query, params)
-
-		if commit:
-			conn.commit()
-
-		result = cur.fetchall()
-		return result if result else None
-
-	except Exception as e:
-		raise Exception(f"Query execution failed for query: {query} \nParams: {params} \nError: {e}")
-
-	finally:
-		if conn:
-			conn.close()
-		if cur:
-			cur.close()
+from postgres.util import execute_transaction
 
 
 def addUser(user: str, password: str):
@@ -59,12 +14,11 @@ def addUser(user: str, password: str):
 
 		insert_data_query = sql.SQL("INSERT INTO users (username, password) VALUES (%s, %s) returning id;")
 		data_to_insert = (user, pwHash)
-		return int(execute_query(insert_data_query, data_to_insert, commit=True))
+		response = execute_transaction(insert_data_query, data_to_insert, commit=True)
+		return int(response[0][0])
 
 	except Exception as e:
 		print("addUser failed because: \n", e)
-	finally:
-		return
 
 
 def changePassword(user: str, old_password: str, new_password: str):
@@ -81,7 +35,7 @@ def changePassword(user: str, old_password: str, new_password: str):
 		pwHash = bcrypt.hashpw(pwBytes, salt)
 
 		update_query = sql.SQL("UPDATE users SET password = %s WHERE username = %s;")
-		execute_query(update_query, (pwHash, user), commit=True)
+		execute_transaction(update_query, (pwHash, user), commit=True)
 
 	except Exception as e:
 		print("changePassword failed because: \n", e)
@@ -94,7 +48,7 @@ def deleteUser(user: str, password: str):
 			raise Exception("wrong password")
 
 		delete_query = sql.SQL("DELETE FROM users WHERE username = %s;")
-		execute_query(delete_query, (user,), commit=True)
+		execute_transaction(delete_query, (user,), commit=True)
 
 	except Exception as e:
 		print("deleteUser failed because: \n", e)
@@ -102,12 +56,12 @@ def deleteUser(user: str, password: str):
 
 def addOrganisation(organisationName: str, sessionToken: str):
 	try:
-		token: User = jwt.decode(sessionToken, jwtkey, algorithm="HS256")
+		token: Token = jwt.decode(sessionToken, jwtkey, algorithm="HS256")
 		userid = token.id
 
 		insert_query = sql.SQL("with a as (INSERT INTO organisations (name) VALUES (%s) returning id) "
 							   "INSERT INTO membership (userid,organisationid) select (%s),id from a")
-		execute_query(insert_query, (organisationName, userid), commit=True)
+		execute_transaction(insert_query, (organisationName, userid), commit=True)
 
 	except Exception as e:
 		print("addOrganisation failed because: \n", e)
@@ -115,7 +69,7 @@ def addOrganisation(organisationName: str, sessionToken: str):
 
 def addUserToOrganisation(organisationName: str, sessionToken: str, newUser: str):
 	try:
-		token: User = jwt.decode(sessionToken, jwtkey, algorithm="HS256")
+		token: Token = jwt.decode(sessionToken, jwtkey, algorithm="HS256")
 		userid = token.id
 
 		insert_query = sql.SQL("""
@@ -137,9 +91,9 @@ def addUserToOrganisation(organisationName: str, sessionToken: str, newUser: str
 			AND %s >= %s
 		""")
 
-		execute_query(insert_query, (organisationName, newUser, userid, userid,
-									 str(Authorisation.Admin.value), userid),
-					  commit=True)
+		execute_transaction(insert_query, (organisationName, newUser, userid, userid,
+										   str(Authorisation.Admin.value), userid),
+							commit=True)
 
 	except Exception as e:
 		print("addUserToOrganisation failed because: \n", e)
@@ -147,7 +101,7 @@ def addUserToOrganisation(organisationName: str, sessionToken: str, newUser: str
 
 def removeUserFromOrganisation(organisationName: str, sessionToken: str, userToRemove: str):
 	try:
-		token: User = jwt.decode(sessionToken, jwtkey, algorithm="HS256")
+		token: Token = jwt.decode(sessionToken, jwtkey, algorithm="HS256")
 		userid = token.id
 
 		delete_query = sql.SQL("""
@@ -163,9 +117,9 @@ def removeUserFromOrganisation(organisationName: str, sessionToken: str, userToR
 				AND %s >= %s
 		""")
 
-		execute_query(delete_query, (organisationName, userToRemove, userid, userid,
-									 str(Authorisation.Admin.value), userid),
-					  commit=True)
+		execute_transaction(delete_query, (organisationName, userToRemove, userid, userid,
+										   str(Authorisation.Admin.value), userid),
+							commit=True)
 
 	except Exception as e:
 		print("removeUserFromOrganisation failed because: \n", e)
@@ -173,10 +127,9 @@ def removeUserFromOrganisation(organisationName: str, sessionToken: str, userToR
 
 def adjUserAuthorisation(organisationName: str, sessionToken: str, userToAdjust: str, newAuthorisation: int):
 	try:
-		token: User = jwt.decode(sessionToken, jwtkey, algorithm="HS256")
+		token: Token = jwt.decode(sessionToken, jwtkey, algorithm="HS256")
 		author_userid = token.id
 
-		# Combine the two queries into a single query
 		update_query = sql.SQL("""
 		            UPDATE membership
 		            SET authorisation = %s
@@ -192,9 +145,9 @@ def adjUserAuthorisation(organisationName: str, sessionToken: str, userToAdjust:
 		                AND org.authorisation >= %s  -- Ensure the new authorization is not higher than admin's
 		        """)
 
-		execute_query(update_query, (newAuthorisation, organisationName, userToAdjust,
-									 str(Authorisation.Admin.value), str(Authorisation.Member.value), author_userid),
-					  commit=True)
+		execute_transaction(update_query, (newAuthorisation, organisationName, userToAdjust,
+										   str(Authorisation.Admin.value), str(Authorisation.Member.value), author_userid),
+							commit=True)
 
 	except Exception as e:
 		print("adjUserAuthorisation failed because: \n", e)
