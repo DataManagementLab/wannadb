@@ -11,6 +11,7 @@ from wannadb.data.data import Document, DocumentBase, InformationNugget
 from wannadb.data.signals import CachedContextSentenceSignal, CachedDistanceSignal, \
     SentenceStartCharsSignal, CurrentMatchIndexSignal, LabelSignal
 from wannadb.interaction import BaseInteractionCallback
+from wannadb.matching.custom_match_extraction import BaseCustomMatchExtractor
 from wannadb.matching.distance import BaseDistance
 from wannadb.statistics import Statistics
 from wannadb.status import BaseStatusCallback
@@ -62,7 +63,7 @@ class RankingBasedMatcher(BaseMatcher):
             sampling_mode: str,
             adjust_threshold: bool,
             nugget_pipeline: Pipeline,
-            find_additional_nuggets: Callable[[InformationNugget, List[Document]], List[Tuple[Document, int, int]]] = lambda nugget, documents: (),
+            find_additional_nuggets: BaseCustomMatchExtractor,
     ) -> None:
         """
         Initialize the RankingBasedMatcher.
