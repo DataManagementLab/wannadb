@@ -6,7 +6,10 @@
 import abc
 import logging
 import re
+import numpy as np
+from nltk import ngrams
 from typing import Any, Tuple, List
+from wannadb import resources
 from wannadb.data.data import InformationNugget, Attribute, Document
 
 logger: logging.Logger = logging.getLogger(__name__)
@@ -101,5 +104,72 @@ class RegexCustomMatchExtractor(BaseCustomMatchExtractor):
 
         # Return results
         return new_nuggets
+
+
+class NgramCustomMatchExtractor(BaseCustomMatchExtractor):
+    """
+        Extractor based on computing ngrams based on the length of the provided nugget, computing embedding vectors
+        and deciding on matches based on a threshold-based criterion on their cosine similarity.
+    """
+
+    identifier: str = "NgramCustomMatchExtractor"
+
+    def __init__(self, threshold=0.75) -> None:
+        """
+            Initialize the extractor by setting up necessary resources, and set the threshold for cosine similarity
+        """
+
+        self.embedding_model = resources.MANAGER["SBERTBertLargeNliMeanTokensResource"]
+        self.cosine_similarity = lambda x, y: np.dot(x, y) / (np.linalg.norm(x) * np.linalg.norm(y))
+        self.threshold = threshold
+
+    def __call__(self, nugget: InformationNugget, documents: List[Document]) -> List[Tuple[Document, int, int]]:
+        """
+            Extracts additional nuggets from all documents by computing ngrams matching the extracted nugget
+            structure, computing their cosine similarity to the custom match and thresholding it.
+
+            :param nugget: The InformationNugget that should be matched against
+            :param documents: The set of documents to extract matches from
+            :return: Returns a List of Tuples of matching nuggets, where the first entry denotes the corresponding
+            document of the nugget, the second and third entry denote the start and end indices of the match.
+        """
+
+        # List of new matches
+        new_matches = []
+
+        # Compute embedding vector for the custom matched nugget
+        custom_match_embed = self.embedding_model.encode(nugget.text, show_progress_bar=False)
+        ngram_length = len(nugget.text.split(" "))
+
+        for document in documents:
+            # Get document text
+            doc_text = document.text
+
+            # Create ngrams of the document text according to the length of the custom match
+            ngrams_doc = ngrams(doc_text.split(), ngram_length)
+
+            # Create datastructure of ngram texts
+            ngrams_data = [" ".join(ng) for ng in ngrams_doc]
+
+            # Get embeddings of each ngram with desired embedding model, one could also combine signals here
+            embeddings = self.embedding_model.encode(ngrams_data, show_progress_bar=False)
+
+            # Compute cosine similarity between both embeddings for all ngrams, calculate the distance and add
+            # new match if threshold is succeeded. Use loc to find the position in the document
+            loc = 0
+            for txt, embed_vector in zip(ngrams_data, embeddings):
+                cos_sim = self.cosine_similarity(embed_vector, custom_match_embed)
+                if cos_sim >= self.threshold:
+                    idx = doc_text.find(txt, loc)
+                    if idx > -1:
+                        new_matches.append((document, idx, idx + len(txt)))
+                        loc = idx
+
+        for match in new_matches:
+            logger.info(match[1])
+            logger.info(match[0].text[match[1]:match[2]])
+
+        # Return new matches
+        return new_matches
 
 
