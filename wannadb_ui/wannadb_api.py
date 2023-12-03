@@ -11,6 +11,7 @@ from bson import InvalidBSON
 from wannadb.configuration import Pipeline
 from wannadb.data.data import Attribute, Document, DocumentBase
 from wannadb.interaction import EmptyInteractionCallback, InteractionCallback
+from wannadb.matching.custom_extractor import CustomSimilaritySpanExtractor
 from wannadb.matching.custom_match_extraction import ExactCustomMatchExtractor, RegexCustomMatchExtractor, \
     NgramCustomMatchExtractor
 from wannadb.matching.distance import SignalsMeanDistance
@@ -393,7 +394,7 @@ class WannaDBAPI(QObject):
                                 RelativePositionEmbedder()
                             ]
                         ),
-                        find_additional_nuggets=NgramCustomMatchExtractor()
+                        find_additional_nuggets=CustomSimilaritySpanExtractor()
                     )
                 ]
             )
