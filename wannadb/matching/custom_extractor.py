@@ -47,7 +47,7 @@ class CustomSimilaritySpanExtractor(BaseCustomMatchExtractor):
             for i, doc_tok in enumerate(document_tokens):
                 for j, nug_tok in enumerate(nugget_tokens):
                     sim = doc_tok.similarity(nug_tok)
-                    if sim > 0.95:
+                    if sim > 0.95 and not nug_tok.is_stop:
                         start_index_tok = i - j
                         end_index_tok = start_index_tok + len(nugget_tokens) - 1
                         logger.info("high sim: ")
