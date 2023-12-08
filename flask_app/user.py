@@ -8,6 +8,7 @@ from postgres.transactions import addUser
 user_management = Blueprint('user_management', __name__)
 
 
+# TODO should only be POST?
 @user_management.route('/register', methods=['GET', 'POST'])
 def register():
 	data = request.get_json()
@@ -21,11 +22,13 @@ def register():
 		token = encode(user.dict())
 
 		return jsonify({'message': 'User registered successfully',
+                  		'status': True,
 						'token': token})
 
-	return jsonify({'message': 'User register failed'})
+	return jsonify({'message': 'User register failed', 'status': False})
 
 
+# TODO should only be GET?
 @user_management.route('/login', methods=['GET', 'POST'])
 def login():
 	data = request.get_json()
@@ -39,6 +42,7 @@ def login():
 		token = encode(user.dict())
 
 		return jsonify({'message': 'Log in successfully',
+                  		'status': True,
 						'token': token})
 	else:
-		return jsonify({'message': 'Wrong Password'})
+		return jsonify({'message': 'Wrong Password', 'status': False})

@@ -3,6 +3,7 @@ from flask import Flask
 from flask_cors import CORS
 from flask_app.endpoints import main_routes
 from flask_app.user import user_management
+from postgres.transactions import createTables, dropTables
 
 
 
@@ -13,7 +14,8 @@ CORS(app)
 app.register_blueprint(main_routes)
 app.register_blueprint(user_management)
 
-
+# TODO create table probably not here?
+createTables()
 
 @app.route('/')
 def hello_world():

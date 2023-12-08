@@ -5,12 +5,38 @@ from config import jwtkey, Token, Authorisation
 from postgres.queries import checkPassword
 from postgres.util import execute_transaction
 
+# TODO workaround for now.
+def createTables():
+    createUserTable()
+
+# WARNING: This is only for development purposes!
+def dropTables():
+	try:
+		drop_table_query = sql.SQL("""DROP TABLE IF EXISTS users;""")
+		execute_transaction(drop_table_query, commit=True)
+	except Exception as e:
+		print("dropTables failed because: \n", e)
+
+# TODO workaround for now. Table creation should be done on startup
+def createUserTable():
+	try:
+		create_table_query = sql.SQL("""CREATE TABLE IF NOT EXISTS users (
+			id SERIAL PRIMARY KEY,
+			username VARCHAR(100) UNIQUE NOT NULL,
+			password VARCHAR(1000) NOT NULL
+		);""")
+		execute_transaction(create_table_query, commit=True)
+	except Exception as e:
+		print("createUserTable failed because: \n", e)
 
 def addUser(user: str, password: str):
+	createTables()
 	try:
 		pwBytes = password.encode('utf-8')
 		salt = bcrypt.gensalt()
 		pwHash = bcrypt.hashpw(pwBytes, salt)
+		# Needed this for the correct password check dont know why...
+		pwHash = pwHash.decode('utf-8')
 
 		insert_data_query = sql.SQL("INSERT INTO users (username, password) VALUES (%s, %s) returning id;")
 		data_to_insert = (user, pwHash)

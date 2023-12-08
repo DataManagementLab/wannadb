@@ -26,11 +26,19 @@ def getOrganisationIDsFromUserId(userID: int):
 
 def checkPassword(user: str, password: str) -> bool:
 
-	select_query = sql.SQL("SELECT password FROM users WHERE username = %s;")
+	select_query = sql.SQL("SELECT password as pw FROM users WHERE username = %s;")
 	result = execute_query(select_query, (user,))
+	if not result:
+		print("checkPassword failed because: \n", "user not found")
+		return False
+	if len(result) > 1:
+		print("checkPassword failed because: \n", "more than 1 user with same name")
+		return False
 	try:
 		if result[0]:
-			stored_password = bytes(result[0][0])  # sketchy conversion but works
+      
+			#stored_password = bytes(result[0][0], encoding='utf-8')  # sketchy conversion but works
+			stored_password = result[0][0].encode('utf-8')	# i think thats better
 			return bcrypt.checkpw(password.encode('utf-8'), stored_password)
 
 		return False
