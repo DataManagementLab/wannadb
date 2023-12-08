@@ -21,3 +21,6 @@
 /evaluation/datasets/nobel/documents
 /evaluation/results/
 /logs/
+
+postgres/__pycache__
+flask_app/__pycache__
