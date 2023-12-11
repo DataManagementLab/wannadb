@@ -5,10 +5,6 @@ from config import jwtkey, Token, Authorisation
 from postgres.queries import checkPassword
 from postgres.util import execute_transaction
 
-# TODO workaround for now.
-def createTables():
-    createUserTable()
-
 # WARNING: This is only for development purposes!
 def dropTables():
 	try:
@@ -17,7 +13,7 @@ def dropTables():
 	except Exception as e:
 		print("dropTables failed because: \n", e)
 
-# TODO workaround for now. Table creation should be done on startup
+
 def createUserTable():
 	try:
 		create_table_query = sql.SQL("""CREATE TABLE IF NOT EXISTS users (
@@ -172,8 +168,21 @@ def adjUserAuthorisation(organisationName: str, sessionToken: str, userToAdjust:
 		        """)
 
 		execute_transaction(update_query, (newAuthorisation, organisationName, userToAdjust,
-										   str(Authorisation.Admin.value), str(Authorisation.Member.value), author_userid),
+										   str(Authorisation.Admin.value), str(Authorisation.Member.value),
+										   author_userid),
 							commit=True)
 
 	except Exception as e:
 		print("adjUserAuthorisation failed because: \n", e)
+
+
+def addDocument(name: str, content: str, organisationid: int, userid: int):
+	try:
+		insert_data_query = sql.SQL("INSERT INTO documents (name,content,organisationid,userid) "
+									"VALUES (%s, %s,%s, %s) returning id;")
+		data_to_insert = (name, content, organisationid, userid)
+		response = execute_transaction(insert_data_query, data_to_insert, commit=True)
+		return int(response[0][0])
+
+	except Exception as e:
+		print("addDocument failed because: \n", e)
