@@ -1,7 +1,6 @@
 import bcrypt
-import jwt
 from psycopg2 import sql
-from config import jwtkey, Token, Authorisation
+from config import Token, Authorisation,encode,decode
 from postgres.queries import checkPassword
 from postgres.util import execute_transaction
 
@@ -26,7 +25,6 @@ def createUserTable():
 		print("createUserTable failed because: \n", e)
 
 def addUser(user: str, password: str):
-	createTables()
 	try:
 		pwBytes = password.encode('utf-8')
 		salt = bcrypt.gensalt()
@@ -78,7 +76,7 @@ def deleteUser(user: str, password: str):
 
 def addOrganisation(organisationName: str, sessionToken: str):
 	try:
-		token: Token = jwt.decode(sessionToken, jwtkey, algorithm="HS256")
+		token: Token = decode(sessionToken)
 		userid = token.id
 
 		insert_query = sql.SQL("with a as (INSERT INTO organisations (name) VALUES (%s) returning id) "
@@ -91,7 +89,7 @@ def addOrganisation(organisationName: str, sessionToken: str):
 
 def addUserToOrganisation(organisationName: str, sessionToken: str, newUser: str):
 	try:
-		token: Token = jwt.decode(sessionToken, jwtkey, algorithm="HS256")
+		token: Token = decode(sessionToken)
 		userid = token.id
 
 		insert_query = sql.SQL("""
@@ -123,7 +121,7 @@ def addUserToOrganisation(organisationName: str, sessionToken: str, newUser: str
 
 def removeUserFromOrganisation(organisationName: str, sessionToken: str, userToRemove: str):
 	try:
-		token: Token = jwt.decode(sessionToken, jwtkey, algorithm="HS256")
+		token: Token = decode(sessionToken)
 		userid = token.id
 
 		delete_query = sql.SQL("""
@@ -149,7 +147,7 @@ def removeUserFromOrganisation(organisationName: str, sessionToken: str, userToR
 
 def adjUserAuthorisation(organisationName: str, sessionToken: str, userToAdjust: str, newAuthorisation: int):
 	try:
-		token: Token = jwt.decode(sessionToken, jwtkey, algorithm="HS256")
+		token: Token = decode(sessionToken)
 		author_userid = token.id
 
 		update_query = sql.SQL("""
