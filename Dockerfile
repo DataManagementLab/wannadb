@@ -8,8 +8,10 @@ WORKDIR /home/wannadb
 RUN pip install --use-pep517 torch==1.10.0
 
 # Install dependencies
-COPY requirements.txt requirements.txt
-RUN pip install --use-pep517 -r requirements.txt
+COPY core-requirements.txt core-requirements.txt
+RUN pip install --use-pep517 -r core-requirements.txt
+COPY backend-requirements.txt backend-requirements.txt
+RUN pip install --use-pep517 -r backend-requirements.txt
 ##################################
 ##      do not change above     ##
 ##      changes above cause     ##

@@ -231,10 +231,3 @@ wasabi==0.10.1
 
 # The following packages are considered to be unsafe in a requirements file:
 # setuptools
-
-flask==3.0.0
-Flask_Cors==4.0.0
-gunicorn==21.2.0
-psycopg2~=2.9.9
-bcrypt~=4.0.1
-PyJWT~=2.8.0
