@@ -18,7 +18,7 @@ def register():
 
 	if _id:
 		user = Token(username, _id)
-		token = encode(user.dict())
+		token = encode(user.json())
 
 		return jsonify({'message': 'User registered successfully',
                   		'status': True,
