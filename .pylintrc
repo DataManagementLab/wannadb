@@ -1,0 +1,22 @@
+[MASTER]
+
+# Specify the Python version you are using
+python = 3.9
+
+# Add the directories or files you want to ignore
+ignore = venv, virtualenv, __pycache__
+
+[MESSAGES CONTROL]
+
+# Enable or disable messages based on your preferences
+disable = C0330, C0114, C0115, C0116
+
+[FORMAT]
+
+# Set the maximum number of characters per line
+max-line-length = 120
+
+# Specify the regular expressions for files or directories to include or exclude
+include-ids = yes
+indent-string = "\t"
+
