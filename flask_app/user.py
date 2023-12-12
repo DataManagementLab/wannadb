@@ -37,7 +37,15 @@ def login():
 
 	if _correct:
 		user = Token(username, _correct)
-		token = encode(user.dict())
+		print(user)
+		# TODO I get error here : 'Token' object has no attribute 'dict'
+		#token = encode(user.dict())
+
+		# workaround for now
+		# TODO remove this
+		token = encode(user.json())
+  		
+		print(token)
 
 		return jsonify({'message': 'Log in successfully',
                   		'status': True,
