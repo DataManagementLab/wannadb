@@ -1,5 +1,4 @@
 import bcrypt
-from flask import jsonify
 from psycopg2 import sql
 from postgres.util import execute_query
 
@@ -25,7 +24,6 @@ def getOrganisationIDsFromUserId(userID: int):
 
 
 def checkPassword(user: str, password: str) -> bool:
-
 	select_query = sql.SQL("SELECT password as pw FROM users WHERE username = %s;")
 	result = execute_query(select_query, (user,))
 	if not result:
@@ -49,15 +47,31 @@ def checkPassword(user: str, password: str) -> bool:
 
 def checkOrganisationAuthorisation(organisationName: str, userName: str) -> int:
 	select_query = sql.SQL("SELECT membership from membership "
-						   "where userid == (SELECT id from users where username == (%s)) "
+						   "where userid = (SELECT id from users where username = (%s)) "
 						   "and "
-						   "organisationid == (Select id from organisations where name == (%s))")
+						   "organisationid = (Select id from organisations where name = (%s))")
 
 	result = execute_query(select_query, (organisationName, userName))
 	try:
 		if result[0]:
 			authorisation = result[0]
 			return int(authorisation)  # sketchy conversion but works
+
+	except Exception as e:
+		print("checkOrganisationAuthorisation failed because: \n", e)
+		return 99
+
+
+def _getDocument(documentId: int):
+	select_query = sql.SQL("SELECT content "
+						   "from documents "
+						   "where id = (%s)")
+
+	result = execute_query(select_query, (documentId,))
+	try:
+		if result[0]:
+			content = result[0]
+			return content
 
 	except Exception as e:
 		print("checkOrganisationAuthorisation failed because: \n", e)
