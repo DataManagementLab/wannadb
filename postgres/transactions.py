@@ -1,8 +1,9 @@
 import bcrypt
 from psycopg2 import sql
-from config import Token, Authorisation,encode,decode
+from config import Token, Authorisation, tokenDecode
 from postgres.queries import checkPassword
 from postgres.util import execute_transaction
+
 
 # WARNING: This is only for development purposes!
 def dropTables():
@@ -23,6 +24,7 @@ def createUserTable():
 		execute_transaction(create_table_query, commit=True)
 	except Exception as e:
 		print("createUserTable failed because: \n", e)
+
 
 def addUser(user: str, password: str):
 	try:
@@ -76,7 +78,7 @@ def deleteUser(user: str, password: str):
 
 def addOrganisation(organisationName: str, sessionToken: str):
 	try:
-		token: Token = decode(sessionToken)
+		token: Token = tokenDecode(sessionToken)
 		userid = token.id
 
 		insert_query = sql.SQL("with a as (INSERT INTO organisations (name) VALUES (%s) returning id) "
@@ -89,7 +91,7 @@ def addOrganisation(organisationName: str, sessionToken: str):
 
 def addUserToOrganisation(organisationName: str, sessionToken: str, newUser: str):
 	try:
-		token: Token = decode(sessionToken)
+		token: Token = tokenDecode(sessionToken)
 		userid = token.id
 
 		insert_query = sql.SQL("""
@@ -121,7 +123,7 @@ def addUserToOrganisation(organisationName: str, sessionToken: str, newUser: str
 
 def removeUserFromOrganisation(organisationName: str, sessionToken: str, userToRemove: str):
 	try:
-		token: Token = decode(sessionToken)
+		token: Token = tokenDecode(sessionToken)
 		userid = token.id
 
 		delete_query = sql.SQL("""
@@ -147,7 +149,7 @@ def removeUserFromOrganisation(organisationName: str, sessionToken: str, userToR
 
 def adjUserAuthorisation(organisationName: str, sessionToken: str, userToAdjust: str, newAuthorisation: int):
 	try:
-		token: Token = decode(sessionToken)
+		token: Token = tokenDecode(sessionToken)
 		author_userid = token.id
 
 		update_query = sql.SQL("""
