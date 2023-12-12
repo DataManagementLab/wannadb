@@ -12,11 +12,16 @@ dev_routes = Blueprint('dev_routes', __name__, url_prefix='/dev')
 def createTables():
 	try:
 		createUserTable()
-	finally:
-		# Remove the temporary files
-		for file in files:
-			filename = secure_filename(file.filename)
-			if os.path.exists(filename):
-				os.remove(filename)
+  
+	except Exception as e:
+		return str(e)
 
-	return 'Files uploaded successfully'
+	#finally:
+		# TODO whats that?
+		# Remove the temporary files
+		#for file in files:
+		#	filename = secure_filename(file.filename)
+		#	if os.path.exists(filename):
+		#		os.remove(filename)
+
+	return 'Table created successfully'
