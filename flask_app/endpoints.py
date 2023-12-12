@@ -17,7 +17,7 @@ def upload_files():
 
 		token = tokenDecode(authorization)
 
-		dokument_ids: list = []
+		document_ids: list = []
 
 		for file in files:
 			content_type = file.content_type
@@ -26,15 +26,15 @@ def upload_files():
 				content = str(file.stream.read().decode('utf-8'))
 				dokument_id = addDocument(filename, content, organisation_id, token.id)
 				print(dokument_id)
-				dokument_ids.append(dokument_id)
+				document_ids.append(dokument_id)
 			else:
-				dokument_ids.append(f"wrong type {content_type}")
+				document_ids.append(f"wrong type {content_type}")
 
-		if all(isinstance(dokument_ids, str) for _ in dokument_ids):
-			return make_response(dokument_ids, 400)
-		if any(isinstance(dokument_ids, str) for _ in dokument_ids):
-			return make_response(dokument_ids, 207)
-		return make_response(dokument_ids, 201)
+		if all(isinstance(document_ids, str) for _ in document_ids):
+			return make_response(document_ids, 400)
+		if any(isinstance(document_ids, str) for _ in document_ids):
+			return make_response(document_ids, 207)
+		return make_response(document_ids, 201)
 
 	except Exception as e:
 		return make_response({"message": "Upload failed", "details": str(e)}, 500)
