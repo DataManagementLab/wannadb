@@ -10,7 +10,7 @@ main_routes = Blueprint('main_routes', __name__, url_prefix='/data')
 @main_routes.route('/upload', methods=['POST'])
 def upload_files():
 	try:
-		files = request.files
+		files = request.files.getlist('files')
 		form = request.form
 
 		authorization = form.get("authorization")
@@ -20,9 +20,10 @@ def upload_files():
 
 		dokument_ids: list[int] = []
 
-		for _filename, storage in files.items():
-			filename = secure_filename(_filename)
-			content = storage.read()
+		for file in files:
+			file_content = file.read()
+			filename = file.filename
+			content = str(file_content.tokenDecode('utf-8'))
 			dokument_id = addDocument(filename, content, organisation_id, token.id)
 			dokument_ids.append(dokument_id)
 
