@@ -123,7 +123,7 @@ def addUser(user: str, password: str):
 		salt = bcrypt.gensalt()
 		pwHash = bcrypt.hashpw(pwBytes, salt)
 		# Needed this for the correct password check dont know why...
-		pwHash = pwHash.decode('utf-8')
+		#pwHash = pwHash.decode('utf-8')
 
 		insert_data_query = sql.SQL("INSERT INTO users (username, password) VALUES (%s, %s) returning id;")
 		data_to_insert = (user, pwHash)

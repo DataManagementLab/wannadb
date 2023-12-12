@@ -28,7 +28,7 @@ def checkPassword(user: str, password: str) -> bool:
 	result = execute_query(select_query, (user,))
 	try:
 		if result[0]:
-			stored_password = bytes(result[0][0])  # sketchy conversion but works
+			stored_password = bytes(result[0][0].encode('utf-8'))  # sketchy conversion but works
 			return bcrypt.checkpw(password.encode('utf-8'), stored_password)
 
 		return False
