@@ -1,8 +1,7 @@
-from flask import Blueprint, request,jsonify
-from werkzeug.datastructures import FileStorage
+from flask import Blueprint, request, jsonify
 from werkzeug.utils import secure_filename
-from config import decode
 
+from config import decode
 from postgres.transactions import addDocument
 
 main_routes = Blueprint('main_routes', __name__, url_prefix='/data')
@@ -15,7 +14,7 @@ def upload_files():
 		form = request.form
 
 		authorization = form.get("authorization")
-		organisation_id = form.get("organisationid")
+		organisation_id = int(form.get("organisationId"))
 
 		token = decode(authorization)
 
@@ -23,8 +22,8 @@ def upload_files():
 
 		for _filename, storage in files.items():
 			filename = secure_filename(_filename)
-			t = storage.read()
-			dokument_id = addDocument(filename, t, organisation_id, token.id)
+			content = storage.read()
+			dokument_id = addDocument(filename, content, organisation_id, token.id)
 			dokument_ids.append(dokument_id)
 
 		return jsonify(dokument_ids)
