@@ -16,7 +16,6 @@ The Flask app is running by default on port 8000. Here we assume that the app is
 
 **GET**
 
-
 ```
 http://localhost:8000/
 ```
@@ -102,6 +101,7 @@ http://localhost:8000/login
 **POST**
 
 Upload files.
+
 ```
 http://localhost:8000/data/upload
 ```
@@ -134,6 +134,7 @@ http://localhost:8000/data/upload
 **POST**
 
 Create tables (Development).
+
 ```
 http://localhost:8000/create-tables
 ```
