@@ -174,11 +174,11 @@ def adjUserAuthorisation(organisationName: str, sessionToken: str, userToAdjust:
 		print("adjUserAuthorisation failed because: \n", e)
 
 
-def addDocument(name: str, content: str, organisationid: int, userid: int):
+def addDocument(name: str, content: str, organisationId: int, userid: int):
 	try:
 		insert_data_query = sql.SQL("INSERT INTO documents (name,content,organisationid,userid) "
 									"VALUES (%s, %s,%s, %s) returning id;")
-		data_to_insert = (name, content, organisationid, userid)
+		data_to_insert = (name, content, organisationId, userid)
 		response = execute_transaction(insert_data_query, data_to_insert, commit=True)
 		return int(response[0][0])
 
