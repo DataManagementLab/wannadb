@@ -1,4 +1,4 @@
-from flask import Blueprint, request, jsonify
+from flask import Blueprint, request, make_response
 
 from config import tokenDecode
 from postgres.transactions import addDocument
@@ -30,7 +30,11 @@ def upload_files():
 			else:
 				dokument_ids.append(f"wrong type {content_type}")
 
-		return jsonify(dokument_ids)
+		if all(isinstance(dokument_ids, str) for _ in dokument_ids):
+			return make_response(dokument_ids, 400)
+		if any(isinstance(dokument_ids, str) for _ in dokument_ids):
+			return make_response(dokument_ids, 207)
+		return make_response(dokument_ids, 201)
 
 	except Exception as e:
-		raise Exception("upload files failed because: \n", e)
+		return make_response({"message": "Upload failed", "details": str(e)}, 500)
