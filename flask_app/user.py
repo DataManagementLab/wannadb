@@ -1,7 +1,7 @@
 # main_routes.py
 from flask import Blueprint, request, jsonify
 
-from config import Token, encode
+from config import Token, tokenEncode
 from postgres.queries import checkPassword
 from postgres.transactions import addUser
 
@@ -18,7 +18,7 @@ def register():
 
 	if _id:
 		user = Token(username, _id)
-		token = encode(user.json())
+		token = tokenEncode(user.json())
 
 		return jsonify({'message': 'User registered successfully',
                   		'status': True,
@@ -37,15 +37,7 @@ def login():
 
 	if _correct:
 		user = Token(username, _correct)
-		print(user)
-		# TODO I get error here : 'Token' object has no attribute 'dict'
-		#token = encode(user.dict())
-
-		# workaround for now
-		# TODO remove this
-		token = encode(user.json())
-  		
-		print(token)
+		token = tokenEncode(user.json())
 
 		return jsonify({'message': 'Log in successfully',
                   		'status': True,
