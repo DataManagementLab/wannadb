@@ -1,12 +1,14 @@
 # Routes _wannadbBackend_
 
-The flask app is running by default on port 8000. Here we assume that the app is running on localhost.
+The Flask app is running by default on port 8000. Here we assume that the app is running on localhost.
 
 ---
 
 -   [HelloWorld](#helloworld)
 -   [Register](#register)
 -   [Login](#login)
+-   [Upload Files](#upload-files)
+-   [Create Tables (Development)](#create-tables)
 
 ---
 
@@ -14,7 +16,6 @@ The flask app is running by default on port 8000. Here we assume that the app is
 
 **GET**
 
-Say hello to the world.
 
 ```
 http://localhost:8000/
@@ -43,18 +44,16 @@ http://localhost:8000/register
 
 ### Response
 
--   200: User register **failed**:
+-   422 : User register **failed**:
     ```json
     {
-        "message": "User register failed",
-        "status": false
+        "message": "User register failed"
     }
     ```
--   200: User register **success**:
+-   201: User register **success**:
     ```json
     {
         "message": "User registered successfully",
-        "status": true,
         "token": "eyJhbGciOiJIUI1NiIsIn5cCI6IkpXVCJ9.ey1c2VyIjocGhpbEiLCJpZCIM30.v_lKLd0X-PABkRFXHZa..."
     }
     ```
@@ -63,7 +62,7 @@ http://localhost:8000/register
 
 ## Login
 
-**GET,POST**
+**POST**
 
 Login as user
 
@@ -82,20 +81,59 @@ http://localhost:8000/login
 
 ### Response
 
--   200: User login **failed**:
+-   401: User login **failed**:
     ```json
     {
-        "message": "Wrong Password",
-        "status": false
+        "message": "Wrong Password"
     }
     ```
 -   200: User login **success**:
     ```json
     {
         "message": "Log in successfully",
-        "status": true,
         "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1..."
     }
     ```
 
 ---
+
+## Upload Files
+
+**POST**
+
+Upload files.
+```
+http://localhost:8000/data/upload
+```
+
+### Body
+
+-   `file` (form-data): Files to upload
+-   `authorization` (form-data): User authorization token
+-   `organisationId` (form-data): Organization ID
+
+### Response
+
+-   400: Upload **failed**:
+    ```
+    Returns a list of document file types.
+    ```
+-   207: Upload **partial success**:
+    ```
+    Returns a list of document file types and documentIds.
+    ```
+-   201: Upload **success**:
+    ```
+    Returns a list of documentIds.
+    ```
+
+---
+
+## create-tables
+
+**POST**
+
+Create tables (Development).
+```
+http://localhost:8000/create-tables
+```
