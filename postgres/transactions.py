@@ -8,7 +8,10 @@ from postgres.util import execute_transaction
 # WARNING: This is only for development purposes!
 def dropTables():
 	try:
-		drop_table_query = sql.SQL("""DROP TABLE IF EXISTS users;""")
+		drop_table_query = sql.SQL("DROP TABLE IF EXISTS public.users;\n"
+								   "DROP TABLE IF EXISTS public.documents;\n"
+								   "DROP TABLE IF EXISTS public.membership;\n"
+								   "DROP TABLE IF EXISTS public.organisations;")
 		execute_transaction(drop_table_query, commit=True)
 	except Exception as e:
 		print("dropTables failed because: \n", e)
@@ -16,11 +19,99 @@ def dropTables():
 
 def createUserTable():
 	try:
-		create_table_query = sql.SQL("""CREATE TABLE IF NOT EXISTS users (
-			id SERIAL PRIMARY KEY,
-			username VARCHAR(100) UNIQUE NOT NULL,
-			password VARCHAR(1000) NOT NULL
-		);""")
+		create_table_query = sql.SQL("CREATE TABLE IF NOT EXISTS users (\n"
+									 "			id SERIAL PRIMARY KEY,\n"
+									 "			username VARCHAR(100) UNIQUE NOT NULL,\n"
+									 "			password VARCHAR(1000) NOT NULL\n"
+									 "		);")
+		execute_transaction(create_table_query, commit=True)
+	except Exception as e:
+		print("createUserTable failed because: \n", e)
+
+
+def createDocumentsTable():
+	try:
+		create_table_query = sql.SQL("CREATE TABLE IF NOT EXISTS public.documents\n"
+									 "(\n"
+									 "id bigint NOT NULL GENERATED ALWAYS AS IDENTITY ( INCREMENT 1 START 1 MINVALUE 1 "
+									 "MAXVALUE 9223372036854775807 CACHE 1 ),\n"
+									 "    name text COLLATE pg_catalog.\"default\" NOT NULL,\n"
+									 "    content text COLLATE pg_catalog.\"default\" NOT NULL,\n"
+									 "    organisationid bigint NOT NULL,\n"
+									 "    userid bigint NOT NULL,\n"
+									 "    CONSTRAINT dokumentid PRIMARY KEY (id),\n"
+									 "    CONSTRAINT documents_organisationid_fkey FOREIGN KEY (organisationid)\n"
+									 "        REFERENCES public.organisations (id) MATCH SIMPLE\n"
+									 "        ON UPDATE NO ACTION\n"
+									 "        ON DELETE NO ACTION\n"
+									 "        NOT VALID,\n"
+									 "    CONSTRAINT documents_userid_fkey FOREIGN KEY (userid)\n"
+									 "        REFERENCES public.users (id) MATCH SIMPLE\n"
+									 "        ON UPDATE NO ACTION\n"
+									 "        ON DELETE NO ACTION\n"
+									 "        NOT VALID\n"
+									 ")\n"
+									 "\n"
+									 "TABLESPACE pg_default;\n"
+									 "\n"
+									 "ALTER TABLE IF EXISTS public.documents\n"
+									 "    OWNER to postgres;")
+		execute_transaction(create_table_query, commit=True)
+	except Exception as e:
+		print("createUserTable failed because: \n", e)
+
+
+def createMembershipTable():
+	try:
+		create_table_query = sql.SQL(""
+									 "\n"
+									 "CREATE TABLE IF NOT EXISTS public.membership\n"
+									 "(\n"
+									 "    userid bigint NOT NULL,\n"
+									 "    organisationid bigint NOT NULL,\n"
+									 "    authorisation bigint NOT NULL DEFAULT 0,\n"
+									 "    CONSTRAINT membership_pkey PRIMARY KEY (userid, organisationid),\n"
+									 "    CONSTRAINT membership_organisationid_fkey FOREIGN KEY (organisationid)\n"
+									 "        REFERENCES public.organisations (id) MATCH SIMPLE\n"
+									 "        ON UPDATE NO ACTION\n"
+									 "        ON DELETE NO ACTION\n"
+									 "        NOT VALID,\n"
+									 "    CONSTRAINT membership_userid_fkey FOREIGN KEY (userid)\n"
+									 "        REFERENCES public.users (id) MATCH SIMPLE\n"
+									 "        ON UPDATE NO ACTION\n"
+									 "        ON DELETE NO ACTION\n"
+									 "        NOT VALID\n"
+									 ")\n"
+									 "\n"
+									 "TABLESPACE pg_default;\n"
+									 "\n"
+									 "ALTER TABLE IF EXISTS public.membership\n"
+									 "    OWNER to postgres;\n"
+									 "CREATE INDEX IF NOT EXISTS fki_organisationid\n"
+									 "    ON public.membership USING btree\n"
+									 "    (organisationid ASC NULLS LAST)\n"
+									 "    TABLESPACE pg_default;")
+		execute_transaction(create_table_query, commit=True)
+	except Exception as e:
+		print("createUserTable failed because: \n", e)
+
+
+def createOrganisationTable():
+	try:
+		create_table_query = sql.SQL("\n"
+									 "CREATE TABLE IF NOT EXISTS public.organisations\n"
+									 "(\n"
+									 "id bigint NOT NULL GENERATED ALWAYS AS IDENTITY ( INCREMENT 1 START 1 MINVALUE 1 "
+									 "MAXVALUE 9223372036854775807 CACHE 1 ),\n"
+									 "    name text COLLATE pg_catalog.\"default\" NOT NULL,\n"
+									 "    CONSTRAINT organisationid PRIMARY KEY (id),\n"
+									 "    CONSTRAINT organisations_name_key UNIQUE (name)\n"
+									 ")\n"
+									 "\n"
+									 "TABLESPACE pg_default;\n"
+									 "\n"
+									 "ALTER TABLE IF EXISTS public.organisations\n"
+									 "    OWNER to postgres;")
 		execute_transaction(create_table_query, commit=True)
 	except Exception as e:
 		print("createUserTable failed because: \n", e)
