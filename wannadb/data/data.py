@@ -599,7 +599,7 @@ class DocumentBase:
             serializable_base["documents"].append(serializable_document)
 
         logger.info("Convert to BSON bytes.")
-        bson_bytes: bytes = bson.encode(serializable_base)
+        bson_bytes: bytes = bson.tokenEncode(serializable_base)
 
         tack: float = time.time()
         logger.info(f"Serialized document base in {tack - tick} seconds.")
@@ -619,7 +619,7 @@ class DocumentBase:
         tick: float = time.time()
 
         logger.info("Convert from BSON bytes.")
-        serialized_base: Dict[str, Any] = bson.decode(bson_bytes)
+        serialized_base: Dict[str, Any] = bson.tokenDecode(bson_bytes)
 
         # deserialize the document base
         document_base: "DocumentBase" = cls([], [])
