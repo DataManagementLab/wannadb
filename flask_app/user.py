@@ -1,5 +1,5 @@
 # main_routes.py
-from flask import Blueprint, request, jsonify
+from flask import Blueprint, request, make_response
 
 from config import Token, tokenEncode
 from postgres.queries import checkPassword
@@ -20,11 +20,10 @@ def register():
 		user = Token(username, _id)
 		token = tokenEncode(user.json())
 
-		return jsonify({'message': 'User registered successfully',
-                  		'status': True,
-						'token': token})
+		return make_response({'message': 'User registered successfully',
+							  'token': token}, 201)
 
-	return jsonify({'message': 'User register failed', 'status': False})
+	return make_response({'message': 'User register failed'}, 422)
 
 
 @user_management.route('/login', methods=['POST'])
@@ -39,8 +38,10 @@ def login():
 		user = Token(username, _correct)
 		token = tokenEncode(user.json())
 
-		return jsonify({'message': 'Log in successfully',
-                  		'status': True,
-						'token': token})
+		return make_response({'message': 'Log in successfully',
+							  'token': token}, 200)
 	else:
-		return jsonify({'message': 'Wrong Password', 'status': False})
+		return make_response({'message': 'Wrong Password'}, 401)
+
+
+
