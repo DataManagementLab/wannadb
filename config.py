@@ -1,6 +1,5 @@
 import datetime
 from enum import Enum
-from dataclasses import dataclass
 from typing import Any
 
 import jwt
@@ -15,16 +14,16 @@ class Authorisation(Enum):
 _jwtkey = "secret"
 
 
-def encode(obj: dict[str, Any]):
+def tokenEncode(obj: dict[str, Any]):
 	return jwt.encode(obj, _jwtkey, algorithm="HS256")
 
 
-def decode(string: str):
-    decoded_token = jwt.decode(string, _jwtkey, leeway=datetime.timedelta(minutes=1), algorithms="HS256", verify=True)
-    user = decoded_token.get('user')
-    _id = decoded_token.get('id')
-    exp = decoded_token.get('exp')
-    return Token(user, _id, exp)
+def tokenDecode(string: str):
+	decoded_token = jwt.decode(string, _jwtkey, leeway=datetime.timedelta(minutes=1), algorithms="HS256", verify=True)
+	user = decoded_token.get('user')
+	_id = decoded_token.get('id')
+	exp = decoded_token.get('exp')
+	return Token(user, _id, exp)
 
 
 class Token:
