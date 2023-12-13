@@ -57,7 +57,5 @@ def creat_organisation():
 	organisation_id, error = addOrganisation(organisation_name, authorization)
 
 	if error:
-		return make_response({"error": error}, 422)
-	if organisation_id is None:
-		return make_response({'organisation_id': ""}, 422)
+		return make_response({"error": error}, 409)
 	return make_response({'organisation_id': organisation_id}, 200)

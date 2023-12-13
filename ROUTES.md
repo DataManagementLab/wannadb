@@ -93,6 +93,42 @@ http://localhost:8000/login
         "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1..."
     }
     ```
+    
+---
+
+## Organisation
+
+**POST**
+
+creatOrganisation
+
+```
+http://localhost:8000/creatOrganisation
+```
+
+### Body
+
+```json
+{
+    "authorization": "---",
+    "organisationName": "---"
+}
+```
+
+### Response
+
+-   409: duplication **Conflict**:
+    ```json
+    {
+    "error": "name already exists."
+    }
+    ```
+-   200: **success**:
+    ```json
+    {
+    "organisation_id": "---"
+    }
+    ```
 
 ---
 
