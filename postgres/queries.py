@@ -30,7 +30,7 @@ def checkPassword(user: str, password: str) -> Union[tuple[bool, int], bool]:
 	result = execute_query(select_query, (user,))
 	try:
 		if result[0][0]:
-			stored_password = bytes(result[0][0])  # sketchy conversion but works
+			stored_password = bytes(result[0][0].encode('utf-8'))  # sketchy conversion but works
 			check = bcrypt.checkpw(password.encode('utf-8'), stored_password)
 			if check:
 				return bcrypt.checkpw(password.encode('utf-8'), stored_password), int(result[0][1])
