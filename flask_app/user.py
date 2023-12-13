@@ -55,7 +55,6 @@ def creat_organisation():
 	organisation_name = data.get("organisationName")
 
 	organisation_id, error = addOrganisation(organisation_name, authorization)
-
 	if error:
 		return make_response({"error": error}, 409)
 	return make_response({'organisation_id': organisation_id}, 200)

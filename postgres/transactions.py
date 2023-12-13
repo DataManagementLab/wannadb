@@ -175,8 +175,7 @@ def addOrganisation(organisationName: str, sessionToken: str):
 		insert_query = sql.SQL("with a as (INSERT INTO organisations (name) VALUES (%s) returning id) "
 							   "INSERT INTO membership (userid,organisationid) select (%s),id from a returning organisationid")
 		organisation_id = execute_transaction(insert_query, (organisationName, userid), commit=True)
-
-		organisation_id = int(organisation_id)
+		organisation_id = int(organisation_id[0][0])
 		return organisation_id, None
 
 	except IntegrityError:
