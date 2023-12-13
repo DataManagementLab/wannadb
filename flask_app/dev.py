@@ -1,7 +1,8 @@
 from flask import Blueprint, make_response
 
 from postgres.queries import _getDocument
-from postgres.transactions import createUserTable, createDocumentsTable, createOrganisationTable, createMembershipTable
+from postgres.transactions import createUserTable, createDocumentsTable, createOrganisationTable, createMembershipTable, \
+	dropTables
 
 dev_routes = Blueprint('dev_routes', __name__, url_prefix='/dev')
 
@@ -9,10 +10,11 @@ dev_routes = Blueprint('dev_routes', __name__, url_prefix='/dev')
 @dev_routes.route('/createTables', methods=['POST'])
 def createTables():
 	try:
+		dropTables()
 		createUserTable()
-		createDocumentsTable()
 		createOrganisationTable()
 		createMembershipTable()
+		createDocumentsTable()
 		return 'create Tables successfully'
 	except Exception as e:
 		print("create Tables failed because: \n", e)
