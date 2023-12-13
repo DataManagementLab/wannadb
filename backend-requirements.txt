@@ -5,7 +5,7 @@ gunicorn==21.2.0
 psycopg2~=2.9.9
 bcrypt~=4.1.1
 PyJWT~=2.8.0
-wheel~=0.40.0
+wheel==0.42.0
 tornado~=6.4
 setuptools~=69.0.2
 werkzeug~=3.0.1
