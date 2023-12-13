@@ -21,7 +21,7 @@ def tokenEncode(obj: dict[str, Any]):
 def tokenDecode(string: str):
 	decoded_token = jwt.decode(string, _jwtkey, leeway=datetime.timedelta(minutes=1), algorithms="HS256", verify=True)
 	user = decoded_token.get('user')
-	_id = decoded_token.get('id')
+	_id = int(decoded_token.get('id'))
 	exp = decoded_token.get('exp')
 	return Token(user, _id, exp)
 
