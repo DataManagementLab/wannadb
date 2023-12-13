@@ -1,4 +1,4 @@
-from typing import Union
+from typing import Union, Tuple
 
 import bcrypt
 from psycopg2 import sql
@@ -25,21 +25,24 @@ def getOrganisationIDsFromUserId(userID: int):
 	return execute_query(select_query, (userID,))
 
 
-def checkPassword(user: str, password: str) -> Union[tuple[bool, int], bool]:
+def checkPassword(user: str, password: str) -> Union[tuple[bool, int], tuple[bool, str]]:
 	select_query = sql.SQL("SELECT password,id as pw FROM users WHERE username = %s ")
-	result = execute_query(select_query, (user,))
+	_password, _id = execute_query(select_query, (user,))[0]
 	try:
-		if result[0][0]:
-			stored_password = bytes(result[0][0].encode('utf-8'))  # sketchy conversion but works
+		if _password:
+			if isinstance(_password, str):
+				stored_password = bytes(_password.encode('utf-8'))
+			else:
+				stored_password = bytes(_password)
 			check = bcrypt.checkpw(password.encode('utf-8'), stored_password)
 			if check:
-				return bcrypt.checkpw(password.encode('utf-8'), stored_password), int(result[0][1])
+				return bcrypt.checkpw(password.encode('utf-8'), stored_password), int(_id)
 
-		return False
+		return False, ""
 
 	except Exception as e:
 		print("checkPassword failed because: \n", e)
-		return False
+		return False, str(e)
 
 
 def checkOrganisationAuthorisation(organisationName: str, userName: str) -> int:
