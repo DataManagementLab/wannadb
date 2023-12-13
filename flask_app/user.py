@@ -46,16 +46,18 @@ def login():
 
 @user_management.route('/creatOrganisation', methods=['POST'])
 def creat_organisation():
-	form = request.form
-	authorization = form.get("authorization")
+	data = request.get_json()
+	authorization = data.get("authorization")
 	token = tokenDecode(authorization)
 	if token is None:
 		return make_response({}, 401)
 
-	organisation_name = form.get("organisationName")
+	organisation_name = data.get("organisationName")
 
-	organisation_id = addOrganisation(organisation_name, authorization)
+	organisation_id, error = addOrganisation(organisation_name, authorization)
 
+	if error:
+		return make_response({"error": error}, 422)
 	if organisation_id is None:
 		return make_response({'organisation_id': ""}, 422)
 	return make_response({'organisation_id': organisation_id}, 200)
