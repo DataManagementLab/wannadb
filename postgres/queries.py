@@ -1,3 +1,5 @@
+from typing import Union
+
 import bcrypt
 from psycopg2 import sql
 from postgres.util import execute_query
@@ -23,13 +25,15 @@ def getOrganisationIDsFromUserId(userID: int):
 	return execute_query(select_query, (userID,))
 
 
-def checkPassword(user: str, password: str) -> bool:
-	select_query = sql.SQL("SELECT password as pw FROM users WHERE username = %s;")
+def checkPassword(user: str, password: str) -> Union[tuple[bool, int], bool]:
+	select_query = sql.SQL("SELECT password,id as pw FROM users WHERE username = %s ")
 	result = execute_query(select_query, (user,))
 	try:
-		if result[0]:
+		if result[0][0]:
 			stored_password = bytes(result[0][0])  # sketchy conversion but works
-			return bcrypt.checkpw(password.encode('utf-8'), stored_password)
+			check = bcrypt.checkpw(password.encode('utf-8'), stored_password)
+			if check:
+				return bcrypt.checkpw(password.encode('utf-8'), stored_password), int(result[0][1])
 
 		return False
 
