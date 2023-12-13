@@ -1,5 +1,5 @@
 import bcrypt
-from psycopg2 import sql
+from psycopg2 import sql, IntegrityError
 from config import Token, Authorisation, tokenDecode
 from postgres.queries import checkPassword
 from postgres.util import execute_transaction
@@ -176,8 +176,11 @@ def addOrganisation(organisationName: str, sessionToken: str):
 							   "INSERT INTO membership (userid,organisationid) select (%s),id from a returning organisationid")
 		organisation_id = execute_transaction(insert_query, (organisationName, userid), commit=True)
 
-		organisation_id = organisation_id if isinstance(organisation_id, int) else None
-		return organisation_id
+		organisation_id = int(organisation_id)
+		return organisation_id, None
+
+	except IntegrityError:
+		return None, "name already exists."
 
 	except Exception as e:
 		print("addOrganisation failed because: \n", e)
