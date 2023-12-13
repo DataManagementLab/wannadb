@@ -3,7 +3,7 @@ from flask import Blueprint, request, make_response
 
 from config import Token, tokenEncode, tokenDecode
 from postgres.queries import checkPassword
-from postgres.transactions import addUser, addOrganisation
+from postgres.transactions import addUser, addOrganisation, addUserToOrganisation
 
 user_management = Blueprint('user_management', __name__)
 
@@ -55,6 +55,24 @@ def creat_organisation():
 	organisation_name = data.get("organisationName")
 
 	organisation_id, error = addOrganisation(organisation_name, authorization)
+
+	if error:
+		return make_response({"error": error}, 409)
+	return make_response({'organisation_id': organisation_id}, 200)
+
+
+@user_management.route('/addUserToOrganisation', methods=['POST'])
+def add_user_to_organisation():
+	data = request.get_json()
+	authorization = data.get("authorization")
+	token = tokenDecode(authorization)
+	if token is None:
+		return make_response({}, 401)
+
+	organisation_name = data.get("organisationName")
+	new_user = data.get("newUser")
+
+	organisation_id, error = addUserToOrganisation(organisation_name, authorization, new_user)
 
 	if error:
 		return make_response({"error": error}, 409)

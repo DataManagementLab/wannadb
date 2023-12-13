@@ -191,28 +191,33 @@ def addUserToOrganisation(organisationName: str, sessionToken: str, newUser: str
 		token: Token = tokenDecode(sessionToken)
 		userid = token.id
 
-		insert_query = sql.SQL("""
-			WITH org AS (
-				SELECT userid, organisationid 
-				FROM membership 
-				WHERE organisationid = (SELECT id FROM organisations WHERE name = %s)
-			), user_info AS (
-				SELECT id 
-				FROM users 
-				WHERE username = %s
-			)
-			INSERT INTO membership (userid, organisationid)
-			SELECT %s, org.organisationid 
-			FROM org, user_info, membership AS m
-			WHERE org.organisationid = m.organisationid 
-			AND user_info.id = m.userid 
-			AND m.authorisation >= %s 
-			AND %s >= %s
-		""")
+		insert_query = sql.SQL("""WITH addUser AS (
+				SELECT id
+				FROM users
+				WHERE username = (%s)  -- new User string
+			),
+            ismemberandadmin as (
+                SELECT organisationid
+                from membership
+                WHERE organisationid = (SELECT id FROM organisations WHERE name = (%s)) -- org name string
+                and   userid = (%s)  -- user id int
+                and   authorisation < (%s) -- is minimum permission
+            )
+INSERT INTO membership (userid, organisationid)
+			SELECT  a.id, m.organisationid
+			FROM addUser a, ismemberandadmin m
+			returning organisationid""")
 
-		execute_transaction(insert_query, (organisationName, newUser, userid, userid,
-										   str(Authorisation.Admin.value), userid),
-							commit=True)
+		organisation_id = execute_transaction(insert_query,
+											  (newUser, organisationName, userid,
+												str(Authorisation.Admin.value)), commit=True)
+		if organisation_id is None:
+			return None, "you have no privileges in this organisation"
+
+		return int(organisation_id), None
+
+	except IntegrityError:
+		return None, "name already exists."
 
 	except Exception as e:
 		print("addUserToOrganisation failed because: \n", e)
