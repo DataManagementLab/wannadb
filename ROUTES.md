@@ -129,6 +129,39 @@ http://localhost:8000/creatOrganisation
     "organisation_id": "---"
     }
     ```
+    
+**POST**
+
+creatOrganisation
+
+```
+http://localhost:8000/addUserToOrganisation
+```
+
+### Body
+
+```json
+{
+    "authorization": "---",
+    "organisationName": "---",
+    "newUser": "---"
+}
+```
+
+### Response
+
+-   409: duplication **Conflict**: (temp)
+    ```json
+    {
+    "error": "error message" 
+    }
+    ```
+-   200: **success**:
+    ```json
+    {
+    "organisation_id": "---"
+    }
+    ```
 
 ---
 
