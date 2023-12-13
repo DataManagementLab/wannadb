@@ -127,6 +127,25 @@ http://localhost:8000/data/upload
     Returns a list of documentIds.
     ```
 
+## Get Dokument
+
+**POST**
+
+get file.
+
+```
+http://localhost:8000/dev/getDocument/<_id>
+```
+
+### Body
+
+-   None
+
+### Response
+
+-   String of File Content
+
+
 ---
 
 ## create-tables
