@@ -32,10 +32,10 @@ def login():
 	username = data.get('username')
 	password = data.get('password')
 
-	_correct = checkPassword(username, password)
+	_correct, _id = checkPassword(username, password)
 
 	if _correct:
-		user = Token(username, _correct)
+		user = Token(username, _id)
 		token = tokenEncode(user.json())
 
 		return make_response({'message': 'Log in successfully',
