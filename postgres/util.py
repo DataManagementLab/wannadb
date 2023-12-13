@@ -1,5 +1,5 @@
 import psycopg2
-from psycopg2 import extensions
+from psycopg2 import extensions, IntegrityError
 
 DB_NAME = "userManagement"
 DB_USER = "postgres"
@@ -36,6 +36,9 @@ def execute_transaction(query, params=None, commit=False):
 
 		result = cur.fetchall()
 		return result if result else None
+
+	except IntegrityError as e:
+		raise IntegrityError(f"Query execution failed for transaction: {query} \nParams: {params} \nError: {e}")
 
 	except Exception as e:
 		raise Exception(f"Query execution failed for transaction: {query} \nParams: {params} \nError: {e}")
