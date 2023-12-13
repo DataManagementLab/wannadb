@@ -173,8 +173,11 @@ def addOrganisation(organisationName: str, sessionToken: str):
 		userid = token.id
 
 		insert_query = sql.SQL("with a as (INSERT INTO organisations (name) VALUES (%s) returning id) "
-							   "INSERT INTO membership (userid,organisationid) select (%s),id from a")
-		execute_transaction(insert_query, (organisationName, userid), commit=True)
+							   "INSERT INTO membership (userid,organisationid) select (%s),id from a returning organisationid")
+		organisation_id = execute_transaction(insert_query, (organisationName, userid), commit=True)
+
+		organisation_id = organisation_id if isinstance(organisation_id, int) else None
+		return organisation_id
 
 	except Exception as e:
 		print("addOrganisation failed because: \n", e)
