@@ -64,8 +64,7 @@ def _getDocument(documentId: int):
 	try:
 		if result[0]:
 			content = result[0]
-			return content
+			return str(content)
 
 	except Exception as e:
 		print("checkOrganisationAuthorisation failed because: \n", e)
-		return 99
