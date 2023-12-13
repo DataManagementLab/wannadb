@@ -25,7 +25,6 @@ def upload_files():
 				filename = file.filename
 				content = str(file.stream.read().decode('utf-8'))
 				dokument_id = addDocument(filename, content, organisation_id, token.id)
-				print(dokument_id)
 				document_ids.append(dokument_id)
 			else:
 				document_ids.append(f"wrong type {content_type}")
