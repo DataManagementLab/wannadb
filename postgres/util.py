@@ -51,7 +51,6 @@ def execute_transaction(query, params=None, commit=False, fetch=True):
 			conn.close()
 		if cur:
 			cur.close()
-		return False
 
 
 def execute_query(query: SQL, params=None):
