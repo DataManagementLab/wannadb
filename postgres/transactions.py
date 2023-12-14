@@ -9,8 +9,8 @@ from postgres.util import execute_transaction
 
 def createSchema(schema):
 	try:
-		create_schema_query = sql.SQL("CREATE SCHEMA IF NOT EXISTS {};").format(sql.Identifier(schema))
-		execute_transaction(create_schema_query, ())
+		create_schema_query = sql.SQL(f"CREATE SCHEMA {schema};")
+		execute_transaction(create_schema_query, (), fetch=False)
 		print(f"Schema {schema} created successfully.")
 	except Exception as e:
 		print(f"Error creating schema {schema}: {e}")
@@ -18,8 +18,8 @@ def createSchema(schema):
 
 def dropSchema(schema):
 	try:
-		drop_schema_query = sql.SQL("DROP SCHEMA IF EXISTS {} CASCADE;").format(sql.Identifier(schema))
-		execute_transaction(drop_schema_query, ())
+		drop_schema_query = sql.SQL(f"DROP SCHEMA IF EXISTS {schema} CASCADE;")
+		execute_transaction(drop_schema_query, (), fetch=False)
 		print(f"Schema {schema} dropped successfully.")
 	except Exception as e:
 		print(f"Error dropping schema {schema}: {e}")
