@@ -6,6 +6,25 @@ from postgres.util import execute_transaction
 
 
 # WARNING: This is only for development purposes!
+
+def createSchema(schema):
+	try:
+		create_schema_query = sql.SQL("CREATE SCHEMA IF NOT EXISTS {};").format(sql.Identifier(schema))
+		execute_transaction(create_schema_query, ())
+		print(f"Schema {schema} created successfully.")
+	except Exception as e:
+		print(f"Error creating schema {schema}: {e}")
+
+
+def dropSchema(schema):
+	try:
+		drop_schema_query = sql.SQL("DROP SCHEMA IF EXISTS {} CASCADE;").format(sql.Identifier(schema))
+		execute_transaction(drop_schema_query, ())
+		print(f"Schema {schema} dropped successfully.")
+	except Exception as e:
+		print(f"Error dropping schema {schema}: {e}")
+
+
 def dropTables(schema):
 	try:
 		drop_table_query = sql.SQL(f"DROP TABLE IF EXISTS {schema}.users CASCADE;\n"
