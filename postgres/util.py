@@ -1,5 +1,6 @@
 import psycopg2
-from psycopg2 import extensions, IntegrityError
+from psycopg2 import extensions, IntegrityError, sql
+from psycopg2.sql import SQL
 
 DB_NAME = "userManagement"
 DB_USER = "postgres"
@@ -22,7 +23,7 @@ def connectPG():
 		raise Exception("Connection failed because: \n", e)
 
 
-def execute_transaction(query, params=None, commit=False):
+def execute_transaction(query, params=None, commit=False ,fetch=True):
 	conn = None
 	cur = None
 	try:
@@ -34,8 +35,10 @@ def execute_transaction(query, params=None, commit=False):
 		if commit:
 			conn.commit()
 
-		result = cur.fetchall()
-		return result if result else None
+		if fetch:
+			result = cur.fetchall()
+			return result if result else None
+		return True
 
 	except IntegrityError as e:
 		raise IntegrityError(f"Query execution failed for transaction: {query} \nParams: {params} \nError: {e}")
@@ -48,9 +51,10 @@ def execute_transaction(query, params=None, commit=False):
 			conn.close()
 		if cur:
 			cur.close()
+		return False
 
 
-def execute_query(query, params=None):
+def execute_query(query: SQL, params=None):
 	conn = None
 	cur = None
 	try:
@@ -65,9 +69,9 @@ def execute_query(query, params=None):
 
 	except Exception as e:
 		raise Exception(f"Query execution failed for query:\n"
-			  f"{query} \n"
-			  f"Params: {params} \n"
-			  f"Error: {e}")
+						f"{query} \n"
+						f"Params: {params} \n"
+						f"Error: {e}")
 	finally:
 		if conn:
 			conn.close()
