@@ -7,17 +7,24 @@ from postgres.transactions import createUserTable, createDocumentsTable, createO
 dev_routes = Blueprint('dev_routes', __name__, url_prefix='/dev')
 
 
-@dev_routes.route('/createTables', methods=['POST'])
-def createTables():
+@dev_routes.route('/createTables/<schema>', methods=['POST'])
+def create_tables(schema):
 	try:
-		dropTables()
-		createUserTable()
-		createOrganisationTable()
-		createMembershipTable()
-		createDocumentsTable()
-		return 'create Tables successfully'
+		createUserTable(schema)
+		createOrganisationTable(schema)
+		createMembershipTable(schema)
+		createDocumentsTable(schema)
+		return f'create Tables in {schema} successfully'
 	except Exception as e:
-		print("create Tables failed because: \n", e)
+		print("create Tables in {schema} failed because: \n", e)
+
+@dev_routes.route('/dropTables/<schema>', methods=['POST'])
+def drop_tables(schema):
+	try:
+		dropTables(schema)
+		return f'drop Tables in {schema} successfully'
+	except Exception as e:
+		print("drop Tables in {schema} failed because: \n", e)
 
 
 @dev_routes.route('/getDocument/<_id>', methods=['GET'])

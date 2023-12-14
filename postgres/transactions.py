@@ -6,20 +6,20 @@ from postgres.util import execute_transaction
 
 
 # WARNING: This is only for development purposes!
-def dropTables():
+def dropTables(schema):
 	try:
-		drop_table_query = sql.SQL("DROP TABLE IF EXISTS public.users CASCADE;\n"
-								   "DROP TABLE IF EXISTS public.documents CASCADE;\n"
-								   "DROP TABLE IF EXISTS public.membership CASCADE;\n"
-								   "DROP TABLE IF EXISTS public.organisations CASCADE;")
+		drop_table_query = sql.SQL(f"DROP TABLE IF EXISTS {schema}.users CASCADE;\n"
+								   f"DROP TABLE IF EXISTS {schema}.documents CASCADE;\n"
+								   f"DROP TABLE IF EXISTS {schema}.membership CASCADE;\n"
+								   f"DROP TABLE IF EXISTS {schema}.organisations CASCADE;")
 		execute_transaction(drop_table_query, commit=True)
 	except Exception as e:
 		print("dropTables failed because: \n", e)
 
 
-def createUserTable():
+def createUserTable(schema):
 	try:
-		create_table_query = sql.SQL("""CREATE TABLE public.users
+		create_table_query = sql.SQL(f"""CREATE TABLE {schema}.users
 (
     id bigint NOT NULL GENERATED ALWAYS AS IDENTITY ( INCREMENT 1 START 1 MINVALUE 1 MAXVALUE 9223372036854775807 CACHE 1 ),
     username text COLLATE pg_catalog."default" NOT NULL,
@@ -35,9 +35,9 @@ TABLESPACE pg_default;
 		print("createUserTable failed because: \n", e)
 
 
-def createDocumentsTable():
+def createDocumentsTable(schema):
 	try:
-		create_table_query = sql.SQL("""CREATE TABLE public.documents
+		create_table_query = sql.SQL(f"""CREATE TABLE {schema}.documents
 (
     id bigint NOT NULL GENERATED ALWAYS AS IDENTITY ( INCREMENT 1 START 1 MINVALUE 1 MAXVALUE 9223372036854775807 CACHE 1 ),
     name text COLLATE pg_catalog."default" NOT NULL,
@@ -46,12 +46,12 @@ def createDocumentsTable():
     userid bigint NOT NULL,
     CONSTRAINT dokumentid PRIMARY KEY (id),
     CONSTRAINT documents_organisationid_fkey FOREIGN KEY (organisationid)
-        REFERENCES public.organisations (id) MATCH SIMPLE
+        REFERENCES {schema}.organisations (id) MATCH SIMPLE
         ON UPDATE NO ACTION
         ON DELETE NO ACTION
         NOT VALID,
     CONSTRAINT documents_userid_fkey FOREIGN KEY (userid)
-        REFERENCES public.users (id) MATCH SIMPLE
+        REFERENCES {schema}.users (id) MATCH SIMPLE
         ON UPDATE NO ACTION
         ON DELETE NO ACTION
         NOT VALID
@@ -63,21 +63,21 @@ TABLESPACE pg_default;""")
 		print("createUserTable failed because: \n", e)
 
 
-def createMembershipTable():
+def createMembershipTable(schema):
 	try:
-		create_table_query = sql.SQL("""CREATE TABLE IF NOT EXISTS public.membership
+		create_table_query = sql.SQL(f"""CREATE TABLE IF NOT EXISTS {schema}.membership
 (
     userid bigint NOT NULL,
     organisationid bigint NOT NULL,
     authorisation bigint NOT NULL DEFAULT 0,
     CONSTRAINT membership_pkey PRIMARY KEY (userid, organisationid),
     CONSTRAINT membership_organisationid_fkey FOREIGN KEY (organisationid)
-        REFERENCES public.organisations (id) MATCH SIMPLE
+        REFERENCES {schema}.organisations (id) MATCH SIMPLE
         ON UPDATE NO ACTION
         ON DELETE NO ACTION
         NOT VALID,
     CONSTRAINT membership_userid_fkey FOREIGN KEY (userid)
-        REFERENCES public.users (id) MATCH SIMPLE
+        REFERENCES {schema}.users (id) MATCH SIMPLE
         ON UPDATE NO ACTION
         ON DELETE NO ACTION
         NOT VALID
@@ -85,14 +85,14 @@ def createMembershipTable():
 
 TABLESPACE pg_default;
 
-ALTER TABLE IF EXISTS public.membership
+ALTER TABLE IF EXISTS {schema}.membership
     OWNER to postgres;
 -- Index: fki_organisationid
 
--- DROP INDEX IF EXISTS public.fki_organisationid;
+-- DROP INDEX IF EXISTS {schema}.fki_organisationid;
 
 CREATE INDEX IF NOT EXISTS fki_organisationid
-    ON public.membership USING btree
+    ON {schema}.membership USING btree
     (organisationid ASC NULLS LAST)
     TABLESPACE pg_default;""")
 		execute_transaction(create_table_query, commit=True)
@@ -100,9 +100,9 @@ CREATE INDEX IF NOT EXISTS fki_organisationid
 		print("createUserTable failed because: \n", e)
 
 
-def createOrganisationTable():
+def createOrganisationTable(schema):
 	try:
-		create_table_query = sql.SQL("""CREATE TABLE IF NOT EXISTS public.organisations
+		create_table_query = sql.SQL(f"""CREATE TABLE IF NOT EXISTS {schema}.organisations
 (
     id bigint NOT NULL GENERATED ALWAYS AS IDENTITY ( INCREMENT 1 START 1 MINVALUE 1 MAXVALUE 9223372036854775807 CACHE 1 ),
     name text COLLATE pg_catalog."default" NOT NULL,
