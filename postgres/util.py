@@ -23,7 +23,7 @@ def connectPG():
 		raise Exception("Connection failed because: \n", e)
 
 
-def execute_transaction(query, params=None, commit=False ,fetch=True):
+def execute_transaction(query, params=None, commit=False, fetch=True):
 	conn = None
 	cur = None
 	try:
