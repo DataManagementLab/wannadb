@@ -44,8 +44,8 @@ def login():
 		return make_response({'message': 'Wrong Password'}, 401)
 
 
-@user_management.route('/creatOrganisation', methods=['POST'])
-def creat_organisation():
+@user_management.route('/createOrganisation', methods=['POST'])
+def create_organisation():
 	data = request.get_json()
 	authorization = data.get("authorization")
 	token = tokenDecode(authorization)
