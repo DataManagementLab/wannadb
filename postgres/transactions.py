@@ -181,8 +181,11 @@ def deleteUser(user: str, password: str):
 			raise Exception("wrong password")
 
 		delete_query = sql.SQL("DELETE FROM users WHERE username = %s;")
-		execute_transaction(delete_query, (user,), commit=True)
+		response = execute_transaction(delete_query, (user,), commit=True, fetch=False)
 
+		if isinstance(response, bool):
+			return response
+		raise TypeError("response :", response)
 	except Exception as e:
 		print("deleteUser failed because: \n", e)
 
