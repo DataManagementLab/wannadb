@@ -3,7 +3,7 @@ from flask import Blueprint, request, make_response
 
 from config import Token, tokenEncode, tokenDecode
 from postgres.queries import checkPassword
-from postgres.transactions import addUser, addOrganisation, addUserToOrganisation
+from postgres.transactions import addUser, addOrganisation, addUserToOrganisation, deleteUser
 
 user_management = Blueprint('user_management', __name__)
 
@@ -42,6 +42,25 @@ def login():
 							  'token': token}, 200)
 	else:
 		return make_response({'message': 'Wrong Password'}, 401)
+
+
+@user_management.route('/deleteUser/', methods=['POST'])
+def delete_user():
+	data = request.get_json()
+	username = data.get('username')
+	password = data.get('password')
+	authorization = data.get("authorization")
+
+	check, _id = checkPassword(username, password)
+	token = tokenDecode(authorization)
+	if not (token and check and token.id == _id):
+		return make_response({'message': 'User not authorised '}, 401)
+
+	response = deleteUser(username, password)
+
+	if response:
+		return make_response({'message': 'User deleted'}, 204)
+	return make_response({'message': 'User deleted failed'}, 409)
 
 
 @user_management.route('/createOrganisation', methods=['POST'])
