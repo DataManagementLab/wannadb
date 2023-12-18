@@ -8,11 +8,10 @@ main_routes = Blueprint('main_routes', __name__, url_prefix='/data')
 
 @main_routes.route('/upload', methods=['POST'])
 def upload_files():
-	try:
 		files = request.files.getlist('file')
 		form = request.form
 
-		authorization = form.get("authorization")
+		authorization = request.headers.get("authorization")
 		organisation_id = int(form.get("organisationId"))
 
 		token = tokenDecode(authorization)
@@ -35,5 +34,4 @@ def upload_files():
 			return make_response(document_ids, 207)
 		return make_response(document_ids, 201)
 
-	except Exception as e:
-		return make_response({"message": "Upload failed", "details": str(e)}, 500)
+
