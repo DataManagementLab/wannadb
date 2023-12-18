@@ -2,7 +2,7 @@
 from flask import Blueprint, request, make_response
 
 from config import Token, tokenEncode, tokenDecode
-from postgres.queries import checkPassword
+from postgres.queries import checkPassword, getOrganisationIDsFromUserId
 from postgres.transactions import addUser, addOrganisation, addUserToOrganisation, deleteUser
 
 user_management = Blueprint('user_management', __name__)
