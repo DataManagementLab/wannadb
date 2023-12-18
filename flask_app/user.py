@@ -51,11 +51,17 @@ def delete_user():
 	data = request.get_json()
 	username = data.get('username')
 	password = data.get('password')
-	authorization = data.get("authorization")
+	authorization = request.headers.get("Authorization")
+
+	if authorization is None:
+		return make_response({'message': 'no authorization '}, 401)
 
 	check, _id = checkPassword(username, password)
 	token = tokenDecode(authorization)
-	if not (token and check and token.id == _id):
+	if token is None:
+		return make_response({'message': 'no authorization '}, 400)
+
+	if check is False or token.id != _id:
 		return make_response({'message': 'User not authorised '}, 401)
 
 	response = deleteUser(username, password)
@@ -63,6 +69,7 @@ def delete_user():
 	if response:
 		return make_response({'message': 'User deleted'}, 204)
 	return make_response({'message': 'User deleted failed'}, 409)
+
 
 
 @user_management.route('/createOrganisation', methods=['POST'])
