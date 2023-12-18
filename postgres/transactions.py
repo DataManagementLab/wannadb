@@ -149,6 +149,8 @@ def addUser(user: str, password: str):
 		data_to_insert = (user, pwHash)
 		response = execute_transaction(insert_data_query, data_to_insert, commit=True)
 		return int(response[0][0])
+	except IntegrityError:
+		return -1
 
 	except Exception as e:
 		print("addUser failed because: \n", e)
@@ -180,7 +182,9 @@ def deleteUser(user: str, password: str):
 		if not pwcheck:
 			raise Exception("wrong password")
 
-		delete_query = sql.SQL("DELETE FROM users WHERE username = %s;")
+		delete_query = sql.SQL("""
+  DELETE FROM users WHERE username = %s
+""")
 		response = execute_transaction(delete_query, (user,), commit=True, fetch=False)
 
 		if isinstance(response, bool):
