@@ -71,21 +71,18 @@ def delete_user():
 	return make_response({'message': 'User deleted failed'}, 409)
 
 
-
 @user_management.route('/createOrganisation', methods=['POST'])
 def create_organisation():
 	data = request.get_json()
-	authorization = data.get("authorization")
-	token = tokenDecode(authorization)
-	if token is None:
-		return make_response({}, 401)
+	authorization = request.headers.get("Authorization")
 
 	organisation_name = data.get("organisationName")
 
 	organisation_id, error = addOrganisation(organisation_name, authorization)
 	if error:
 		return make_response({"error": error}, 409)
-	return make_response({'organisation_id': organisation_id}, 200)
+	else:
+		return make_response({'organisation_id': organisation_id}, 200)
 
 
 @user_management.route('/addUserToOrganisation', methods=['POST'])
