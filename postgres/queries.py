@@ -2,6 +2,8 @@ from typing import Union, Tuple
 
 import bcrypt
 from psycopg2 import sql
+
+from config import tokenDecode, Token
 from postgres.util import execute_query
 
 
@@ -21,19 +23,27 @@ def getMemberIDsFromOrganisationID(organisationID: int):
 
 
 def getOrganisationIDsFromUserId(userID: int):
-	select_query = sql.SQL("SELECT organisationid FROM membership WHERE userid = %s;")
-	return execute_query(select_query, (userID,))
+	try:
+		select_query = sql.SQL("SELECT organisationid FROM membership WHERE userid = %s;")
+		response = execute_query(select_query, (userID,))
+		if isinstance(response, list):
+			return response[0], None
+		elif response is None:
+			return [-1], None
+		else:
+			return None, "Unexpected response format"
+
+	except Exception as e:
+		return None, e
 
 
 def checkPassword(user: str, password: str) -> Union[tuple[bool, int], tuple[bool, str]]:
 	select_query = sql.SQL("SELECT password,id as pw FROM users WHERE username = %s ")
 	_password, _id = execute_query(select_query, (user,))[0]
+
 	try:
 		if _password:
-			if isinstance(_password, str):
-				stored_password = bytes(_password.encode('utf-8'))
-			else:
-				stored_password = bytes(_password)
+			stored_password = bytes(_password)
 			check = bcrypt.checkpw(password.encode('utf-8'), stored_password)
 			if check:
 				return bcrypt.checkpw(password.encode('utf-8'), stored_password), int(_id)
