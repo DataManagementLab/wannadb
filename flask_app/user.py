@@ -16,14 +16,16 @@ def register():
 
 	_id = addUser(username, password)
 
-	if _id:
+	if _id > 0:
 		user = Token(username, _id)
 		token = tokenEncode(user.json())
 
 		return make_response({'message': 'User registered successfully',
 							  'token': token}, 201)
-
-	return make_response({'message': 'User register failed'}, 422)
+	elif _id < 0:
+		return make_response({'message': 'Conflicting username'}, 409)
+	else:
+		return make_response({'message': 'User register failed'}, 422)
 
 
 @user_management.route('/login', methods=['POST'])
