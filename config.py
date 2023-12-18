@@ -19,6 +19,8 @@ def tokenEncode(obj: dict[str, Any]):
 
 
 def tokenDecode(string: str):
+	if string is None or len(string) < 2:
+		raise ValueError("string value is: ", string)
 	try:
 		decoded_token = jwt.decode(string, _jwtkey, leeway=datetime.timedelta(minutes=1), algorithms="HS256",
 								   verify=True)
