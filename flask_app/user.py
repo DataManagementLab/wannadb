@@ -85,6 +85,23 @@ def create_organisation():
 		return make_response({'organisation_id': organisation_id}, 200)
 
 
+@user_management.route('/getOrganisations', methods=['GET'])
+def get_organisations():
+	authorization = request.headers.get("authorization")
+	token = tokenDecode(authorization)
+	if token is None:
+		return make_response({}, 401)
+
+	organisation_ids, error = getOrganisationIDsFromUserId(token.id)
+	print(organisation_ids)
+	if error:
+		return make_response({"error": error}, 409)
+	elif organisation_ids[0] < 0:
+		return make_response({'user is in no organisation'}, 204)
+	else:
+		return make_response({'organisation_ids': organisation_ids}, 200)
+
+
 @user_management.route('/addUserToOrganisation', methods=['POST'])
 def add_user_to_organisation():
 	data = request.get_json()
