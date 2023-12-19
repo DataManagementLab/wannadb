@@ -92,13 +92,29 @@ def get_organisations():
 		return make_response({}, 401)
 
 	organisation_ids, error = getOrganisationIDsFromUserId(token.id)
-	print(organisation_ids)
-	if error:
-		return make_response({"error": error}, 409)
-	elif organisation_ids[0] < 0:
-		return make_response({'user is in no organisation'}, 204)
-	else:
+	if error is None:
 		return make_response({'organisation_ids': organisation_ids}, 200)
+	if organisation_ids[0] < 0:
+		return make_response({'user is in no organisation'}, 204)
+		return make_response({"error": error}, 409)
+
+
+
+
+@user_management.route('/getOrganisationName/<_id>', methods=['GET'])
+def get_organisation_name(_id):
+	authorization = request.headers.get("authorization")
+	token = tokenDecode(authorization)
+	if token is None:
+		return make_response({}, 401)
+
+	organisation_name = getOrganisationName(_id)
+
+	if organisation_name == -1:
+		return make_response({'organisation not found': organisation_name}, 404)
+	if isinstance(organisation_name, str):
+		return make_response({"organisation_name": organisation_name}, 200)
+	return make_response({"error": "error"}, 409)
 
 
 @user_management.route('/addUserToOrganisation', methods=['POST'])
