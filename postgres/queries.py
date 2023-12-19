@@ -37,10 +37,29 @@ def getOrganisationIDsFromUserId(userID: int):
 		if isinstance(response, list):
 			return response[0], None
 		elif response is None:
-			return [-1], None
+			return -1, None
 		else:
 			return None, "Unexpected response format"
 
+	except Exception as e:
+		return None, e
+
+
+def getOrganisationFromUserId(user_id: int):
+	try:
+		select_query = sql.SQL("""	SELECT organisationid, o.name
+									FROM membership
+									JOIN organisations o ON membership.organisationid = o.id
+									WHERE userid = %s;""")
+		response = execute_query(select_query, (user_id,))
+		if isinstance(response, list):
+			organisations: list[dict[str, Union[str, int]]] = []
+			for org in response:
+				organisations.append({"id": int(org[0]), "name": str(org[1])})
+			return organisations, None
+		if response is None:
+			return [-1], None
+		return None, "Unexpected response format"
 	except Exception as e:
 		return None, e
 
