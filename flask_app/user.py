@@ -2,7 +2,7 @@
 from flask import Blueprint, request, make_response
 
 from config import Token, tokenEncode, tokenDecode
-from postgres.queries import checkPassword, getOrganisationIDsFromUserId
+from postgres.queries import checkPassword, getOrganisationIDsFromUserId, getOrganisationName
 from postgres.transactions import addUser, addOrganisation, addUserToOrganisation, deleteUser
 
 user_management = Blueprint('user_management', __name__)
@@ -22,10 +22,9 @@ def register():
 
 		return make_response({'message': 'User registered successfully',
 							  'token': token}, 201)
-	elif _id < 0:
+	if _id < 0:
 		return make_response({'message': 'Conflicting username'}, 409)
-	else:
-		return make_response({'message': 'User register failed'}, 422)
+	return make_response({'message': 'User register failed'}, 422)
 
 
 @user_management.route('/login', methods=['POST'])
@@ -42,8 +41,9 @@ def login():
 
 		return make_response({'message': 'Log in successfully',
 							  'token': token}, 200)
-	else:
+	if not _correct:
 		return make_response({'message': 'Wrong Password'}, 401)
+	return make_response({'message': 'User login failed'}, 422)
 
 
 @user_management.route('/deleteUser/', methods=['POST'])
@@ -79,10 +79,9 @@ def create_organisation():
 	organisation_name = data.get("organisationName")
 
 	organisation_id, error = addOrganisation(organisation_name, authorization)
-	if error:
-		return make_response({"error": error}, 409)
-	else:
+	if error is None:
 		return make_response({'organisation_id': organisation_id}, 200)
+	return make_response({"error": error}, 409)
 
 
 @user_management.route('/getOrganisations', methods=['GET'])
