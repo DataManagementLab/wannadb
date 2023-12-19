@@ -2,7 +2,8 @@
 from flask import Blueprint, request, make_response
 
 from config import Token, tokenEncode, tokenDecode
-from postgres.queries import checkPassword, getOrganisationIDsFromUserId, getOrganisationName
+from postgres.queries import (checkPassword,
+							  getOrganisationIDsFromUserId, getOrganisationName, getOrganisationFromUserId)
 from postgres.transactions import addUser, addOrganisation, addUserToOrganisation, deleteUser
 
 user_management = Blueprint('user_management', __name__)
@@ -95,7 +96,7 @@ def get_organisations():
 	if error is None:
 		return make_response({'organisation_ids': organisation_ids}, 200)
 	if organisation_ids[0] < 0:
-		return make_response({'user is in no organisation'}, 204)
+		return make_response({'user is in no organisation'}, 404)
 	return make_response({"error": error}, 409)
 
 
@@ -113,6 +114,21 @@ def get_organisation_name(_id):
 	if isinstance(organisation_name, str):
 		return make_response({"organisation_name": organisation_name}, 200)
 	return make_response({"error": "error"}, 409)
+
+
+@user_management.route('/getOrganisationNames', methods=['GET'])
+def get_organisation_names():
+	authorization = request.headers.get("authorization")
+	token = tokenDecode(authorization)
+	if token is None:
+		return make_response({}, 401)
+
+	organisations, error = getOrganisationFromUserId(token.id)
+	if error is None:
+		return make_response({'organisations': organisations}, 200)
+	if organisations < 0:
+		return make_response({'user is in no organisation'}, 404)
+	return make_response({"error": error}, 409)
 
 
 @user_management.route('/addUserToOrganisation', methods=['POST'])
