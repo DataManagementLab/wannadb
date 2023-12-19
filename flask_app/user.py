@@ -96,9 +96,7 @@ def get_organisations():
 		return make_response({'organisation_ids': organisation_ids}, 200)
 	if organisation_ids[0] < 0:
 		return make_response({'user is in no organisation'}, 204)
-		return make_response({"error": error}, 409)
-
-
+	return make_response({"error": error}, 409)
 
 
 @user_management.route('/getOrganisationName/<_id>', methods=['GET'])
