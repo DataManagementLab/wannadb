@@ -1,9 +1,6 @@
-from typing import Union, Tuple
-
+from typing import Union
 import bcrypt
 from psycopg2 import sql
-
-from config import tokenDecode, Token
 from postgres.util import execute_query
 
 
@@ -14,7 +11,18 @@ def getUserID(user: str):
 
 def getOrganisationID(organisation_name: str):
 	select_query = sql.SQL("SELECT id FROM organisations WHERE name = %s;")
-	return execute_query(select_query, (organisation_name,))
+	response = execute_query(select_query, (organisation_name,))
+	if response is None:
+		return -1
+	return int(response[0])
+
+
+def getOrganisationName(organisation_id: int):
+	select_query = sql.SQL("SELECT name FROM organisations WHERE id = %s;")
+	response = execute_query(select_query, (organisation_id,))
+	if response is None:
+		return -1
+	return str(response[0])
 
 
 def getMemberIDsFromOrganisationID(organisationID: int):
