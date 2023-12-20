@@ -11,7 +11,7 @@ from wannadb.data.data import Document, DocumentBase, InformationNugget
 from wannadb.data.signals import CachedContextSentenceSignal, CachedDistanceSignal, \
     SentenceStartCharsSignal, CurrentMatchIndexSignal, LabelSignal
 from wannadb.interaction import BaseInteractionCallback
-from wannadb.matching.custom_match_extraction import BaseCustomMatchExtractor, ParallelWrapper
+from wannadb.matching.custom_match_extraction import BaseCustomMatchExtractor
 from wannadb.matching.distance import BaseDistance
 from wannadb.statistics import Statistics
 from wannadb.status import BaseStatusCallback
