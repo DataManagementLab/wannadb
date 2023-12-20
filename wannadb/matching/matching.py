@@ -11,7 +11,7 @@ from wannadb.data.data import Document, DocumentBase, InformationNugget
 from wannadb.data.signals import CachedContextSentenceSignal, CachedDistanceSignal, \
     SentenceStartCharsSignal, CurrentMatchIndexSignal, LabelSignal
 from wannadb.interaction import BaseInteractionCallback
-from wannadb.matching.custom_match_extraction import BaseCustomMatchExtractor
+from wannadb.matching.custom_match_extraction import BaseCustomMatchExtractor, ParallelWrapper
 from wannadb.matching.distance import BaseDistance
 from wannadb.statistics import Statistics
 from wannadb.status import BaseStatusCallback
@@ -328,11 +328,18 @@ class RankingBasedMatcher(BaseMatcher):
                                 document[CurrentMatchIndexSignal] = ix
                     distances_based_on_label = False
 
-                    # Find more nuggets that are similar to this match
+                    # Find more nuggets that are similar to this match, perform timekeeping
+                    t_minus_custom_extraction = time.time()
                     additional_nuggets: List[Tuple[Document, int, int]] = self._find_additional_nuggets(confirmed_nugget, remaining_documents)
+                    t_custom_extraction = time.time() - t_minus_custom_extraction
+                    logger.info(f"Execution of custom match extraction"
+                                f" with {str(self._find_additional_nuggets)}"
+                                f" took {t_custom_extraction} seconds"
+                                f" for {len(remaining_documents)} documents.")
                     statistics[attribute.name]["num_additional_nuggets"] += len(additional_nuggets)
                     if len(additional_nuggets) == 0:
                         continue
+
                     # convert nugget description into InformationNugget
                     additional_nuggets = list(map(lambda i: InformationNugget(*i), additional_nuggets))
                     for additional_nugget in additional_nuggets:

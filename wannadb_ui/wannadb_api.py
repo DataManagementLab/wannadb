@@ -12,7 +12,7 @@ from wannadb.configuration import Pipeline
 from wannadb.data.data import Attribute, Document, DocumentBase
 from wannadb.interaction import EmptyInteractionCallback, InteractionCallback
 from wannadb.matching.custom_match_extraction import ExactCustomMatchExtractor, RegexCustomMatchExtractor, \
-    NgramCustomMatchExtractor
+    NgramCustomMatchExtractor, QuestionAnsweringCustomMatchExtractor, ParallelWrapper
 from wannadb.matching.distance import SignalsMeanDistance
 from wannadb.matching.matching import RankingBasedMatcher
 from wannadb.preprocessing.embedding import BERTContextSentenceEmbedder, RelativePositionEmbedder, \
@@ -393,7 +393,7 @@ class WannaDBAPI(QObject):
                                 RelativePositionEmbedder()
                             ]
                         ),
-                        find_additional_nuggets=NgramCustomMatchExtractor()
+                        find_additional_nuggets=ParallelWrapper(QuestionAnsweringCustomMatchExtractor())
                     )
                 ]
             )
