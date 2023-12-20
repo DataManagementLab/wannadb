@@ -10,7 +10,7 @@ from postgres.util import execute_transaction
 def createSchema(schema):
 	try:
 		create_schema_query = sql.SQL(f"CREATE SCHEMA {schema};")
-		execute_transaction(create_schema_query, (), fetch=False)
+		execute_transaction(create_schema_query, commit=True, fetch=False)
 		print(f"Schema {schema} created successfully.")
 	except Exception as e:
 		print(f"Error creating schema {schema}: {e}")
@@ -19,7 +19,7 @@ def createSchema(schema):
 def dropSchema(schema):
 	try:
 		drop_schema_query = sql.SQL(f"DROP SCHEMA IF EXISTS {schema} CASCADE;")
-		execute_transaction(drop_schema_query, (), fetch=False)
+		execute_transaction(drop_schema_query, commit=True,  fetch=False)
 		print(f"Schema {schema} dropped successfully.")
 	except Exception as e:
 		print(f"Error dropping schema {schema}: {e}")
@@ -49,7 +49,7 @@ def createUserTable(schema):
 
 TABLESPACE pg_default;
 """)
-		execute_transaction(create_table_query, commit=True)
+		execute_transaction(create_table_query, commit=True, fetch=False)
 	except Exception as e:
 		print("createUserTable failed because: \n", e)
 
@@ -66,18 +66,18 @@ def createDocumentsTable(schema):
     CONSTRAINT dokumentid PRIMARY KEY (id),
     CONSTRAINT documents_organisationid_fkey FOREIGN KEY (organisationid)
         REFERENCES {schema}.organisations (id) MATCH SIMPLE
-        ON UPDATE NO ACTION
-        ON DELETE NO ACTION
+        ON UPDATE CASCADE 
+        ON DELETE CASCADE 
         NOT VALID,
     CONSTRAINT documents_userid_fkey FOREIGN KEY (userid)
         REFERENCES {schema}.users (id) MATCH SIMPLE
-        ON UPDATE NO ACTION
-        ON DELETE NO ACTION
+        ON UPDATE CASCADE 
+        ON DELETE CASCADE 
         NOT VALID
 )
 
 TABLESPACE pg_default;""")
-		execute_transaction(create_table_query, commit=True)
+		execute_transaction(create_table_query, commit=True,fetch=False)
 	except Exception as e:
 		print("createUserTable failed because: \n", e)
 
@@ -92,13 +92,13 @@ def createMembershipTable(schema):
     CONSTRAINT membership_pkey PRIMARY KEY (userid, organisationid),
     CONSTRAINT membership_organisationid_fkey FOREIGN KEY (organisationid)
         REFERENCES {schema}.organisations (id) MATCH SIMPLE
-        ON UPDATE NO ACTION
-        ON DELETE NO ACTION
+        ON UPDATE CASCADE 
+        ON DELETE CASCADE 
         NOT VALID,
     CONSTRAINT membership_userid_fkey FOREIGN KEY (userid)
         REFERENCES {schema}.users (id) MATCH SIMPLE
-        ON UPDATE NO ACTION
-        ON DELETE NO ACTION
+        ON UPDATE CASCADE 
+        ON DELETE CASCADE 
         NOT VALID
 )
 
@@ -114,7 +114,7 @@ CREATE INDEX IF NOT EXISTS fki_organisationid
     ON {schema}.membership USING btree
     (organisationid ASC NULLS LAST)
     TABLESPACE pg_default;""")
-		execute_transaction(create_table_query, commit=True)
+		execute_transaction(create_table_query, commit=True, fetch=False)
 	except Exception as e:
 		print("createUserTable failed because: \n", e)
 
@@ -132,7 +132,7 @@ def createOrganisationTable(schema):
 TABLESPACE pg_default;
 
 """)
-		execute_transaction(create_table_query, commit=True)
+		execute_transaction(create_table_query, commit=True, fetch=False)
 	except Exception as e:
 		print("createUserTable failed because: \n", e)
 
