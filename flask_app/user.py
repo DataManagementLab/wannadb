@@ -4,7 +4,7 @@ from flask import Blueprint, request, make_response
 from config import Token, tokenEncode, tokenDecode
 from postgres.queries import (checkPassword,
 							  getOrganisationIDsFromUserId, getOrganisationName, getOrganisationFromUserId)
-from postgres.transactions import addUser, addOrganisation, addUserToOrganisation, deleteUser
+from postgres.transactions import addUser, addOrganisation, addUserToOrganisation, deleteUser, leaveOrganisation
 
 user_management = Blueprint('user_management', __name__)
 
@@ -83,6 +83,18 @@ def create_organisation():
 	if error is None:
 		return make_response({'organisation_id': organisation_id}, 200)
 	return make_response({"error": error}, 409)
+
+@user_management.route('/leaveOrganisation', methods=['POST'])
+def leave_organisation():
+	data = request.get_json()
+	authorization = request.headers.get("Authorization")
+
+	organisationId = data.get("organisationId")
+
+	success, error = leaveOrganisation(organisationId, authorization)
+	if success:
+		return make_response({'status': True}, 200)
+	return make_response({"status": False, "msg": str(error)}, 500)
 
 
 @user_management.route('/getOrganisations', methods=['GET'])

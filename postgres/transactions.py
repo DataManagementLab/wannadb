@@ -210,6 +210,28 @@ def addOrganisation(organisationName: str, sessionToken: str):
 
 	except Exception as e:
 		print("addOrganisation failed because: \n", e)
+  
+def leaveOrganisation(organisationId: int, sessionToken: str):
+	try:
+		token: Token = tokenDecode(sessionToken)
+		userid = token.id
+  
+		delete_query = sql.SQL("DELETE FROM membership WHERE userid = (%s) AND organisationid = (%s) returning organisationid")
+		execute_transaction(delete_query, (userid,organisationId, ), commit=True)
+
+		count_query = sql.SQL("SELECT COUNT(*) FROM membership WHERE organisationid = (%s)")
+		count = execute_transaction(count_query, [organisationId], commit=True)
+		count = int(count[0][0])
+		if count > 0:
+			return True, None
+
+		delete_query = sql.SQL("DELETE FROM organisations WHERE id = (%s)")
+		execute_transaction(delete_query, [organisationId], commit=True, fetch=False)
+		return True, None
+	except Exception as e:
+		print("leaveOrganisation failed because: \n", e)
+		return False, e
+      
 
 
 def addUserToOrganisation(organisationName: str, sessionToken: str, newUser: str):
