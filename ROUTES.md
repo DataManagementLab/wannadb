@@ -130,6 +130,43 @@ http://localhost:8000/creatOrganisation
     }
     ```
 
+**GET**
+
+getOrganisationMembers
+
+```
+http://localhost:8000/getOrganisationMembers/<id>
+```
+
+### Header
+
+```json
+{
+    "authorization": "---"
+}
+```
+
+### Response
+
+-   404: Organisation **not found**:
+    ```json
+    {
+        "error": "Organisation not found."
+    }
+    ```
+-   401: User **not authorized**:
+    ```json
+    {
+        "error": "User not authorized."
+    }
+    ```
+-   200: **success**:
+    ```json
+    {
+        "members": ["username1", "username2", "username3"]
+    }
+    ```
+
 **POST**
 
 leaveOrganisation
