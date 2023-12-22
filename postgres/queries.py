@@ -24,6 +24,9 @@ def getOrganisationName(organisation_id: int):
 		return -1
 	return str(response[0])
 
+def getMembersOfOrganisation(organisation_id: int):
+	select_query = sql.SQL("SELECT username FROM users WHERE id IN (SELECT userid FROM membership WHERE organisationid = %s);")
+	return execute_query(select_query, (organisation_id,))
 
 def getMemberIDsFromOrganisationID(organisationID: int):
 	select_query = sql.SQL("SELECT userid FROM membership WHERE organisationid = %s;")

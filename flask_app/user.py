@@ -2,7 +2,7 @@
 from flask import Blueprint, request, make_response
 
 from config import Token, tokenEncode, tokenDecode
-from postgres.queries import (checkPassword,
+from postgres.queries import (checkPassword, getMembersOfOrganisation,
 							  getOrganisationIDsFromUserId, getOrganisationName, getOrganisationFromUserId)
 from postgres.transactions import addUser, addOrganisation, addUserToOrganisation, deleteUser, leaveOrganisation
 
@@ -159,3 +159,20 @@ def add_user_to_organisation():
 	if error:
 		return make_response({"error": error}, 409)
 	return make_response({'organisation_id': organisation_id}, 200)
+
+@user_management.route('/getOrganisationMembers/<_id>', methods=['GET'])
+def get_organisation_members(_id):
+	authorization = request.headers.get("authorization")
+	token = tokenDecode(authorization)
+	if token is None:
+		return make_response({'error': 'no authorization'}, 401)
+
+	members_raw = getMembersOfOrganisation(_id)
+	if members_raw is None:
+		return make_response({'error':'organisation '+_id+' not found'}, 404)
+
+	members = []
+	for member in members_raw:
+		members.append(member[0])
+ 
+	return make_response({"members": members}, 200)
