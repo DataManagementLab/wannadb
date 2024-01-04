@@ -2,9 +2,9 @@
 from flask import Blueprint, request, make_response
 
 from config import Token, tokenEncode, tokenDecode
-from postgres.queries import (checkPassword,
+from postgres.queries import (checkPassword, getMembersOfOrganisation,
 							  getOrganisationIDsFromUserId, getOrganisationName, getOrganisationFromUserId)
-from postgres.transactions import addUser, addOrganisation, addUserToOrganisation, deleteUser
+from postgres.transactions import addUser, addOrganisation, addUserToOrganisation, addUserToOrganisation2, deleteUser, leaveOrganisation
 
 user_management = Blueprint('user_management', __name__)
 
@@ -84,6 +84,18 @@ def create_organisation():
 		return make_response({'organisation_id': organisation_id}, 200)
 	return make_response({"error": error}, 409)
 
+@user_management.route('/leaveOrganisation', methods=['POST'])
+def leave_organisation():
+	data = request.get_json()
+	authorization = request.headers.get("Authorization")
+
+	organisationId = data.get("organisationId")
+
+	success, error = leaveOrganisation(organisationId, authorization)
+	if success:
+		return make_response({'status': True}, 200)
+	return make_response({"status": False, "msg": str(error)}, 500)
+
 
 @user_management.route('/getOrganisations', methods=['GET'])
 def get_organisations():
@@ -133,17 +145,34 @@ def get_organisation_names():
 
 @user_management.route('/addUserToOrganisation', methods=['POST'])
 def add_user_to_organisation():
-	data = request.get_json()
-	authorization = data.get("authorization")
+	authorization = request.headers.get("authorization")
 	token = tokenDecode(authorization)
 	if token is None:
-		return make_response({}, 401)
+		return make_response({'error': 'no authorization'}, 401)
 
-	organisation_name = data.get("organisationName")
+	data = request.get_json()
+	organisation_name = data.get("organisationId")
 	new_user = data.get("newUser")
 
-	organisation_id, error = addUserToOrganisation(organisation_name, authorization, new_user)
+	organisation_id, error = addUserToOrganisation2(organisation_name, new_user)
 
 	if error:
 		return make_response({"error": error}, 409)
 	return make_response({'organisation_id': organisation_id}, 200)
+
+@user_management.route('/getOrganisationMembers/<_id>', methods=['GET'])
+def get_organisation_members(_id):
+	authorization = request.headers.get("authorization")
+	token = tokenDecode(authorization)
+	if token is None:
+		return make_response({'error': 'no authorization'}, 401)
+
+	members_raw = getMembersOfOrganisation(_id)
+	if members_raw is None:
+		return make_response({'error':'organisation '+_id+' not found'}, 404)
+
+	members = []
+	for member in members_raw:
+		members.append(member[0])
+ 
+	return make_response({"members": members}, 200)

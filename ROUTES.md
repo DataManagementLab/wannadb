@@ -93,7 +93,7 @@ http://localhost:8000/login
         "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1..."
     }
     ```
-    
+
 ---
 
 ## Organisation
@@ -120,19 +120,91 @@ http://localhost:8000/creatOrganisation
 -   409: duplication **Conflict**:
     ```json
     {
-    "error": "name already exists."
+        "error": "name already exists."
     }
     ```
 -   200: **success**:
     ```json
     {
-    "organisation_id": "---"
+        "organisation_id": "---"
     }
     ```
-    
+
+**GET**
+
+getOrganisationMembers
+
+```
+http://localhost:8000/getOrganisationMembers/<id>
+```
+
+### Header
+
+```json
+{
+    "authorization": "---"
+}
+```
+
+### Response
+
+-   404: Organisation **not found**:
+    ```json
+    {
+        "error": "Organisation not found."
+    }
+    ```
+-   401: User **not authorized**:
+    ```json
+    {
+        "error": "User not authorized."
+    }
+    ```
+-   200: **success**:
+    ```json
+    {
+        "members": ["username1", "username2", "username3"]
+    }
+    ```
+
 **POST**
 
-creatOrganisation
+leaveOrganisation
+
+_Leave a organisation and delete the organisation if the user is the last member._
+
+```
+http://localhost:8000/leaveOrganisation
+```
+
+### Body
+
+```json
+{
+    "authorization": "---",
+    "organisationId": "---"
+}
+```
+
+### Response
+
+-   500: **error**:
+    ```json
+    {
+        "status": false,
+        "msg": "error message"
+    }
+    ```
+-   200: **success**:
+    ```json
+    {
+        "status": true
+    }
+    ```
+
+**POST**
+
+addUserToOrganisation
 
 ```
 http://localhost:8000/addUserToOrganisation
@@ -153,13 +225,13 @@ http://localhost:8000/addUserToOrganisation
 -   409: duplication **Conflict**: (temp)
     ```json
     {
-    "error": "error message" 
+        "error": "error message"
     }
     ```
 -   200: **success**:
     ```json
     {
-    "organisation_id": "---"
+        "organisation_id": "---"
     }
     ```
 
@@ -213,7 +285,6 @@ http://localhost:8000/dev/getDocument/<_id>
 ### Response
 
 -   String of File Content
-
 
 ---
 

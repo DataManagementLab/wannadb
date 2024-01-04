@@ -210,6 +210,28 @@ def addOrganisation(organisationName: str, sessionToken: str):
 
 	except Exception as e:
 		print("addOrganisation failed because: \n", e)
+  
+def leaveOrganisation(organisationId: int, sessionToken: str):
+	try:
+		token: Token = tokenDecode(sessionToken)
+		userid = token.id
+  
+		delete_query = sql.SQL("DELETE FROM membership WHERE userid = (%s) AND organisationid = (%s) returning organisationid")
+		execute_transaction(delete_query, (userid,organisationId, ), commit=True)
+
+		count_query = sql.SQL("SELECT COUNT(*) FROM membership WHERE organisationid = (%s)")
+		count = execute_transaction(count_query, [organisationId], commit=True)
+		count = int(count[0][0])
+		if count > 0:
+			return True, None
+
+		delete_query = sql.SQL("DELETE FROM organisations WHERE id = (%s)")
+		execute_transaction(delete_query, [organisationId], commit=True, fetch=False)
+		return True, None
+	except Exception as e:
+		print("leaveOrganisation failed because: \n", e)
+		return False, e
+      
 
 
 def addUserToOrganisation(organisationName: str, sessionToken: str, newUser: str):
@@ -247,6 +269,24 @@ INSERT INTO membership (userid, organisationid)
 
 	except Exception as e:
 		print("addUserToOrganisation failed because: \n", e)
+
+def addUserToOrganisation2(organisationId: int, newUser: str):
+	try:
+		select_id_query = sql.SQL("SELECT id FROM users WHERE username = (%s)")
+		userid = execute_transaction(select_id_query, (newUser,), commit=True)
+		if userid is None:
+			return None, "User does not exist"
+
+		insert_query = sql.SQL("INSERT INTO membership (userid, organisationid) VALUES (%s, %s) returning organisationid")
+		organisation_id = execute_transaction(insert_query, (userid[0][0], organisationId), commit=True)
+		if organisation_id is None:
+			return None, "you have no privileges in this organisation"
+		return int(organisation_id[0][0]), None
+	except IntegrityError:
+		return None, "User already in organisation"
+	except Exception as e:
+		print("addUserToOrganisation2w failed because: \n", e)
+		return None, 'Unknown error'
 
 
 def removeUserFromOrganisation(organisationName: str, sessionToken: str, userToRemove: str):
