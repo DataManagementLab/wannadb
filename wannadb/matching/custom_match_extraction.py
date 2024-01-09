@@ -6,11 +6,11 @@
 import abc
 import logging
 import multiprocessing
-import re
 import numpy as np
 from itertools import repeat
 from nltk import ngrams
-from typing import List, Tuple, Union
+from nltk.corpus import wordnet
+from typing import List, Tuple
 from transformers import pipeline
 from wannadb import resources
 from wannadb.data.data import InformationNugget, Document
@@ -42,6 +42,20 @@ class BaseCustomMatchExtractor(abc.ABC):
             Represents this class as a string.
         """
         return self.identifier
+
+    @staticmethod
+    def preprocess_documents(documents: List[Document]) -> List[Document]:
+        """
+            Apply any needed preprocessing to the provided document base.
+
+            :param documents: The documents to preprocess
+            :return: A list of documents in the same order, with potential preprocessing
+        """
+
+        # If only one document is provided, e.g. by loop level parallelization
+        if not isinstance(documents, list):
+            documents = [documents]
+        return documents
 
 
 class ParallelWrapper:
@@ -75,7 +89,6 @@ class ParallelWrapper:
         # The thread of pools
         pool = multiprocessing.Pool(self.threads)
 
-        # TODO: Maybe apply_async?
         # Call the individual iterations of the model and distribute the document iterations among them
         thread_results = pool.starmap(self.model.__call__, zip(repeat(nugget), documents))
 
@@ -102,7 +115,7 @@ class ExactCustomMatchExtractor(BaseCustomMatchExtractor):
     identifier: str = "ExactCustomMatchExtractor"
 
     def __call__(
-            self, nugget: InformationNugget, documents: Union[Document, List[Document]]
+            self, nugget: InformationNugget, documents: List[Document]
     ) -> List[Tuple[Document, int, int]]:
         """
             Extracts nuggets from the documents that exactly match the text of the provided nugget.
@@ -114,9 +127,8 @@ class ExactCustomMatchExtractor(BaseCustomMatchExtractor):
         """
         new_nuggets = []
 
-        # If only one document is provided, e.g. by loop level parallelization
-        if not isinstance(documents, list):
-            documents = [documents]
+        # Potential preprocessing
+        documents = self.preprocess_documents(documents)
 
         for document in documents:
             doc_text = document.text.lower()
@@ -130,51 +142,6 @@ class ExactCustomMatchExtractor(BaseCustomMatchExtractor):
                     new_nuggets.append((document, start, start + len(nug_text)))
                     start += len(nug_text)
 
-        return new_nuggets
-
-
-class RegexCustomMatchExtractor(BaseCustomMatchExtractor):
-    """
-        Extractor based on finding matches in documents based on regular expressions.
-    """
-
-    identifier: str = "RegexCustomMatchExtractor"
-
-    def __init__(self) -> None:
-        """
-            Initializes and pre-compiles the pattern for the regex that is to be scanned due to computational efficiency
-        """
-
-        # Create regex pattern to find either the word president or dates.
-        # Compile it to one object and re-use it for computational efficiency
-        self.regex = re.compile(r'(president)|(\b(?:0?[1-9]|[12][0-9]|3[01])[/\.](?:0?[1-9]|1[0-2])[/\.]\d{4}\b)')
-
-    def __call__(
-            self, nugget: InformationNugget, documents: Union[Document, List[Document]]
-    ) -> List[Tuple[Document, int, int]]:
-        """
-            Extracts additional nuggets from all documents based on a regular expression.
-
-            :param nugget: The InformationNugget that should be matched against
-            :param documents: The set of documents to extract matches from, or a single document
-            :return: Returns a List of Tuples of matching nuggets, where the first entry denotes the corresponding
-            document of the nugget, the second and third entry denote the start and end indices of the match.
-        """
-
-        # Return list
-        new_nuggets = []
-
-        # If only one document is provided, e.g. by loop level parallelization
-        if not isinstance(documents, list):
-            documents = [documents]
-
-        # Find all matches in all documents to the compiled pattern and append the corresponding document coupled with
-        # the start and end indices of the span
-        for document in documents:
-            for match in self.regex.finditer(document.text.lower()):
-                new_nuggets.append((document, match.start(), match.end()))
-
-        # Return results
         return new_nuggets
 
 
@@ -196,14 +163,14 @@ class NgramCustomMatchExtractor(BaseCustomMatchExtractor):
         self.threshold = threshold
 
     def __call__(
-            self, nugget: InformationNugget, documents: Union[Document, List[Document]]
+            self, nugget: InformationNugget, documents: List[Document]
     ) -> List[Tuple[Document, int, int]]:
         """
             Extracts additional nuggets from all documents by computing ngrams matching the extracted nugget
             structure, computing their cosine similarity to the custom match and thresholding it.
 
             :param nugget: The InformationNugget that should be matched against
-            :param documents: The set of documents to extract matches from, or a single document
+            :param documents: The set of documents to extract matches from
             :return: Returns a List of Tuples of matching nuggets, where the first entry denotes the corresponding
             document of the nugget, the second and third entry denote the start and end indices of the match.
         """
@@ -215,9 +182,8 @@ class NgramCustomMatchExtractor(BaseCustomMatchExtractor):
         custom_match_embed = self.embedding_model.encode(nugget.text, show_progress_bar=False)
         ngram_length = len(nugget.text.split(" "))
 
-        # If only one document is provided, e.g. by loop level parallelization
-        if not isinstance(documents, list):
-            documents = [documents]
+        # Potential preprocessing
+        documents = self.preprocess_documents(documents)
 
         for document in documents:
             # Get document text
@@ -274,7 +240,7 @@ class QuestionAnsweringCustomMatchExtractor(BaseCustomMatchExtractor):
         self.threshold = threshold
 
     def __call__(
-            self, nugget: InformationNugget, documents: Union[Document, List[Document]]
+            self, nugget: InformationNugget, documents: List[Document]
     ) -> List[Tuple[Document, int, int]]:
         """
             Extracts additional nuggets from all documents by prompting the QA LLM for similar words to the provided
@@ -284,7 +250,7 @@ class QuestionAnsweringCustomMatchExtractor(BaseCustomMatchExtractor):
                 > What is the <attribute>, given the example <nugget>?
 
             :param nugget: The InformationNugget that should be matched against
-            :param documents: The set of documents to extract matches from, or a single document
+            :param documents: The set of documents to extract matches from
             :return: Returns a List of Tuples of matching nuggets, where the first entry denotes the corresponding
             document of the nugget, the second and third entry denote the start and end indices of the match.
         """
@@ -292,9 +258,8 @@ class QuestionAnsweringCustomMatchExtractor(BaseCustomMatchExtractor):
         # List of new matches
         new_matches = []
 
-        # If only one document is provided, e.g. by loop level parallelization
-        if not isinstance(documents, list):
-            documents = [documents]
+        # Potential preprocessing
+        documents = self.preprocess_documents(documents)
 
         for document in documents:
 
@@ -308,7 +273,77 @@ class QuestionAnsweringCustomMatchExtractor(BaseCustomMatchExtractor):
             model_output = self.qa_pipeline(model_input)
             if model_output["score"] > self.threshold:
                 new_matches.append((document, model_output["start"], model_output["end"]))
-                # logger.info(model_output)
 
         return new_matches
 
+
+class WordNetSimilarityCustomMatchExtractor(BaseCustomMatchExtractor):
+    """
+        Extractor that uses a semantic / lexical network (WordNet) to capture relationships between concepts and
+        computing their Wu-Palmer-Similarity as a measure of semantic similarity. The depth of the first common
+        preprocessor w.r.t to two concepts is taken as the similarity score.
+    """
+
+    identifier: str = "WordNetSimilarityCustomMatchExtractor"
+
+    def __init__(self, threshold=0.6) -> None:
+        """
+            Initialize this extractor by specifying the threshold that needs to be succeeded in order to classify
+            something as a match.
+
+            :param threshold: The threshold that is to be succeeded.
+        """
+
+        # Set threshold for the score by which a match is classified as valid
+        self.threshold = threshold
+
+    def __call__(
+            self, nugget: InformationNugget, documents: List[Document]
+    ) -> List[Tuple[Document, int, int]]:
+        """
+            Extracts tokens similar to the provided nugget from all provided documents by computing their first
+            common predecessor, calculating its depth w.r.t to the nuggets, and thresholding it to classify matches.
+
+            :param nugget: The InformationNugget that should be matched against
+            :param documents: The set of documents to extract matches from
+            :return: Returns a List of Tuples of matching nuggets, where the first entry denotes the corresponding
+            document of the nugget, the second and third entry denote the start and end indices of the match.
+        """
+
+        # List of new matches
+        matches = []
+
+        # Potential preprocessing
+        documents = self.preprocess_documents(documents)
+
+        # Compute the wordnet category for the nugget
+        nugget_syn = wordnet.synsets(nugget.text)
+
+        # If there is none, terminate since it won't work
+        if len(nugget_syn) < 1:
+            logger.info(f"Custom match {nugget.text} has no WordNet entry, no Wu-Palmer-Similarity computable")
+            return []
+
+        # Potential preprocessing
+        documents = self.preprocess_documents(documents)
+
+        # Otherwise, iterate through all documents, all tokens of it and get the wordnet entry
+        # Use loc to keep track of current position in a document and to shorten search time in documents
+        for doc in documents:
+            loc = 0
+            for tok in doc.text.split(" "):
+                syn = wordnet.synsets(tok)
+
+                # If there is one: Compute Wu-Palmer-Similarity and threshold it to classify matches
+                if len(syn) > 0:
+                    if nugget_syn[0].wup_similarity(syn[0]) > self.threshold:
+
+                        # Find the index in the text and append
+                        idx = doc.text.find(tok, loc)
+                        if idx > -1:
+                            logger.info(tok)
+                            matches.append((doc, idx, idx + len(tok)))
+                            loc = idx
+
+        # Return the matches
+        return matches
