@@ -4,6 +4,7 @@
 """
 
 import abc
+import faiss
 import logging
 import multiprocessing
 import numpy as np
@@ -346,4 +347,167 @@ class WordNetSimilarityCustomMatchExtractor(BaseCustomMatchExtractor):
                             loc = idx
 
         # Return the matches
+        return matches
+
+
+class FaissSemanticSimilarityExtractor(BaseCustomMatchExtractor):
+    """
+        Extractor that extracts syntactically and semantically similar words from all documents given a query. For this,
+        the embeddings of every token is computed once and indexed using faiss, allowing very fast indexing and similarity
+        search. If an embedding of a single token is found to be similar to the whole query, it is further examined by
+        matching it to the ngram structure of the query. A threshold is used to determine whether a candidate ngram is
+        sufficient to classify it as a match.
+    """
+
+    identifier: str = "FaissSemanticSimilarityExtractor"
+
+    def __init__(self, document_base, threshold=0.9, top_k=10) -> None:
+        """
+            Initialize the Faiss extractor by taking the document base and computing the embeddings of each token
+            in each document. This is time-consuming, but only needs to be done once. The embeddings are stored w.r.t
+            their document of appearance and in accord to their respective names to allow for easier indexing later on.
+            Further hyper-parameters, such as the threshold and the top_k are defined.
+
+            :param document_base: The current document base
+            :param threshold: The threshold at which to consider a candidate to be a match
+            :param top_k: The top k guesses to extract for every query
+        """
+
+        # Set threshold for the score by which a match is classified as valid
+        self.threshold = threshold
+        self.top_k = top_k
+
+        # The distance function, currently: cosine similarity
+        self.distance = lambda x, y: np.dot(x, y) / (np.linalg.norm(x) * np.linalg.norm(y))
+
+        # Get the embedding model resource from the resource manager
+        self.embedding_model = resources.MANAGER["SBERTBertLargeNliMeanTokensResource"]
+
+        # Get all documents and their respective tokens, preprocess and embed each token of each document
+        self.documents = document_base.documents
+        self.document_names = [x.name for x in document_base.documents]
+        self.embedded_tokens_per_document = np.array(
+            [self.embedding_model.encode(doc.text.split()) for doc in self.documents]
+        )
+
+    def __call__(
+            self, nugget: InformationNugget, documents: List[Document]
+    ) -> List[Tuple[Document, int, int]]:
+        """
+            Extracts tokens similar to the provided nugget from all provided documents using the FAISS method.
+
+            :param nugget: The InformationNugget that should be matched against
+            :param documents: The set of documents to extract matches from
+            :return: Returns a List of Tuples of matching nuggets, where the first entry denotes the corresponding
+            document of the nugget, the second and third entry denote the start and end indices of the match.
+        """
+
+        # List of new matches
+        matches = []
+
+        # Potential preprocessing
+        documents = self.preprocess_documents(documents)
+
+        # Retrieve the ids of documents that are still remaining
+        relevant_document_ids = []
+        for remaining_doc in documents:
+            try:
+                relevant_document_ids.append(self.document_names.index(remaining_doc.name))
+            except ValueError:
+                logger.warning("Document referenced that cannot be found in document base - should not happen")
+        doc_array = np.array(self.documents)[relevant_document_ids]
+
+        # Given the ids, create a flat list of nuggets
+        flat_token_list = np.array([
+            tok
+            for doc_tokens in self.embedded_tokens_per_document[relevant_document_ids]
+            for tok in doc_tokens
+        ])
+
+        # Create a Faiss index mapping given these tokens
+        faiss_index = faiss.IndexIDMap(faiss.IndexFlatIP(flat_token_list[0].shape[-1]))
+        faiss_index.add_with_ids(flat_token_list, np.array(range(0, len(flat_token_list))))
+
+        # Encode the query and to semantic similarity search of its embedding to all other indexed embedding vectors
+        query_vector = self.embedding_model.encode([nugget.text])
+        top_k_indices = faiss_index.search(query_vector, self.top_k)[1][0]
+
+        # Get tuple of potential ngram indices that contain this nugget
+        query_nugget_split = nugget.text.split()
+        query_nugget_ngram_length = len(query_nugget_split)
+        potential_ngram_tuple_idx = [
+            (i, i + query_nugget_ngram_length) for i in range(-query_nugget_ngram_length + 1, 1)
+        ]
+
+        # Get the embeddings of each 1gram of the potential ngram query nugget. If the query nugget in itself
+        # is already an onegram, this corresponds just to query_vector
+        query_nugget_embeddings = [
+            self.embedding_model.encode([query_nugget_split[i]]) for i in range(0, query_nugget_ngram_length)
+        ] if query_nugget_ngram_length > 1 else [query_vector]
+
+        # Compute a mapping that captures the boundaries of the intervals of its tokens
+        reverse_mapping = [0]
+        for doc in doc_array:
+            reverse_mapping.append(len(doc.text.split()) + reverse_mapping[-1])
+
+        # Fetch the matching tokens from the documents given the reverse mapping
+        for match_id in top_k_indices:
+
+            # Find the index of the respective document by assigning it into the proper token range
+            document_idx = np.argmax(np.array(reverse_mapping) > match_id) - 1
+            doc = doc_array[document_idx]
+            doc_text_split = doc.text.split()
+
+            # Calculate position of match in document
+            pos_in_doc = match_id - reverse_mapping[document_idx]
+
+            # Compute the distances of this 1gram to each 1gram of the ngram query nugget
+            distances_to_query_1grams = [
+                self.distance(flat_token_list[match_id], qne[0]) for qne in query_nugget_embeddings
+            ]
+
+            # If some threshold is exceeded for a ngram match
+            if np.max(distances_to_query_1grams) > 0.9:
+
+                # Compute the corresponding index in the document ngram list and extract a span around it w.r.t the
+                # structure of the query nugget
+                corresponding_onegram_idx = np.argmax(distances_to_query_1grams)
+                offset_to_end = query_nugget_ngram_length - corresponding_onegram_idx
+                potential_match = " ".join(
+                    doc_text_split[pos_in_doc - corresponding_onegram_idx: pos_in_doc + offset_to_end]
+                )
+
+                # Find its actual index in the document and append it to the list of matches
+                doc_start_idx = doc.text.find(potential_match)
+                doc_end_idx = doc_start_idx + len(potential_match)
+                matches.append((doc, doc_start_idx, doc_end_idx))
+
+                # Logging
+                logger.info("Extractor found match: " + potential_match)
+
+            # TODO: Maybe add the single nugget itself if the ngrams do not match?
+            # Eg: Query: "Sri Lanka", found: "Germany" -> the Germany etc. is worse than just Germany
+            # Or simply assume that it would've been picked up earlier
+
+            """
+            OLD VERSION; MIGHT STILL TRY OUT
+            
+            # Try to match it to the ngram length of the query
+            for (ngram_idx_1, ngram_idx_2) in potential_ngram_tuple_idx:
+                potential_ngram = doc_text_split[pos_in_doc + ngram_idx_1: pos_in_doc + ngram_idx_2]
+
+                # If it is within the bounds of the document
+                if len(potential_ngram) == query_nugget_ngram_length:
+                    potential_match = " ".join(potential_ngram)
+                    potential_match_embed = self.embedding_model.encode([potential_match])
+
+                    # If some distance is exceeded, append it to the list of matches
+                    if self.distance(query_vector[0], potential_match_embed[0]) > self.threshold:
+
+                        # Get the index of the match in the document
+                        doc_start_idx = doc.text.find(potential_match)
+                        doc_end_idx = doc_start_idx + len(potential_match)
+                        matches.append((doc, doc_start_idx, doc_end_idx))
+            """
+
         return matches

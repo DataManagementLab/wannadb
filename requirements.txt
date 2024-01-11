@@ -31,6 +31,7 @@ cymem==2.0.7
     #   thinc
 emoji==2.2.0
     # via stanza
+faiss==1.7.4
 filelock==3.8.2
     # via
     #   huggingface-hub
