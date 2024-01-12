@@ -1,8 +1,10 @@
+from typing import Union
+
 import bcrypt
 from psycopg2 import sql, IntegrityError
-from config import Token, Authorisation, tokenDecode
-from postgres.queries import checkPassword
-from postgres.util import execute_transaction
+from wannadb_web.util import Token, Authorisation, tokenDecode
+from wannadb_web.postgres.queries import checkPassword
+from wannadb_web.postgres.util import execute_transaction
 
 
 # WARNING: This is only for development purposes!
@@ -59,8 +61,9 @@ def createDocumentsTable(schema):
 		create_table_query = sql.SQL(f"""CREATE TABLE {schema}.documents
 (
     id bigint NOT NULL GENERATED ALWAYS AS IDENTITY ( INCREMENT 1 START 1 MINVALUE 1 MAXVALUE 9223372036854775807 CACHE 1 ),
-    name text COLLATE pg_catalog."default" NOT NULL,
-    content text COLLATE pg_catalog."default" NOT NULL,
+    name text NOT NULL,
+    content text ,
+    content_byte   bytea,
     organisationid bigint NOT NULL,
     userid bigint NOT NULL,
     CONSTRAINT dokumentid PRIMARY KEY (id),
@@ -74,6 +77,8 @@ def createDocumentsTable(schema):
         ON UPDATE CASCADE 
         ON DELETE CASCADE 
         NOT VALID
+    CONSTRAINT check_only_one_filled
+        check (((content IS NOT NULL) AND (content_byte IS NULL)) OR ((content IS NOT NULL) AND (content_byte IS NULL)))
 )
 
 TABLESPACE pg_default;""")
@@ -142,7 +147,7 @@ def addUser(user: str, password: str):
 		pwBytes = password.encode('utf-8')
 		salt = bcrypt.gensalt()
 		pwHash = bcrypt.hashpw(pwBytes, salt)
-		# Needed this for the correct password check dont know why...
+		# Needed this for the correct password check don't know why...
 		pwHash = pwHash.decode('utf-8')
 
 		insert_data_query = sql.SQL("INSERT INTO users (username, password) VALUES (%s, %s) returning id;")
@@ -198,7 +203,6 @@ def addOrganisation(organisationName: str, sessionToken: str):
 	try:
 		token: Token = tokenDecode(sessionToken)
 		userid = token.id
-
 		insert_query = sql.SQL("with a as (INSERT INTO organisations (name) VALUES (%s) returning id) "
 							   "INSERT INTO membership (userid,organisationid) select (%s),id from a returning organisationid")
 		organisation_id = execute_transaction(insert_query, (organisationName, userid), commit=True)
@@ -344,13 +348,19 @@ def adjUserAuthorisation(organisationName: str, sessionToken: str, userToAdjust:
 		print("adjUserAuthorisation failed because: \n", e)
 
 
-def addDocument(name: str, content: str, organisationId: int, userid: int):
+def addDocument(name: str, content: Union[str, bytes], organisationId: int, userid: int):
 	try:
-		insert_data_query = sql.SQL("INSERT INTO documents (name,content,organisationid,userid) "
-									"VALUES (%s, %s,%s, %s) returning id;")
+		if isinstance(content, str):
+			insert_data_query = sql.SQL("INSERT INTO documents (name,content,organisationid,userid) "
+										"VALUES (%s, %s,%s, %s) returning id;")
+		else:
+			insert_data_query = sql.SQL("INSERT INTO documents (name,content_byte,organisationid,userid) "
+										"VALUES (%s, %s,%s, %s) returning id;")
 		data_to_insert = (name, content, organisationId, userid)
 		response = execute_transaction(insert_data_query, data_to_insert, commit=True)
 		return int(response[0][0])
+	except IntegrityError:
+		return -1
 
 	except Exception as e:
 		print("addDocument failed because: \n", e)
