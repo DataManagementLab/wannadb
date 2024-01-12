@@ -1,10 +1,10 @@
 # main_routes.py
 from flask import Blueprint, request, make_response
 
-from config import Token, tokenEncode, tokenDecode
-from postgres.queries import (checkPassword, getMembersOfOrganisation,
-							  getOrganisationIDsFromUserId, getOrganisationName, getOrganisationFromUserId)
-from postgres.transactions import addUser, addOrganisation, addUserToOrganisation, addUserToOrganisation2, deleteUser, leaveOrganisation
+from wannadb_web.util import Token, tokenEncode, tokenDecode
+from wannadb_web.postgres.queries import checkPassword, getOrganisationIDsFromUserId
+from wannadb_web.postgres.transactions import (addUser, addOrganisation, addUserToOrganisation2, deleteUser,
+											   leaveOrganisation)
 
 user_management = Blueprint('user_management', __name__)
 
@@ -23,9 +23,10 @@ def register():
 
 		return make_response({'message': 'User registered successfully',
 							  'token': token}, 201)
-	if _id < 0:
+	elif _id < 0:
 		return make_response({'message': 'Conflicting username'}, 409)
-	return make_response({'message': 'User register failed'}, 422)
+	else:
+		return make_response({'message': 'User register failed'}, 422)
 
 
 @user_management.route('/login', methods=['POST'])
@@ -174,5 +175,5 @@ def get_organisation_members(_id):
 	members = []
 	for member in members_raw:
 		members.append(member[0])
- 
+
 	return make_response({"members": members}, 200)
