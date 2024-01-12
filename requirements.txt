@@ -31,7 +31,7 @@ cymem==2.0.7
     #   thinc
 emoji==2.2.0
     # via stanza
-faiss==1.7.4
+faiss-cpu==1.7.4
     # via wannadb (custom_match_extraction.py)
 filelock==3.8.2
     # via
@@ -218,7 +218,7 @@ typer==0.4.2
     # via
     #   pathy
     #   spacy
-typing-extensions==4.4.0
+typing-extensions<4.6.0
     # via
     #   huggingface-hub
     #   pydantic

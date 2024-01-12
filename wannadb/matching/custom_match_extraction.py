@@ -8,6 +8,7 @@ import faiss
 import logging
 import multiprocessing
 import numpy as np
+import time
 from itertools import repeat
 from nltk import ngrams
 from nltk.corpus import wordnet
@@ -384,11 +385,15 @@ class FaissSemanticSimilarityExtractor(BaseCustomMatchExtractor):
         self.embedding_model = resources.MANAGER["SBERTBertLargeNliMeanTokensResource"]
 
         # Get all documents and their respective tokens, preprocess and embed each token of each document
+        t1 = time.time()
         self.documents = document_base.documents
         self.document_names = [x.name for x in document_base.documents]
         self.embedded_tokens_per_document = np.array(
             [self.embedding_model.encode(doc.text.split()) for doc in self.documents]
         )
+
+        # Time logging
+        logger.info(f"Embedding all tokens of {len(self.documents)} documents took {time.time() - t1} seconds.")
 
     def __call__(
             self, nugget: InformationNugget, documents: List[Document]
