@@ -1,7 +1,10 @@
 version: '3.6'
 services:
     wannadb:
-        build: .
+        build:
+            context: .
+            dockerfile: Dockerfile
+            target: dev
         restart: always
         tty: true
         ports:
@@ -17,7 +20,10 @@ services:
             - mynetwork
 
     worker:
-        build: .
+        build:
+            context: .
+            dockerfile: Dockerfile
+            target: worker
         tty: true
         command: ['celery', '-A', 'app.celery', 'worker', '-l', 'info']
         env_file:
@@ -31,7 +37,10 @@ services:
             - redis
 
     flower:
-        build: .
+        build:
+            context: .
+            dockerfile: Dockerfile
+            target: worker
         tty: true
         command: ['celery', '-A', 'app.celery', 'flower']
         env_file:
