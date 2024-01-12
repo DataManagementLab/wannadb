@@ -2,7 +2,7 @@
 from flask import Blueprint, request, make_response
 
 from wannadb_web.util import Token, tokenEncode, tokenDecode
-from wannadb_web.postgres.queries import checkPassword, getOrganisationIDsFromUserId
+from wannadb_web.postgres.queries import checkPassword, getMembersOfOrganisation, getOrganisationFromUserId, getOrganisationIDsFromUserId, getOrganisationName
 from wannadb_web.postgres.transactions import (addUser, addOrganisation, addUserToOrganisation2, deleteUser,
 											   leaveOrganisation)
 
@@ -115,6 +115,7 @@ def get_organisations():
 
 @user_management.route('/getOrganisationName/<_id>', methods=['GET'])
 def get_organisation_name(_id):
+	print("***HERE***")
 	authorization = request.headers.get("authorization")
 	token = tokenDecode(authorization)
 	if token is None:

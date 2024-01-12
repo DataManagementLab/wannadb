@@ -14,7 +14,6 @@ RUN apt-get update \
   && apt-get purge -y --auto-remove -o APT::AutoRemove::RecommendsImportant=false \
   && rm -rf /var/lib/apt/lists/*
 
-
 RUN mkdir /home/wannadb
 WORKDIR /home/wannadb
 
@@ -52,8 +51,8 @@ FROM build as prod
 #copy the rest
 COPY . .
 
-RUN chmod +x entrypoint.sh
+RUN chmod +x wannadb_web/entrypoint.sh
 
 # Define the entrypoint.sh
-CMD ["sh","./entrypoint.sh"]
+CMD ["sh","./wannadb_web/entrypoint.sh"]
 

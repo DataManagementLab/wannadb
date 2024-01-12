@@ -4,7 +4,7 @@ services:
         build:
             context: .
             dockerfile: Dockerfile
-            target: dev
+            target: prod
         restart: always
         tty: true
         ports:
