@@ -15,6 +15,16 @@ def getOrganisationID(organisation_name: str):
 	select_query = sql.SQL("SELECT id FROM organisations WHERE name = %s;")
 	return execute_query(select_query, (organisation_name,))
 
+def getOrganisationName(organisation_id: int):
+	select_query = sql.SQL("SELECT name FROM organisations WHERE id = %s;")
+	response = execute_query(select_query, (organisation_id,))
+	if response is None:
+		return -1
+	return str(response[0])
+
+def getMembersOfOrganisation(organisation_id: int):
+	select_query = sql.SQL("SELECT username FROM users WHERE id IN (SELECT userid FROM membership WHERE organisationid = %s);")
+	return execute_query(select_query, (organisation_id,))
 
 def getMemberIDsFromOrganisationID(organisationID: int):
 	select_query = sql.SQL("SELECT userid FROM membership WHERE organisationid = %s;")
@@ -35,6 +45,23 @@ def getOrganisationIDsFromUserId(userID: int):
 	except Exception as e:
 		return None, e
 
+def getOrganisationFromUserId(user_id: int):
+	try:
+		select_query = sql.SQL("""	SELECT organisationid, o.name
+									FROM membership
+									JOIN organisations o ON membership.organisationid = o.id
+									WHERE userid = %s;""")
+		response = execute_query(select_query, (user_id,))
+		if isinstance(response, list):
+			organisations: list[dict[str, Union[str, int]]] = []
+			for org in response:
+				organisations.append({"id": int(org[0]), "name": str(org[1])})
+			return organisations, None
+		if response is None:
+			return [-1], None
+		return None, "Unexpected response format"
+	except Exception as e:
+		return None, e
 
 def checkPassword(user: str, password: str) -> Union[tuple[bool, int], tuple[bool, str]]:
 	select_query = sql.SQL("SELECT password,id as pw FROM users WHERE username = %s ")
@@ -114,6 +141,38 @@ def getDocument(document_id: int, user_id: int):
 			return None
 	except Exception as e:
 		print("getDocument failed because:\n", e)
+  
+def getDocumentsForOrganization(organisation_id: int):
+	try:
+		select_query = sql.SQL("""SELECT id, name,content,content_byte 
+							 FROM documents 
+							 WHERE organisationid = (%s)
+							 """)
+		result = execute_query(select_query, (organisation_id,))
+	
+		if result == None or len(result) == 0:
+			return []
+
+		doc_array = []
+  
+		for document in result:
+			id = document[0]
+			name = document[1]
+			content = '';
+			if document[2]:
+				content = document[2]
+			elif document[3]:
+				content = document[3]
+			doc_array.append({
+				"id": id,
+				"name": name,
+				"content": content
+			})
+		return doc_array
+
+	except Exception as e:
+		print("getDocumentsForOrganization failed because:\n", e)
+		return []
 
 
 def getDocuments(document_ids: list[int], user_id: int):

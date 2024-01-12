@@ -11,7 +11,7 @@ from wannadb_web.postgres.util import execute_transaction
 
 def createSchema(schema):
 	try:
-		create_schema_query = sql.SQL(f"CREATE SCHEMA {schema};")
+		create_schema_query = sql.SQL(f"CREATE SCHEMA IF NOT EXISTS {schema};")
 		execute_transaction(create_schema_query, commit=True, fetch=False)
 		print(f"Schema {schema} created successfully.")
 	except Exception as e:
@@ -40,7 +40,7 @@ def dropTables(schema):
 
 def createUserTable(schema):
 	try:
-		create_table_query = sql.SQL(f"""CREATE TABLE {schema}.users
+		create_table_query = sql.SQL(f"""CREATE TABLE IF NOT EXISTS {schema}.users
 (
     id bigint NOT NULL GENERATED ALWAYS AS IDENTITY ( INCREMENT 1 START 1 MINVALUE 1 MAXVALUE 9223372036854775807 CACHE 1 ),
     username text COLLATE pg_catalog."default" NOT NULL,
@@ -58,31 +58,31 @@ TABLESPACE pg_default;
 
 def createDocumentsTable(schema):
 	try:
-		create_table_query = sql.SQL(f"""CREATE TABLE {schema}.documents
-(
-    id bigint NOT NULL GENERATED ALWAYS AS IDENTITY ( INCREMENT 1 START 1 MINVALUE 1 MAXVALUE 9223372036854775807 CACHE 1 ),
-    name text NOT NULL,
-    content text ,
-    content_byte   bytea,
-    organisationid bigint NOT NULL,
-    userid bigint NOT NULL,
-    CONSTRAINT dokumentid PRIMARY KEY (id),
-    CONSTRAINT documents_organisationid_fkey FOREIGN KEY (organisationid)
-        REFERENCES {schema}.organisations (id) MATCH SIMPLE
-        ON UPDATE CASCADE 
-        ON DELETE CASCADE 
-        NOT VALID,
-    CONSTRAINT documents_userid_fkey FOREIGN KEY (userid)
-        REFERENCES {schema}.users (id) MATCH SIMPLE
-        ON UPDATE CASCADE 
-        ON DELETE CASCADE 
-        NOT VALID
-    CONSTRAINT check_only_one_filled
-        check (((content IS NOT NULL) AND (content_byte IS NULL)) OR ((content IS NOT NULL) AND (content_byte IS NULL)))
-)
+		create_table_query = sql.SQL(f"""CREATE TABLE IF NOT EXISTS  {schema}.documents
+	(
+		id bigint NOT NULL GENERATED ALWAYS AS IDENTITY ( INCREMENT 1 START 1 MINVALUE 1 MAXVALUE 9223372036854775807 CACHE 1 ),
+		name text NOT NULL,
+		content text ,
+		content_byte   bytea,
+		organisationid bigint NOT NULL,
+		userid bigint NOT NULL,
+		CONSTRAINT dokumentid PRIMARY KEY (id),
+		CONSTRAINT documents_organisationid_fkey FOREIGN KEY (organisationid)
+			REFERENCES {schema}.organisations (id) MATCH SIMPLE
+			ON UPDATE CASCADE 
+			ON DELETE CASCADE 
+			NOT VALID,
+		CONSTRAINT documents_userid_fkey FOREIGN KEY (userid)
+			REFERENCES {schema}.users (id) MATCH SIMPLE
+			ON UPDATE CASCADE 
+			ON DELETE CASCADE 
+			NOT VALID,
+		CONSTRAINT check_only_one_filled
+			check (((content IS NOT NULL) AND (content_byte IS NULL)) OR ((content IS NOT NULL) AND (content_byte IS NULL)))
+	)
 
-TABLESPACE pg_default;""")
-		execute_transaction(create_table_query, commit=True,fetch=False)
+	TABLESPACE pg_default;""")
+		execute_transaction(create_table_query, commit=True, fetch=False)
 	except Exception as e:
 		print("createUserTable failed because: \n", e)
 

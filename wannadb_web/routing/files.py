@@ -1,14 +1,15 @@
 from flask import Blueprint, request, make_response
 
-from wannadb_web.postgres.queries import getDocument
+from wannadb_web.postgres.queries import getDocument, getDocumentsForOrganization
 from wannadb_web.util import tokenDecode
 from wannadb_web.postgres.transactions import addDocument
 
 main_routes = Blueprint('main_routes', __name__, url_prefix='/data')
 
 
-@main_routes.route('/file', methods=['POST'])
+@main_routes.route('/upload/file', methods=['POST'])
 def upload_files():
+    
 	files = request.files.getlist('file')
 	form = request.form
 
@@ -23,6 +24,7 @@ def upload_files():
 		content_type = file.content_type
 		if 'text/plain' in content_type:
 			filename = file.filename
+			print("name:" + filename) 
 			content = str(file.stream.read().decode('utf-8'))
 			dokument_id = addDocument(filename, content, organisation_id, token.id)
 			document_ids.append(dokument_id)
@@ -36,10 +38,21 @@ def upload_files():
 	return make_response(document_ids, 201)
 
 
-@main_routes.route('/file/<_id>', methods=['GET'])
+@main_routes.route('/organization/get/files/<_id>', methods=['GET'])
+def get_files_for_organization(_id):
+	authorization = request.headers.get("authorization")
+	org_id = int(_id)
+
+	token = tokenDecode(authorization)
+
+	documents = getDocumentsForOrganization(org_id)
+
+	return make_response(documents, 200)
+
+@main_routes.route('/get/file/<_id>', methods=['GET'])
 def get_file(_id):
-	print(request.json)
-	authorization = request.json.get("authorization")
+ 
+	authorization = request.headers.get("authorization")
 	document_id = int(_id)
 
 	token = tokenDecode(authorization)
