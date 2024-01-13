@@ -3,7 +3,7 @@ from typing import Union
 import bcrypt
 from psycopg2 import sql
 
-from wannadb_web.postgres.util import execute_query
+from wannadb_web.postgres.util import execute_query, execute_transaction
 
 
 def getUserID(user: str):
@@ -30,6 +30,10 @@ def getMemberIDsFromOrganisationID(organisationID: int):
 	select_query = sql.SQL("SELECT userid FROM membership WHERE organisationid = %s;")
 	return execute_query(select_query, (organisationID,))
 
+
+def getUserNameSuggestion(prefix: str):
+	select_query = sql.SQL("SELECT username FROM users WHERE username LIKE %s;")
+	return execute_query(select_query, (prefix + "%",))
 
 def getOrganisationIDsFromUserId(userID: int):
 	try:
@@ -173,6 +177,25 @@ def getDocumentsForOrganization(organisation_id: int):
 	except Exception as e:
 		print("getDocumentsForOrganization failed because:\n", e)
 		return []
+
+def updateDocumentContent(doc_id: int, new_content):
+	try:
+		select_query = sql.SQL("""SELECT content, content_byte
+								FROM documents
+								WHERE id = (%s)
+							 """)
+		result = execute_query(select_query, (doc_id,))
+		if result == None or len(result) == 0:
+			return False
+		content_type = "content"
+		if result[0][0] == None:
+			content_type = "content_byte"
+		update_query = sql.SQL("UPDATE documents SET "+content_type+" = (%s) WHERE id = (%s)")
+		execute_transaction(update_query, (new_content, doc_id,), commit=True, fetch=False)
+		return True	
+	except Exception as e:
+		print("updateDocumentContent failed because:\n", e)
+		return False
 
 
 def getDocuments(document_ids: list[int], user_id: int):
