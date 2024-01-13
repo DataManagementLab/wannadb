@@ -1,6 +1,6 @@
 from flask import Blueprint, request, make_response
 
-from wannadb_web.postgres.queries import getDocument, getDocumentsForOrganization
+from wannadb_web.postgres.queries import getDocument, getDocumentsForOrganization, updateDocumentContent
 from wannadb_web.util import tokenDecode
 from wannadb_web.postgres.transactions import addDocument
 
@@ -17,6 +17,9 @@ def upload_files():
 	organisation_id = int(form.get("organisationId"))
 
 	token = tokenDecode(authorization)
+	if token is None:
+		return make_response({'error': 'no authorization'}, 401)
+
 
 	document_ids: list = []
 
@@ -44,10 +47,30 @@ def get_files_for_organization(_id):
 	org_id = int(_id)
 
 	token = tokenDecode(authorization)
+	if token is None:
+		return make_response({'error': 'no authorization'}, 401)
+
 
 	documents = getDocumentsForOrganization(org_id)
 
 	return make_response(documents, 200)
+
+@main_routes.route('/update/file/content', methods=['POST'])
+def update_file_content():
+	authorization = request.headers.get("authorization")
+ 
+	token = tokenDecode(authorization)
+	if token is None:
+		return make_response({'error': 'no authorization'}, 401)
+
+ 
+	data = request.get_json()
+	docId = data.get('documentId')
+	newContent = data.get('newContent')
+
+	status = updateDocumentContent(docId, newContent)
+
+	return make_response({"status": status}, 200)
 
 @main_routes.route('/get/file/<_id>', methods=['GET'])
 def get_file(_id):
@@ -56,6 +79,9 @@ def get_file(_id):
 	document_id = int(_id)
 
 	token = tokenDecode(authorization)
+	if token is None:
+		return make_response({'error': 'no authorization'}, 401)
+
 
 	document_ids: list = []
 
