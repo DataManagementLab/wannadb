@@ -2,7 +2,7 @@
 from flask import Blueprint, request, make_response
 
 from wannadb_web.util import Token, tokenEncode, tokenDecode
-from wannadb_web.postgres.queries import checkPassword, getMembersOfOrganisation, getOrganisationFromUserId, getOrganisationIDsFromUserId, getOrganisationName
+from wannadb_web.postgres.queries import checkPassword, getMembersOfOrganisation, getOrganisationFromUserId, getOrganisationIDsFromUserId, getOrganisationName, getUserNameSuggestion
 from wannadb_web.postgres.transactions import (addUser, addOrganisation, addUserToOrganisation2, deleteUser,
 											   leaveOrganisation)
 
@@ -178,3 +178,16 @@ def get_organisation_members(_id):
 		members.append(member[0])
 
 	return make_response({"members": members}, 200)
+
+@user_management.route('/get/user/suggestion/<_prefix>', methods=['GET'])
+def get_user_suggestion(_prefix):
+	authorization = request.headers.get("authorization")
+	token = tokenDecode(authorization)
+	if token is None:
+		return make_response({'error': 'no authorization'}, 401)
+
+	members_raw = getUserNameSuggestion(_prefix)
+	result = []
+	for member in members_raw:
+		result.append(member[0])
+	return make_response({"usernames": result}, 200)
