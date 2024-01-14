@@ -5,7 +5,7 @@ from typing import Callable, Any, Optional
 
 from wannadb.interaction import InteractionCallback
 from wannadb.status import StatusCallback
-from wannadb_web.worker.Signal import Signals
+from wannadb_web.worker.Signals import Signals
 
 
 class TaskUpdate:
