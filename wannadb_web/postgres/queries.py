@@ -123,6 +123,30 @@ def _getDocument(documentId: int):
 		print("_getDocument failed because: \n", e)
 
 
+def getDocument_by_name(document_name: str, organisation_id: int, user_id: int):
+	select_query = sql.SQL("""SELECT name,content,content_byte 
+							 FROM documents d
+							 JOIN membership m ON d.organisationid = m.organisationid
+							 WHERE d.name = (%s) AND m.userid = (%s) AND m.organisationid = (%s)
+							 """)
+
+	result = execute_query(select_query, (document_name, user_id, organisation_id,))
+	if len(result) == 1:
+		document = result[0]
+		name = document[0]
+		if document[1]:
+			content = document[1]
+			return str(name), str(content)
+		elif document[2]:
+			content = document[2]
+			return str(name), bytes(content)
+	elif len(result) > 1:
+		raise Exception("Multiple documents with the same name found")
+	else:
+		raise Exception("No document with that name found")
+
+
+
 def getDocument(document_id: int, user_id: int):
 	select_query = sql.SQL("""SELECT name,content,content_byte 
 							 FROM documents 
