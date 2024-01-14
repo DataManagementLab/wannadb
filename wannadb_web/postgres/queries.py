@@ -1,5 +1,3 @@
-from typing import Union
-
 import bcrypt
 from psycopg2 import sql
 
@@ -8,7 +6,10 @@ from wannadb_web.postgres.util import execute_query, execute_transaction
 
 def getUserID(user: str):
 	select_query = sql.SQL("SELECT id FROM users WHERE username = %s;")
-	return execute_query(select_query, (user,))
+	result = execute_query(select_query, (user,))
+	if isinstance(result[0], int):
+		return int(result[0])
+	return Exception("No user found with that name")
 
 
 def getOrganisationID(organisation_name: str):
@@ -67,7 +68,7 @@ def getOrganisationFromUserId(user_id: int):
 	except Exception as e:
 		return None, e
 
-def checkPassword(user: str, password: str) -> Union[tuple[bool, int], tuple[bool, str]]:
+def checkPassword(user: str, password: str):
 	select_query = sql.SQL("SELECT password,id as pw FROM users WHERE username = %s ")
 	_password, _id = execute_query(select_query, (user,))[0]
 
@@ -76,30 +77,29 @@ def checkPassword(user: str, password: str) -> Union[tuple[bool, int], tuple[boo
 			stored_password = bytes(_password)
 			check = bcrypt.checkpw(password.encode('utf-8'), stored_password)
 			if check:
-				return bcrypt.checkpw(password.encode('utf-8'), stored_password), int(_id)
+				return int(_id)
 
-		return False, ""
+		return False
 
 	except Exception as e:
-		print("checkPassword failed because: \n", e)
-		return False, str(e)
+		return e
 
 
-def checkOrganisationAuthorisation(organisationName: str, userName: str) -> int:
-	select_query = sql.SQL("SELECT membership from membership "
+def checkOrganisationAuthorisation(organisationName: str, userName: str):
+	select_query = sql.SQL("SELECT authorisation from membership "
 						   "where userid = (SELECT id from users where username = (%s)) "
 						   "and "
 						   "organisationid = (Select id from organisations where name = (%s))")
 
 	result = execute_query(select_query, (organisationName, userName))
 	try:
-		if result[0]:
-			authorisation = result[0]
-			return int(authorisation)  # sketchy conversion but works
+		if isinstance(result[0], int):
+			return int(result[0])
+		if result[0] is None:
+			return Exception("No authorisation found")
 
 	except Exception as e:
-		print("checkOrganisationAuthorisation failed because: \n", e)
-		return 99
+		return Exception("checkOrganisationAuthorisation failed because: \n", e)
 
 
 def _getDocument(documentId: int):
@@ -144,7 +144,6 @@ def getDocument_by_name(document_name: str, organisation_id: int, user_id: int):
 		raise Exception("Multiple documents with the same name found")
 	else:
 		raise Exception("No document with that name found")
-
 
 
 def getDocument(document_id: int, user_id: int):
@@ -231,21 +230,25 @@ def getDocuments(document_ids: list[int], user_id: int):
 							 """)
 	result = execute_query(select_query, (user_id,))
 	try:
-		if len(result) > 0:
-			documents = []
-			for document in result:
-				name = document[0]
-				if document[1]:
-					content = document[1]
-					documents.append((str(name), str(content)))
-				elif document[2]:
-					content = document[2]
-					documents.append((str(name), bytes(content)))
-			return documents
-		else:
-			return None
+		if isinstance(result, list) and isinstance(result[0], tuple):
+			if len(result) > 0:
+				if result[0][1]:
+					documents = []
+					for document in result:
+						name = document[0]
+						content = document[1]
+						documents.append((str(name), str(content)))
+					return documents
+				elif result[0][2]:
+					b_documents = []
+					for document in result:
+						name = document[0]
+						content = document[2]
+						b_documents.append((str(name), bytes(content)))
+					return b_documents
+		return Exception("no documents found")
 	except Exception as e:
-		print("getDocuments failed because:\n", e)
+		return Exception("getDocuments failed because:\n", e)
 
 
 def getDocument_ids(organisation_id: int, user_id: int):
@@ -256,19 +259,23 @@ def getDocument_ids(organisation_id: int, user_id: int):
 									""")
 
 	result = execute_query(select_query, (organisation_id, user_id,))
-	print(result)
-	documents = []
 	try:
-		if len(result) > 0:
-			for document in result:
-				if document[1]:
-					name = document[0]
-					content = document[1]
-					documents.append((str(name), str(content)))
-				elif document[2]:
-					name = document[0]
-					content = document[2]
-					documents.append((str(name), bytes(content)))
-		return documents
+		if isinstance(result, list) and isinstance(result[0], tuple):
+			if len(result) > 0:
+				if result[0][1]:
+					documents = []
+					for document in result:
+						name = document[0]
+						content = document[1]
+						documents.append((str(name), str(content)))
+					return documents
+				elif result[0][2]:
+					b_documents = []
+					for document in result:
+						name = document[0]
+						content = document[2]
+						b_documents.append((str(name), bytes(content)))
+					return b_documents
+		return []
 	except Exception as e:
-		print("getDocument_ids failed because: \n", e)
+		return Exception("getDocuments failed because:\n", e)
