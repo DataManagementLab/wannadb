@@ -28,6 +28,7 @@ class State(enum.Enum):
 	PENDING = 'PENDING'
 	SUCCESS = 'SUCCESS'
 	FAILURE = 'FAILURE'
+	ERROR = 'ERROR'
 
 
 @dataclass
