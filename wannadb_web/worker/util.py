@@ -46,7 +46,10 @@ class TaskObject:
 	@property
 	def status_callback(self):
 		def status_callback_fn(message, progress) -> None:
-			self.signals.status.emit(message, progress)
+			m = str(message)
+			p = str(progress)
+
+			self.signals.status.emit(m + ":" + p)
 			self.update(State.PENDING)
 
 		return StatusCallback(status_callback_fn)
@@ -88,7 +91,6 @@ class TaskObject:
 			self.task_update_fn(self.state.value, self)
 		else:
 			raise Exception("update error State is none")
-
 
 	def to_dump(self):
 		state = self.state
