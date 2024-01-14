@@ -31,7 +31,7 @@ import logging.config
 import pickle
 
 from celery.result import AsyncResult
-from flask import Blueprint, make_response, jsonify, url_for
+from flask import Blueprint, make_response, jsonify, url_for, request
 
 from wannadb.data.data import Attribute
 from wannadb.statistics import Statistics
@@ -46,24 +46,45 @@ logger = logging.getLogger(__name__)
 
 @core_routes.route('/document_base', methods=['POST'])
 def create_document():
-	# form = request.form
-	# authorization = request.headers.get("authorization")
-	# _organisation_id = int(form.get("organisationId"))
-	#
-	authorization = ("eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VyIjoibGVvbiIsImlkIjoxfQ.YM9gwcXeFSku"
-					 "-bz4RUKkymYvA6Af13sxH-BRlnjCCEA")
+	"""
+    Endpoint for creating a document base.
 
+	This endpoint is used to create a document base from a list of document ids and a list of attributes.
+
+	Example Header:
+	{
+		"Authorization": "your_authorization_token"
+	}
+
+    Example JSON Payload:
+    {
+        "organisationId": "your_organisation_id",
+        "baseName": "your_document_base_name",
+        "document_ids": [
+        1, 2, 3
+        ],
+        "attributes": [
+        "plane","car","bike"
+        ]
+    }
+    """
+	form = request.form
+	authorization = request.headers.get("authorization")
+	authorization = form.get("authorization")
+	organisation_id = form.get("organisationId")
+	base_name = form.get("baseName")
+	document_ids = form.get("document_ids")
+	attributes = form.get("attributes")
 	_token = tokenDecode(authorization)
-	_base_name = "base_name"
-	document_ids = [2, 3]
-	attribute = Attribute("a")
-	statistics = Statistics(False)
-	user_id = 1
 
-	attributesDump = pickle.dumps([attribute])
+	statistics = Statistics(False)
+	user_id = _token.id
+
+	attributesDump = pickle.dumps(attributes)
 	statisticsDump = pickle.dumps(statistics)
 
-	task = create_document_base_task.apply_async(args=(user_id, document_ids, attributesDump, statisticsDump))
+	task = create_document_base_task.apply_async(args=(user_id, document_ids, attributesDump, statisticsDump,
+													   base_name,organisation_id))
 
 	return make_response({'task_id': task.id}, 202)
 
@@ -77,11 +98,15 @@ def longtask():
 
 @core_routes.route('/status/<string:task_id>')
 def task_status(task_id):
-	task: AsyncResult = long_task.AsyncResult(task_id)
+	task: AsyncResult = AsyncResult(task_id)
 	print(task.status)
 	meta = task.info
 	if meta is None:
 		return make_response({"error": "task not found"}, 404)
+	if task.status == "FAILURE":
+		return make_response(
+			{"state": "FAILURE", "meta": str(meta)}, 500)
+	print(meta)
 	if not isinstance(meta, bytes):
 		return make_response({"error": "task not correct"}, 404)
 
