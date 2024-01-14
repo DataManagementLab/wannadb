@@ -6,6 +6,7 @@ from flask import Flask, make_response, render_template_string
 from flask_cors import CORS
 from flask_debugtoolbar import DebugToolbarExtension
 
+from wannadb.resources import ResourceManager
 from wannadb_web.Redis.util import RedisConnection
 from wannadb_web.routing.core import core_routes
 from wannadb_web.routing.dev import dev_routes
@@ -20,6 +21,7 @@ app = Flask(__name__)
 def celery_init_app(_app: Flask) -> Celery:
 	_app.app_context()
 	RedisConnection()
+	ResourceManager()
 
 	class FlaskTask(Task):
 
@@ -64,9 +66,6 @@ def not_found_error(error):
 	return make_response({'error': f'Not Found  \n {error}'}, 404)
 
 
-@app.errorhandler(Exception)
-def generic_error(error):
-	return make_response({'error': f'Internal Server Error \n {error}'}, 500)
 
 
 @app.route('/')
