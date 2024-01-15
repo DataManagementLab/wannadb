@@ -70,7 +70,7 @@ def create_document():
     """
 	form = request.form
 	authorization = request.headers.get("authorization")
-	authorization = form.get("authorization")
+	#authorization = form.get("authorization")
 	organisation_id = form.get("organisationId")
 	base_name = form.get("baseName")
 	document_ids = form.get("document_ids")
@@ -83,8 +83,10 @@ def create_document():
 	attributesDump = pickle.dumps(attributes)
 	statisticsDump = pickle.dumps(statistics)
 
-	task = create_document_base_task.apply_async(args=(user_id, document_ids, attributesDump, statisticsDump,
-													   base_name,organisation_id))
+	# TODO BUG EXPected 5 arguments, got 7
+
+	task = create_document_base_task.apply_async(args=(user_id, document_ids, attributesDump, statisticsDump,))
+													   #base_name,organisation_id))
 
 	return make_response({'task_id': task.id}, 202)
 
@@ -96,10 +98,10 @@ def longtask():
 															task_id=task.id)}
 
 
-@core_routes.route('/status/<string:task_id>')
-def task_status(task_id):
+@core_routes.route('/status/<task_id>')
+def task_status(task_id):# -> Any:
 	task: AsyncResult = AsyncResult(task_id)
-	print(task.status)
+	# TODO BUG
 	meta = task.info
 	if meta is None:
 		return make_response({"error": "task not found"}, 404)
