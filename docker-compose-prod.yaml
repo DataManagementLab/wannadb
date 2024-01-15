@@ -14,8 +14,6 @@ services:
         depends_on:
             - postgres
             - redis
-        volumes:
-            - ./:/home/wannadb
         networks:
             - mynetwork
 
@@ -28,8 +26,6 @@ services:
         command: ['celery', '-A', 'app.celery', 'worker', '-l', 'info']
         env_file:
             - wannadb_web/.env/.dev
-        volumes:
-            - ./:/home/wannadb
         networks:
             - mynetwork
         depends_on:
@@ -45,8 +41,6 @@ services:
         command: ['celery', '-A', 'app.celery', 'flower']
         env_file:
             - wannadb_web/.env/.dev
-        volumes:
-            - ./:/home/wannadb
         networks:
             - mynetwork
         ports:
