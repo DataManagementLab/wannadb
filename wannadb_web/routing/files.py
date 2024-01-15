@@ -1,6 +1,6 @@
 from flask import Blueprint, request, make_response
 
-from wannadb_web.postgres.queries import getDocument, getDocumentsForOrganization, updateDocumentContent
+from wannadb_web.postgres.queries import deleteDocumentContent, getDocument, getDocumentsForOrganization, updateDocumentContent
 from wannadb_web.util import tokenDecode
 from wannadb_web.postgres.transactions import addDocument
 
@@ -69,6 +69,22 @@ def update_file_content():
 	newContent = data.get('newContent')
 
 	status = updateDocumentContent(docId, newContent)
+
+	return make_response({"status": status}, 200)
+
+@main_routes.route('/file/delete', methods=['POST'])
+def delete_file():
+	authorization = request.headers.get("authorization")
+ 
+	token = tokenDecode(authorization)
+	if token is None:
+		return make_response({'error': 'no authorization'}, 401)
+
+ 
+	data = request.get_json()
+	docId = data.get('documentId')
+ 
+	status = deleteDocumentContent(docId)
 
 	return make_response({"status": status}, 200)
 
