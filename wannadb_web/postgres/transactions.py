@@ -1,3 +1,4 @@
+import logging
 from typing import Union
 
 import bcrypt
@@ -6,59 +7,57 @@ from wannadb_web.util import Token, Authorisation, tokenDecode
 from wannadb_web.postgres.queries import checkPassword
 from wannadb_web.postgres.util import execute_transaction
 
+logger: logging.Logger = logging.getLogger(__name__)
+
 
 # WARNING: This is only for development purposes!
 
 def createSchema(schema):
-	try:
-		create_schema_query = sql.SQL(f"CREATE SCHEMA IF NOT EXISTS {schema};")
-		execute_transaction(create_schema_query, commit=True, fetch=False)
-		print(f"Schema {schema} created successfully.")
-	except Exception as e:
-		print(f"Error creating schema {schema}: {e}")
+	"""
+	Returns: None
+	"""
+	create_schema_query = sql.SQL(f"CREATE SCHEMA IF NOT EXISTS {schema};")
+	execute_transaction(create_schema_query, commit=True, fetch=False)
+	logger.info(f"Schema {schema} created successfully.")
 
 
 def dropSchema(schema):
-	try:
-		drop_schema_query = sql.SQL(f"DROP SCHEMA IF EXISTS {schema} CASCADE;")
-		execute_transaction(drop_schema_query, commit=True,  fetch=False)
-		print(f"Schema {schema} dropped successfully.")
-	except Exception as e:
-		print(f"Error dropping schema {schema}: {e}")
+	"""
+		Returns: None
+	"""
+	drop_schema_query = sql.SQL(f"DROP SCHEMA IF EXISTS {schema} CASCADE;")
+	execute_transaction(drop_schema_query, commit=True, fetch=False)
+	logger.info(f"Schema {schema} dropped successfully.")
 
 
 def dropTables(schema):
-	try:
-		drop_table_query = sql.SQL(f"DROP TABLE IF EXISTS {schema}.users CASCADE;\n"
-								   f"DROP TABLE IF EXISTS {schema}.documents CASCADE;\n"
-								   f"DROP TABLE IF EXISTS {schema}.membership CASCADE;\n"
-								   f"DROP TABLE IF EXISTS {schema}.organisations CASCADE;")
-		execute_transaction(drop_table_query, commit=True)
-	except Exception as e:
-		print("dropTables failed because: \n", e)
+	"""
+		Returns: None
+	"""
+	drop_table_query = sql.SQL(f"DROP TABLE IF EXISTS {schema}.users CASCADE;\n"
+							   f"DROP TABLE IF EXISTS {schema}.documents CASCADE;\n"
+							   f"DROP TABLE IF EXISTS {schema}.membership CASCADE;\n"
+							   f"DROP TABLE IF EXISTS {schema}.organisations CASCADE;")
+	execute_transaction(drop_table_query, commit=True)
 
 
 def createUserTable(schema):
-	try:
-		create_table_query = sql.SQL(f"""CREATE TABLE IF NOT EXISTS {schema}.users
-(
+	create_table_query = sql.SQL(f"""CREATE TABLE IF NOT EXISTS {schema}.users
+	(
     id bigint NOT NULL GENERATED ALWAYS AS IDENTITY ( INCREMENT 1 START 1 MINVALUE 1 MAXVALUE 9223372036854775807 CACHE 1 ),
     username text COLLATE pg_catalog."default" NOT NULL,
     password bytea NOT NULL,
     CONSTRAINT userid PRIMARY KEY (id),
     CONSTRAINT unique_username UNIQUE (username)
-)
+	)
 
-TABLESPACE pg_default;
-""")
-		execute_transaction(create_table_query, commit=True, fetch=False)
-	except Exception as e:
-		print("createUserTable failed because: \n", e)
+	TABLESPACE pg_default;
+	""")
+	execute_transaction(create_table_query, commit=True, fetch=False)
 
 
 def createDocumentsTable(schema):
-	try:
-		create_table_query = sql.SQL(f"""CREATE TABLE IF NOT EXISTS  {schema}.documents
+	create_table_query = sql.SQL(f"""CREATE TABLE IF NOT EXISTS  {schema}.documents
 	(
 		id bigint NOT NULL GENERATED ALWAYS AS IDENTITY ( INCREMENT 1 START 1 MINVALUE 1 MAXVALUE 9223372036854775807 CACHE 1 ),
 		name text NOT NULL,
@@ -82,14 +81,11 @@ def createDocumentsTable(schema):
 	)
 
 	TABLESPACE pg_default;""")
-		execute_transaction(create_table_query, commit=True, fetch=False)
-	except Exception as e:
-		print("createUserTable failed because: \n", e)
+	execute_transaction(create_table_query, commit=True, fetch=False)
 
 
 def createMembershipTable(schema):
-	try:
-		create_table_query = sql.SQL(f"""CREATE TABLE IF NOT EXISTS {schema}.membership
+	create_table_query = sql.SQL(f"""CREATE TABLE IF NOT EXISTS {schema}.membership
 (
     userid bigint NOT NULL,
     organisationid bigint NOT NULL,
@@ -119,14 +115,11 @@ CREATE INDEX IF NOT EXISTS fki_organisationid
     ON {schema}.membership USING btree
     (organisationid ASC NULLS LAST)
     TABLESPACE pg_default;""")
-		execute_transaction(create_table_query, commit=True, fetch=False)
-	except Exception as e:
-		print("createUserTable failed because: \n", e)
+	execute_transaction(create_table_query, commit=True, fetch=False)
 
 
 def createOrganisationTable(schema):
-	try:
-		create_table_query = sql.SQL(f"""CREATE TABLE IF NOT EXISTS {schema}.organisations
+	create_table_query = sql.SQL(f"""CREATE TABLE IF NOT EXISTS {schema}.organisations
 (
     id bigint NOT NULL GENERATED ALWAYS AS IDENTITY ( INCREMENT 1 START 1 MINVALUE 1 MAXVALUE 9223372036854775807 CACHE 1 ),
     name text COLLATE pg_catalog."default" NOT NULL,
@@ -137,66 +130,71 @@ def createOrganisationTable(schema):
 TABLESPACE pg_default;
 
 """)
-		execute_transaction(create_table_query, commit=True, fetch=False)
-	except Exception as e:
-		print("createUserTable failed because: \n", e)
+	execute_transaction(create_table_query, commit=True, fetch=False)
 
 
 def addUser(user: str, password: str):
-	try:
-		pwBytes = password.encode('utf-8')
-		salt = bcrypt.gensalt()
-		pwHash = bcrypt.hashpw(pwBytes, salt)
-		# Needed this for the correct password check don't know why...
-		pwHash = pwHash.decode('utf-8')
+	"""
 
-		insert_data_query = sql.SQL("INSERT INTO users (username, password) VALUES (%s, %s) returning id;")
-		data_to_insert = (user, pwHash)
-		response = execute_transaction(insert_data_query, data_to_insert, commit=True)
+	Returns: int (user id)
+
+	Raises: Exception
+
+	"""
+
+
+	pwBytes = password.encode('utf-8')
+	salt = bcrypt.gensalt()
+	pwHash = bcrypt.hashpw(pwBytes, salt)
+	# Needed this for the correct password check don't know why...
+	pwHash = pwHash.decode('utf-8')
+
+	insert_data_query = sql.SQL("INSERT INTO users (username, password) VALUES (%s, %s) returning id;")
+	data_to_insert = (user, pwHash)
+	response = execute_transaction(insert_data_query, data_to_insert, commit=True)
+	if response is IntegrityError:
+		raise IntegrityError("User already exists")
+	if isinstance(response[0][0], int):
 		return int(response[0][0])
-	except IntegrityError:
-		return -1
-
-	except Exception as e:
-		print("addUser failed because: \n", e)
+	raise Exception("addUser failed because: \n", response)
 
 
 def changePassword(user: str, old_password: str, new_password: str):
 	try:
 		if old_password == new_password:
-			raise Exception("same password")
+			return False
 
 		pwcheck = checkPassword(user, old_password)
-		if not pwcheck:
-			raise Exception("wrong password")
+		if isinstance(pwcheck, Exception):
+			raise pwcheck
+		if isinstance(pwcheck, bool):
+			return bool(pwcheck)
+		if isinstance(pwcheck, int):
+			_ = int(pwcheck)
 
-		pwBytes = new_password.encode('utf-8')
-		salt = bcrypt.gensalt()
-		pwHash = bcrypt.hashpw(pwBytes, salt)
+			pwBytes = new_password.encode('utf-8')
+			salt = bcrypt.gensalt()
+			pwHash = bcrypt.hashpw(pwBytes, salt)
 
-		update_query = sql.SQL("UPDATE users SET password = %s WHERE username = %s;")
-		execute_transaction(update_query, (pwHash, user), commit=True)
+			update_query = sql.SQL("UPDATE users SET password = %s WHERE username = %s;")
+			execute_transaction(update_query, (pwHash, user), commit=True)
 
 	except Exception as e:
 		print("changePassword failed because: \n", e)
 
 
 def deleteUser(user: str, password: str):
-	try:
-		pwcheck = checkPassword(user, password)
-		if not pwcheck:
-			raise Exception("wrong password")
-
-		delete_query = sql.SQL("""
-  DELETE FROM users WHERE username = %s
-""")
-		response = execute_transaction(delete_query, (user,), commit=True, fetch=False)
-
+	pwcheck = checkPassword(user, password)
+	if isinstance(pwcheck, Exception):
+		raise pwcheck
+	if isinstance(pwcheck, bool):
+		return bool(pwcheck)
+	if isinstance(pwcheck, int):
+		user_id = int(pwcheck)
+		delete_query = sql.SQL("""DELETE FROM users WHERE id = %s""")
+		response = execute_transaction(delete_query, (user_id,), commit=True, fetch=False)
 		if isinstance(response, bool):
 			return response
-		raise TypeError("response :", response)
-	except Exception as e:
-		print("deleteUser failed because: \n", e)
 
 
 def addOrganisation(organisationName: str, sessionToken: str):
@@ -214,14 +212,16 @@ def addOrganisation(organisationName: str, sessionToken: str):
 
 	except Exception as e:
 		print("addOrganisation failed because: \n", e)
-  
+
+
 def leaveOrganisation(organisationId: int, sessionToken: str):
 	try:
 		token: Token = tokenDecode(sessionToken)
 		userid = token.id
-  
-		delete_query = sql.SQL("DELETE FROM membership WHERE userid = (%s) AND organisationid = (%s) returning organisationid")
-		execute_transaction(delete_query, (userid,organisationId, ), commit=True)
+
+		delete_query = sql.SQL(
+			"DELETE FROM membership WHERE userid = (%s) AND organisationid = (%s) returning organisationid")
+		execute_transaction(delete_query, (userid, organisationId,), commit=True)
 
 		count_query = sql.SQL("SELECT COUNT(*) FROM membership WHERE organisationid = (%s)")
 		count = execute_transaction(count_query, [organisationId], commit=True)
@@ -235,7 +235,6 @@ def leaveOrganisation(organisationId: int, sessionToken: str):
 	except Exception as e:
 		print("leaveOrganisation failed because: \n", e)
 		return False, e
-      
 
 
 def addUserToOrganisation(organisationName: str, sessionToken: str, newUser: str):
@@ -274,6 +273,7 @@ INSERT INTO membership (userid, organisationid)
 	except Exception as e:
 		print("addUserToOrganisation failed because: \n", e)
 
+
 def addUserToOrganisation2(organisationId: int, newUser: str):
 	try:
 		select_id_query = sql.SQL("SELECT id FROM users WHERE username = (%s)")
@@ -281,7 +281,8 @@ def addUserToOrganisation2(organisationId: int, newUser: str):
 		if userid is None:
 			return None, "User does not exist"
 
-		insert_query = sql.SQL("INSERT INTO membership (userid, organisationid) VALUES (%s, %s) returning organisationid")
+		insert_query = sql.SQL(
+			"INSERT INTO membership (userid, organisationid) VALUES (%s, %s) returning organisationid")
 		organisation_id = execute_transaction(insert_query, (userid[0][0], organisationId), commit=True)
 		if organisation_id is None:
 			return None, "you have no privileges in this organisation"

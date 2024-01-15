@@ -2,7 +2,8 @@
 from flask import Blueprint, request, make_response
 
 from wannadb_web.util import Token, tokenEncode, tokenDecode
-from wannadb_web.postgres.queries import checkPassword, getMembersOfOrganisation, getOrganisationFromUserId, getOrganisationIDsFromUserId, getOrganisationName, getUserNameSuggestion
+from wannadb_web.postgres.queries import checkPassword, getMembersOfOrganisation, getOrganisationFromUserId, \
+	getOrganisationIDsFromUserId, getOrganisationName, getUserNameSuggestion
 from wannadb_web.postgres.transactions import (addUser, addOrganisation, addUserToOrganisation2, deleteUser,
 											   leaveOrganisation)
 
@@ -35,17 +36,18 @@ def login():
 	username = data.get('username')
 	password = data.get('password')
 
-	_correct, _id = checkPassword(username, password)
-
-	if _correct:
+	pwcheck = checkPassword(username, password)
+	if isinstance(pwcheck, Exception):
+		raise pwcheck
+	if isinstance(pwcheck, bool):
+		return make_response({'message': 'Wrong Password'}, 401)
+	if isinstance(pwcheck, int):
+		_id = pwcheck
 		user = Token(username, _id)
 		token = tokenEncode(user.json())
 
 		return make_response({'message': 'Log in successfully',
 							  'token': token}, 200)
-	if not _correct:
-		return make_response({'message': 'Wrong Password'}, 401)
-	return make_response({'message': 'User login failed'}, 422)
 
 
 @user_management.route('/deleteUser/', methods=['POST'])
@@ -84,6 +86,7 @@ def create_organisation():
 	if error is None:
 		return make_response({'organisation_id': organisation_id}, 200)
 	return make_response({"error": error}, 409)
+
 
 @user_management.route('/leaveOrganisation', methods=['POST'])
 def leave_organisation():
@@ -162,6 +165,7 @@ def add_user_to_organisation():
 		return make_response({"error": error}, 409)
 	return make_response({'organisation_id': organisation_id}, 200)
 
+
 @user_management.route('/getOrganisationMembers/<_id>', methods=['GET'])
 def get_organisation_members(_id):
 	authorization = request.headers.get("authorization")
@@ -171,13 +175,14 @@ def get_organisation_members(_id):
 
 	members_raw = getMembersOfOrganisation(_id)
 	if members_raw is None:
-		return make_response({'error':'organisation '+_id+' not found'}, 404)
+		return make_response({'error': 'organisation ' + _id + ' not found'}, 404)
 
 	members = []
 	for member in members_raw:
 		members.append(member[0])
 
 	return make_response({"members": members}, 200)
+
 
 @user_management.route('/get/user/suggestion/<_prefix>', methods=['GET'])
 def get_user_suggestion(_prefix):

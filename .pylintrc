@@ -43,7 +43,6 @@ logging-modules=logging
 [SIMILARITIES]
 min-similarity-lines=8
 ignore-comments=yes
-ignore-docstrings=yes
 ignore-imports=no
 
 [FORMAT]
@@ -79,7 +78,6 @@ contextmanager-decorators=contextlib.contextmanager
 
 [MISCELLANEOUS]
 notes=FIXME,XXX,TODO
-disable=missing-function-docstring
 
 
 [BASIC]
