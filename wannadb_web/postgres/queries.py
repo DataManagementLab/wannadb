@@ -238,6 +238,18 @@ def updateDocumentContent(doc_id: int, new_content):
 		print("updateDocumentContent failed because:\n", e)
 		return False
 
+def deleteDocumentContent(doc_id: int):
+	try:
+		delete_query = sql.SQL("""DELETE
+								FROM documents
+								WHERE id = (%s)
+							 """)
+		execute_transaction(delete_query, (doc_id,), commit=True, fetch=False)
+		return True
+	except Exception as e:
+		print("updateDocumentContent failed because:\n", e)
+		return False
+
 
 def getDocuments(document_ids: list[int], user_id: int):
 	select_query = sql.SQL(f"""SELECT name,content,content_byte 
