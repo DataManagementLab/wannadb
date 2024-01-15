@@ -219,6 +219,12 @@ def leaveOrganisation(organisationId: int, sessionToken: str):
 		token: Token = tokenDecode(sessionToken)
 		userid = token.id
 
+		count_query = sql.SQL("SELECT COUNT(*) FROM membership WHERE userid = (%s) AND organisationid = (%s)")
+		count = execute_transaction(count_query,(userid, organisationId,), commit=True)
+		count = int(count[0][0])
+		if count != 1:
+			return False, "You are not in this organisation"
+
 		delete_query = sql.SQL(
 			"DELETE FROM membership WHERE userid = (%s) AND organisationid = (%s) returning organisationid")
 		execute_transaction(delete_query, (userid, organisationId,), commit=True)

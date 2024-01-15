@@ -60,12 +60,22 @@ def delete_user():
 	if authorization is None:
 		return make_response({'message': 'no authorization '}, 401)
 
-	check, _id = checkPassword(username, password)
+ 
 	token = tokenDecode(authorization)
 	if token is None:
 		return make_response({'message': 'no authorization '}, 400)
 
-	if check is False or token.id != _id:
+
+	pwcheck = checkPassword(username, password)
+	_id = None 
+	if isinstance(pwcheck, Exception):
+		raise pwcheck
+	if isinstance(pwcheck, bool):
+		return make_response({'message': 'Wrong Password'}, 401)
+	if isinstance(pwcheck, int):
+		_id = pwcheck
+
+	if token.id != _id:
 		return make_response({'message': 'User not authorised '}, 401)
 
 	response = deleteUser(username, password)
@@ -118,7 +128,6 @@ def get_organisations():
 
 @user_management.route('/getOrganisationName/<_id>', methods=['GET'])
 def get_organisation_name(_id):
-	print("***HERE***")
 	authorization = request.headers.get("authorization")
 	token = tokenDecode(authorization)
 	if token is None:
@@ -143,7 +152,7 @@ def get_organisation_names():
 	organisations, error = getOrganisationFromUserId(token.id)
 	if error is None:
 		return make_response({'organisations': organisations}, 200)
-	if organisations < 0:
+	if organisations <= 0:
 		return make_response({'user is in no organisation'}, 404)
 	return make_response({"error": error}, 409)
 
