@@ -71,7 +71,7 @@ def getOrganisationFromUserId(user_id: int):
 				organisations.append({"id": int(org[0]), "name": str(org[1])})
 			return organisations, None
 		if response is None:
-			return [-1], None
+			return [], None
 		return None, "Unexpected response format"
 	except Exception as e:
 		return None, e
