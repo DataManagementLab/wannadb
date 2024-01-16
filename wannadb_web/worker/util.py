@@ -90,7 +90,7 @@ class TaskObject:
 			self.msg = msg
 			self.task_update_fn(self.state.value, self)
 		else:
-			raise Exception("update error State is none")
+			raise Exception(f"update error State is {type(state)}")
 
 	def to_dump(self):
 		state = self.state

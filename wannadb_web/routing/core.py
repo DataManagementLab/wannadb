@@ -69,13 +69,17 @@ def create_document():
     }
     """
 	form = request.form
-	authorization = request.headers.get("authorization")
-	#authorization = form.get("authorization")
+	#authorization = request.headers.get("authorization")
+	authorization = form.get("authorization")
 	organisation_id = form.get("organisationId")
 	base_name = form.get("baseName")
 	document_ids = form.get("document_ids")
-	attributes = form.get("attributes")
+	attributes_string = form.get("attributes")
 	_token = tokenDecode(authorization)
+
+	attributes = []
+	for attribute_string in attributes_string:
+		attributes.append(Attribute(attribute_string))
 
 	statistics = Statistics(False)
 	user_id = _token.id
@@ -83,10 +87,9 @@ def create_document():
 	attributesDump = pickle.dumps(attributes)
 	statisticsDump = pickle.dumps(statistics)
 
-	# TODO BUG EXPected 5 arguments, got 7
 
-	task = create_document_base_task.apply_async(args=(user_id, document_ids, attributesDump, statisticsDump,))
-													   #base_name,organisation_id))
+	task = create_document_base_task.apply_async(args=(user_id, document_ids, attributesDump, statisticsDump,
+													   base_name,organisation_id))
 
 	return make_response({'task_id': task.id}, 202)
 
@@ -108,10 +111,8 @@ def task_status(task_id):# -> Any:
 	if task.status == "FAILURE":
 		return make_response(
 			{"state": "FAILURE", "meta": str(meta)}, 500)
-	print(meta)
 	if not isinstance(meta, bytes):
 		return make_response({"error": "task not correct"}, 404)
-
 	taskObject = TaskObject.from_dump(meta)
 	return make_response({"state": taskObject.state.value, "meta": taskObject.signals.to_json(), "msg": taskObject.msg},
 						 200)

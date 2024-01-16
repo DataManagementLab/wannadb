@@ -142,15 +142,14 @@ def addUser(user: str, password: str):
 
 	"""
 
-
 	pwBytes = password.encode('utf-8')
 	salt = bcrypt.gensalt()
 	pwHash = bcrypt.hashpw(pwBytes, salt)
 	# Needed this for the correct password check don't know why...
-	pwHash = pwHash.decode('utf-8')
+	pwHashcode = pwHash.decode('utf-8')
 
 	insert_data_query = sql.SQL("INSERT INTO users (username, password) VALUES (%s, %s) returning id;")
-	data_to_insert = (user, pwHash)
+	data_to_insert = (user, pwHashcode)
 	response = execute_transaction(insert_data_query, data_to_insert, commit=True)
 	if response is IntegrityError:
 		raise IntegrityError("User already exists")
@@ -220,7 +219,7 @@ def leaveOrganisation(organisationId: int, sessionToken: str):
 		userid = token.id
 
 		count_query = sql.SQL("SELECT COUNT(*) FROM membership WHERE userid = (%s) AND organisationid = (%s)")
-		count = execute_transaction(count_query,(userid, organisationId,), commit=True)
+		count = execute_transaction(count_query, (userid, organisationId,), commit=True)
 		count = int(count[0][0])
 		if count != 1:
 			return False, "You are not in this organisation"

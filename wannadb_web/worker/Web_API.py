@@ -2,11 +2,13 @@ import csv
 import io
 import json
 import logging
+import traceback
 from typing import Optional
 
+from wannadb import resources
 from wannadb.configuration import Pipeline
 from wannadb.data.data import Attribute, Document, DocumentBase
-from wannadb.interaction import EmptyInteractionCallback, InteractionCallback
+from wannadb.interaction import EmptyInteractionCallback
 from wannadb.matching.distance import SignalsMeanDistance
 from wannadb.matching.matching import RankingBasedMatcher
 from wannadb.preprocessing.embedding import BERTContextSentenceEmbedder, RelativePositionEmbedder, \
@@ -17,7 +19,6 @@ from wannadb.preprocessing.label_paraphrasing import OntoNotesLabelParaphraser, 
 from wannadb.preprocessing.normalization import CopyNormalizer
 from wannadb.preprocessing.other_processing import ContextSentenceCacher
 from wannadb.statistics import Statistics
-from wannadb.status import StatusCallback
 from wannadb_web.Redis.RedisCache import RedisCache
 from wannadb_web.SQLite import Cache_DB
 from wannadb_web.SQLite.Cache_DB import SQLiteCacheDBWrapper
@@ -30,7 +31,7 @@ logger = logging.getLogger(__name__)
 
 class WannaDB_WebAPI:
 
-	def __init__(self, user_id: int, task_object:TaskObject):
+	def __init__(self, user_id: int, task_object: TaskObject, document_base_name: str, organisation_id: int):
 		logger.info("WannaDB_WebAPI initialized")
 		self.user_id = user_id
 		self.sqLiteCacheDBWrapper = SQLiteCacheDBWrapper(user_id, db_file=":memory:")
@@ -38,10 +39,18 @@ class WannaDB_WebAPI:
 		self.status_callback = task_object.status_callback
 		self.interaction_callback = task_object.interaction_callback
 		self.signals = task_object.signals
+		self.document_base_name = document_base_name
+		self.organisation_id = organisation_id
+		if resources.MANAGER is None:
+			self.signals.error.emit("Resource Manager not initialized!")
+			raise Exception("Resource Manager not initialized!")
+		if self.sqLiteCacheDBWrapper.cache_db.conn is None:
+			self.signals.error.emit("Cache db could not be initialized!")
+			raise Exception("Cache db could not be initialized!")
 
 	def create_document_base(self, documents: list[Document], attributes: list[Attribute], statistics: Statistics):
 		logger.debug("Called slot 'create_document_base'.")
-		self.signals.status.emit("Creating document base...", -1)
+		self.signals.status.emit("create_document_base")
 		try:
 			self.sqLiteCacheDBWrapper.reset_cache_db()
 
@@ -51,10 +60,9 @@ class WannaDB_WebAPI:
 			if not document_base.validate_consistency():
 				logger.error("Document base is inconsistent!")
 				error = "Document base is inconsistent!"
-				return error
 
 			# load default preprocessing phase
-			self.signals.status.emit("Loading preprocessing phase...", -1)
+			self.signals.status.emit("Loading preprocessing phase...")
 
 			# noinspection PyTypeChecker
 			preprocessing_phase = Pipeline([
@@ -73,20 +81,21 @@ class WannaDB_WebAPI:
 			preprocessing_phase(document_base, EmptyInteractionCallback(), self.status_callback, statistics)
 
 			self.signals.document_base_to_ui.emit(document_base)
-			self.signals.statistics_to_ui.emit(statistics)
-			self.signals.finished.emit("Finished!")
+			self.signals.statistics.emit(statistics)
+			self.signals.finished.emit(1)
+			self.signals.status.emit("Finished!")
 
 		except Exception as e:
-			self.signals.error.emit(e)
+			traceback_str = traceback.format_exc()
+			self.signals.error.emit(str(e) + "\n" + traceback_str)
 
-	def load_document_base_from_bson(self, document_id: int, user_id: int):
+	def load_document_base_from_bson(self):
 		logger.debug("Called function 'load_document_base_from_bson'.")
-		wrapper_cache_db: Optional[SQLiteCacheDBWrapper] = None
 		try:
-			wrapper_cache_db = Cache_DB.Cache_Manager.user(user_id)
-			cache_db = wrapper_cache_db.cache_db
+			self.sqLiteCacheDBWrapper.reset_cache_db()
 
-			document = getDocument(document_id, user_id)
+			document = getDocument(self.document_id, user_id)
+			get
 			if isinstance(document, str):
 				logger.error("document is not a DocumentBase!")
 				return -1
@@ -96,7 +105,6 @@ class WannaDB_WebAPI:
 				logger.error("Document base is inconsistent!")
 				return -1
 
-			wrapper_cache_db.reset_cache_db()
 
 			for attribute in document_base.attributes:
 				cache_db.create_table_by_name(attribute.name)
@@ -112,10 +120,10 @@ class WannaDB_WebAPI:
 			if wrapper_cache_db is not None:
 				wrapper_cache_db.disconnect()
 
-	def save_document_base_to_bson(self, name: str, organisation_id: int, document_base: DocumentBase, user_id: int):
+	def save_document_base_to_bson(self, document_base_name: str, organisation_id: int, document_base: DocumentBase, user_id: int):
 		logger.debug("Called function 'save_document_base_to_bson'.")
 		try:
-			document_id = addDocument(name, document_base.to_bson(), organisation_id, user_id)
+			document_id = addDocument(document_base_name, document_base.to_bson(), organisation_id, user_id)
 			if document_id is None:
 				logger.error("Document base could not be saved to BSON!")
 			elif document_id == -1:
