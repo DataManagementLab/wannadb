@@ -114,8 +114,6 @@ def checkOrganisationAuthorisation(organisationName: str, userName: str):
 		return None
 
 
-
-
 def _getDocument(documentId: int):
 	select_query = sql.SQL("""SELECT content,content_byte 
 								from documents 
@@ -134,7 +132,7 @@ def _getDocument(documentId: int):
 		return None
 
 
-def getDocument_by_name(document_name: str, organisation_id: int, user_id: int):
+def getDocument_by_name(document_name: str, organisation_id: int, user_id: int) -> tuple[str, Union[str, bytes]]:
 	"""
 		Returns:
 			name: str
@@ -144,8 +142,6 @@ def getDocument_by_name(document_name: str, organisation_id: int, user_id: int):
 			Exception: if no document with that name is found
 			Exception: if multiple documents with that name are found
 	"""
-
-
 
 	select_query = sql.SQL("""SELECT name,content,content_byte 
 							 FROM documents d
@@ -165,8 +161,7 @@ def getDocument_by_name(document_name: str, organisation_id: int, user_id: int):
 			return str(name), bytes(content)
 	elif len(result) > 1:
 		raise Exception("Multiple documents with the same name found")
-	else:
-		raise Exception("No document with that name found")
+	raise Exception("No document with that name found")
 
 
 def getDocument(document_id: int, user_id: int):
@@ -191,7 +186,6 @@ def getDocument(document_id: int, user_id: int):
 
 
 def getDocumentsForOrganization(organisation_id: int):
-
 	select_query = sql.SQL("""SELECT id, name,content,content_byte 
 						 FROM documents 
 						 WHERE organisationid = (%s)
@@ -238,6 +232,7 @@ def updateDocumentContent(doc_id: int, new_content):
 		print("updateDocumentContent failed because:\n", e)
 		return False
 
+
 def deleteDocumentContent(doc_id: int):
 	try:
 		delete_query = sql.SQL("""DELETE
@@ -278,7 +273,6 @@ def getDocuments(document_ids: list[int], user_id: int):
 	return []
 
 
-
 def getDocument_ids(organisation_id: int, user_id: int):
 	select_query = sql.SQL("""SELECT name,content,content_byte 
 									from documents 
@@ -304,4 +298,3 @@ def getDocument_ids(organisation_id: int, user_id: int):
 					b_documents.append((str(name), bytes(content)))
 				return b_documents
 	return []
-
