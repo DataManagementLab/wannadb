@@ -36,6 +36,7 @@ from flask import Blueprint, make_response, jsonify, url_for, request
 from wannadb.data.data import Attribute
 from wannadb.statistics import Statistics
 from wannadb_web.util import tokenDecode
+from wannadb_web.worker.data import nugget_to_json
 from wannadb_web.worker.tasks import create_document_base_task, long_task
 from wannadb_web.worker.util import TaskObject
 
@@ -68,17 +69,21 @@ def create_document():
         ]
     }
     """
-	form = request.form
 	data = request.get_json()
- 
+
 	authorization = request.headers.get("authorization")
 	#authorization = form.get("authorization")
 	organisation_id = data.get("organisationId")
 	base_name = data.get("baseName")
 	document_ids = data.get("document_ids")
 	attributes_string = data.get("attributes")
-	print("attributes_string", attributes_string)
+	if (organisation_id is None or base_name is None or document_ids is None or attributes_string is None
+			or authorization is None):
+		return make_response({"error": "missing parameters"}, 400)
 	_token = tokenDecode(authorization)
+
+	if _token is False:
+		return make_response({"error": "invalid token"}, 401)
 
 	attributes = []
 	for att in attributes_string:
@@ -105,9 +110,8 @@ def longtask():
 
 
 @core_routes.route('/status/<task_id>')
-def task_status(task_id):# -> Any:
+def task_status(task_id):  # -> Any:
 	task: AsyncResult = AsyncResult(task_id)
-	# TODO BUG
 	meta = task.info
 	if meta is None:
 		return make_response({"error": "task not found"}, 404)
