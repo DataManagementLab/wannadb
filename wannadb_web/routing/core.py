@@ -69,17 +69,20 @@ def create_document():
     }
     """
 	form = request.form
-	#authorization = request.headers.get("authorization")
-	authorization = form.get("authorization")
-	organisation_id = form.get("organisationId")
-	base_name = form.get("baseName")
-	document_ids = form.get("document_ids")
-	attributes_string = form.get("attributes")
+	data = request.get_json()
+ 
+	authorization = request.headers.get("authorization")
+	#authorization = form.get("authorization")
+	organisation_id = data.get("organisationId")
+	base_name = data.get("baseName")
+	document_ids = data.get("document_ids")
+	attributes_string = data.get("attributes")
+	print("attributes_string", attributes_string)
 	_token = tokenDecode(authorization)
 
 	attributes = []
-	for attribute_string in attributes_string:
-		attributes.append(Attribute(attribute_string))
+	for att in attributes_string:
+		attributes.append(Attribute(att))
 
 	statistics = Statistics(False)
 	user_id = _token.id
