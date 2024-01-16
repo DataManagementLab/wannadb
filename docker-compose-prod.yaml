@@ -43,6 +43,8 @@ services:
         command: ['celery', '-A', 'app.celery', 'flower']
         env_file:
             - wannadb_web/.env/.dev
+        volumes:
+            - ./:/home/wannadb
         networks:
             - mynetwork
         ports:
