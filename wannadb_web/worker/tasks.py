@@ -6,20 +6,17 @@ import time
 from celery import current_app
 
 from wannadb.data.data import Document, Attribute
-from wannadb.resources import ResourceManager
 from wannadb.statistics import Statistics
-from wannadb_web.Redis.util import RedisConnection
 from wannadb_web.postgres.queries import getDocuments
-from wannadb_web.util import tokenDecode
 from wannadb_web.worker.Web_API import WannaDB_WebAPI
 from wannadb_web.worker.util import State, TaskUpdate
 from wannadb_web.worker.util import TaskObject
 
 
-class U:
-	def update_state(*args, **kwargs):
-		print('update_state called with args: ', args, ' and kwargs: ', kwargs)
-		print("meta: ", TaskObject.from_dump(kwargs.get("meta")).signals.to_json())
+# class U:
+# 	def update_state(*args, **kwargs):
+# 		print('update_state called with args: ', args, ' and kwargs: ', kwargs)
+# 		print("meta: ", TaskObject.from_dump(kwargs.get("meta")).signals.to_json())
 
 
 logging.basicConfig(level=logging.DEBUG, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
@@ -104,15 +101,15 @@ def create_document_base_task(self, user_id, document_ids: list[int], attributes
 		response
 		"""
 
-		if task_object.signals.finished.msg:
-			task_object.update(State.SUCCESS, task_object.signals.finished.msg)
-		else:
+		if task_object.signals.finished.msg is None:
 			task_object.update(State.ERROR, "task_object signals not set?")
+		else:
+			task_object.update(State.SUCCESS, task_object.signals.finished.msg)
 		return task_object.to_dump()
 
 	except Exception as e:
-		task_object.update(State.FAILURE, "Exception: " + str(e))
-		task_object.to_dump()
+		#task_object.update(State.FAILURE, str(e))
+		raise e
 
 
 @current_app.task(bind=True)
