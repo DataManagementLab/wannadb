@@ -83,15 +83,14 @@ class TaskObject:
 	def signals(self, signals: Signals):
 		self.__signals = signals
 
-	def update(self, state: State, msg=""):
+	def update(self, state: Optional[State], msg=""):
 		if self.task_update_fn is None:
 			raise Exception("update error task_update_fn is None do you want to update here?")
 		if isinstance(state, State) and state is not None:
 			self.state = state
+		if msg is not None:
 			self.msg = msg
-			self.task_update_fn(self.state.value, self)
-		else:
-			raise Exception(f"update error State is {type(state)}")
+		self.task_update_fn(self.state.value, self)
 
 	def to_dump(self):
 		_state = self.state

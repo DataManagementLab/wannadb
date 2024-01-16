@@ -2,6 +2,7 @@ import logging
 import pickle
 import random
 import time
+from typing import Optional
 
 from celery import current_app
 
@@ -12,7 +13,6 @@ from wannadb_web.worker.Web_API import WannaDB_WebAPI
 from wannadb_web.worker.util import State, TaskUpdate
 from wannadb_web.worker.util import TaskObject
 
-
 # class U:
 # 	def update_state(*args, **kwargs):
 # 		print('update_state called with args: ', args, ' and kwargs: ', kwargs)
@@ -20,6 +20,8 @@ from wannadb_web.worker.util import TaskObject
 
 
 logging.basicConfig(level=logging.DEBUG, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+
+
 # RedisConnection()
 # ResourceManager()
 # authorization = (
@@ -95,7 +97,7 @@ def create_document_base_task(self, user_id, document_ids: list[int], attributes
 		saving document base
 		"""
 
-		#api.save_document_base_to_bson()
+		api.save_document_base_to_bson()
 
 		"""
 		response
@@ -104,12 +106,62 @@ def create_document_base_task(self, user_id, document_ids: list[int], attributes
 		if task_object.signals.finished.msg is None:
 			task_object.update(State.ERROR, "task_object signals not set?")
 		else:
-			task_object.update(State.SUCCESS, task_object.signals.finished.msg)
+
+			task_object.update(State.SUCCESS)
+
+		task_object.update(State.SUCCESS)
 		return task_object.to_dump()
 
 	except Exception as e:
-		#task_object.update(State.FAILURE, str(e))
+		# task_object.update(State.FAILURE, str(e))
 		raise e
+
+
+@current_app.task(bind=True)
+def update_document_base(self, base_name: str, user_id, attributes_dump: Optional[bytes], statistics_dump: bytes,
+						 organisation_id: int):
+	"""
+	define values
+	"""
+	statistics: Statistics = pickle.loads(statistics_dump)
+
+	def task_callback_fn(state: str, meta: TaskObject):
+		if isinstance(state, str) and state is not None and len(state) > 0:
+			meta_dump = meta.to_dump()
+			self.update_state(state=state, meta=meta_dump)
+		else:
+			raise Exception("task_callback_fn error Invalid state")
+
+	task_callback = TaskUpdate(task_callback_fn)
+
+	task_object = TaskObject(task_callback)
+
+	"""
+	init api
+	"""
+
+	api = WannaDB_WebAPI(1, task_object, base_name, organisation_id)
+	if task_object.signals.error.msg:
+		task_object.update(State.FAILURE, api.signals)
+		raise task_object.signals.error.msg
+	task_object.update(state=State.PENDING, msg="api created")
+
+	api.load_document_base_from_bson()
+	if task_object.signals.error.msg:
+		task_object.update(State.FAILURE, api.signals)
+		raise task_object.signals.error.msg
+	task_object.update(state=State.PENDING, msg="document base loaded")
+
+	if attributes_dump is not None:
+		attributes: list[Attribute] = pickle.loads(attributes_dump)
+		api.add_attributes(attributes)
+		if task_object.signals.error.msg:
+			task_object.update(State.FAILURE, api.signals)
+			raise task_object.signals.error.msg
+		task_object.update(state=State.PENDING, msg="attributes added")
+		api.add_attributes(attributes)
+
+	## todo: further manipulations here
 
 
 @current_app.task(bind=True)
