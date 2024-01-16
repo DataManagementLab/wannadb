@@ -1,3 +1,4 @@
+import logging
 import pickle
 import random
 import time
@@ -5,21 +6,45 @@ import time
 from celery import current_app
 
 from wannadb.data.data import Document, Attribute
+from wannadb.resources import ResourceManager
 from wannadb.statistics import Statistics
+from wannadb_web.Redis.util import RedisConnection
 from wannadb_web.postgres.queries import getDocuments
+from wannadb_web.util import tokenDecode
 from wannadb_web.worker.Web_API import WannaDB_WebAPI
-from wannadb_web.worker.util import TaskObject, State, TaskUpdate
+from wannadb_web.worker.util import State, TaskUpdate
+from wannadb_web.worker.util import TaskObject
 
 
 class U:
-
 	def update_state(*args, **kwargs):
 		print('update_state called with args: ', args, ' and kwargs: ', kwargs)
 		print("meta: ", TaskObject.from_dump(kwargs.get("meta")).signals.to_json())
 
 
+logging.basicConfig(level=logging.DEBUG, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+# RedisConnection()
+# ResourceManager()
+# authorization = (
+# 	"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VyIjoibGVvbiIsImlkIjoxfQ.YM9gwcXeFSku-bz4RUKkymYvA6Af13sxH-BRlnjCCEA")
+# _token = tokenDecode(authorization)
+# _base_name = "base_name"
+# document_ids = [2, 3]
+# attribute = Attribute("a")
+# statistics = Statistics(False)
+# user_id = 1
+# attributesDump = pickle.dumps([attribute])
+# statisticsDump = pickle.dumps(statistics)
+# uuuuuuuu = U()
+
+
 @current_app.task(bind=True)
-def create_document_base_task(self, user_id, document_ids: [int], attributes_dump: bytes, statistics_dump: bytes):
+def create_document_base_task(self, user_id, document_ids: list[int], attributes_dump: bytes, statistics_dump: bytes,
+							  base_name: str, organisation_id: int):
+	"""
+    define values
+	"""
+
 	attributes: list[Attribute] = pickle.loads(attributes_dump)
 	statistics: Statistics = pickle.loads(statistics_dump)
 
@@ -34,10 +59,17 @@ def create_document_base_task(self, user_id, document_ids: [int], attributes_dum
 
 	task_object = TaskObject(task_callback)
 
-	api = WannaDB_WebAPI(1, task_object)
+	"""
+	init api
+	"""
+
+	api = WannaDB_WebAPI(1, task_object, base_name, organisation_id)
 
 	task_object.update(state=State.PENDING, msg="api created")
 	try:
+		"""
+		decoding
+		"""
 		if not isinstance(attributes[0], Attribute):
 			task_object.update(State.FAILURE, "Invalid attributes")
 			raise Exception("Invalid attributes")
@@ -54,13 +86,33 @@ def create_document_base_task(self, user_id, document_ids: [int], attributes_dum
 				documents.append(Document(doc[0], doc[1]))
 		else:
 			print("No documents found")
-		# raise Exception("No documents found")
+		"""
+		Creating document base
+		"""
 
 		api.create_document_base(documents, attributes, statistics)
+		if task_object.signals.error.msg:
+			task_object.update(State.FAILURE, api.signals)
+
+		"""
+		saving document base
+		"""
+
+		#api.save_document_base_to_bson()
+
+		"""
+		response
+		"""
+
+		if task_object.signals.finished.msg:
+			task_object.update(State.SUCCESS, task_object.signals.finished.msg)
+		else:
+			task_object.update(State.ERROR, "task_object signals not set?")
 		return task_object.to_dump()
 
 	except Exception as e:
-		self.update_state(state=State.FAILURE.value, meta={'exception': str(e)})
+		task_object.update(State.FAILURE, "Exception: " + str(e))
+		task_object.to_dump()
 
 
 @current_app.task(bind=True)

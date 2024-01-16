@@ -16,3 +16,4 @@ celery~=5.3.6
 flower~=2.0.1
 redis~=5.0.1
 pickle5~=0.0.11
+mypy==1.5.1
