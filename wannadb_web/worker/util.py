@@ -1,11 +1,11 @@
 import enum
 import pickle
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Callable, Any, Optional
 
 from wannadb.interaction import InteractionCallback
 from wannadb.status import StatusCallback
-from wannadb_web.worker.Signals import Signals
+from wannadb_web.worker.data import Signals
 
 
 class TaskUpdate:
@@ -35,13 +35,10 @@ class State(enum.Enum):
 class TaskObject:
 	"""Class for representing the response of a task."""
 
-	msg: str
-	__signals: Signals
-
-	def __init__(self, task_update_fn: Optional[TaskUpdate], state=State.STARTED):
-		self.task_update_fn = task_update_fn
-		self.__state = state
-		self.__signals = Signals()
+	task_update_fn: Optional[TaskUpdate]
+	__signals: Signals = field(default_factory=Signals)
+	__state: State = State.STARTED
+	msg: str = ""
 
 	@property
 	def status_callback(self):
@@ -68,11 +65,8 @@ class TaskObject:
 	def state(self) -> State:
 		return self.__state
 
-	@property
-	def signals(self) -> Signals:
-		return self.__signals
-
-	def __set_state(self, state: State):
+	@state.setter
+	def state(self, state: State):
 		if not isinstance(state, State):
 			print("update error Invalid state", state)
 			raise Exception("update error Invalid state")
@@ -81,27 +75,34 @@ class TaskObject:
 			raise Exception("update error State is none")
 		self.__state = state
 
-	def __set_signals(self, signals: Signals):
+	@property
+	def signals(self) -> Signals:
+		return self.__signals
+
+	@signals.setter
+	def signals(self, signals: Signals):
 		self.__signals = signals
 
 	def update(self, state: State, msg=""):
+		if self.task_update_fn is None:
+			raise Exception("update error task_update_fn is None do you want to update here?")
 		if isinstance(state, State) and state is not None:
-			self.__set_state(state)
+			self.state = state
 			self.msg = msg
 			self.task_update_fn(self.state.value, self)
 		else:
 			raise Exception(f"update error State is {type(state)}")
 
 	def to_dump(self):
-		state = self.state
-		signals = self.signals
-		msg = self.msg
-		return pickle.dumps((state, signals, msg))
+		_state = self.state
+		_signals = self.signals
+		_msg = self.msg
+		return pickle.dumps((_state, _signals, _msg))
 
 	@staticmethod
 	def from_dump(dump: bytes):
 		state, signals, msg = pickle.loads(dump)
-		to = TaskObject(None, state=state)
-		to.__set_signals(signals)
+		to = TaskObject(None,state)
+		to.signals = signals
 		to.msg = msg
 		return to
