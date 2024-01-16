@@ -26,6 +26,7 @@ class BaseCustomMatchExtractor(abc.ABC):
     """
 
     identifier: str = "BaseCustomMatchExtractor"
+    time_keeping = []
 
     @abc.abstractmethod
     def __call__(self, nugget: InformationNugget, documents: List[Document]) -> List[Tuple[Document, int, int]]:

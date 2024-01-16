@@ -332,6 +332,7 @@ class RankingBasedMatcher(BaseMatcher):
                     t_minus_custom_extraction = time.time()
                     additional_nuggets: List[Tuple[Document, int, int]] = self._find_additional_nuggets(confirmed_nugget, remaining_documents)
                     t_custom_extraction = time.time() - t_minus_custom_extraction
+                    self._find_additional_nuggets.time_keeping.append(t_custom_extraction)
                     logger.info(f"Execution of custom match extraction"
                                 f" with {str(self._find_additional_nuggets)}"
                                 f" took {t_custom_extraction} seconds"
