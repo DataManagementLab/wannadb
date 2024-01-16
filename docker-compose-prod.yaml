@@ -26,6 +26,8 @@ services:
         command: ['celery', '-A', 'app.celery', 'worker', '-l', 'info']
         env_file:
             - wannadb_web/.env/.dev
+        volumes:
+            - ./:/home/wannadb
         networks:
             - mynetwork
         depends_on:
