@@ -143,6 +143,8 @@ class WannaDB_WebAPI:
 			self.task_object.signals.error.emit(e)
 			raise e
 
+
+# todo: below not implemented yet
 	def save_table_to_csv(self):
 		logger.debug("Called function 'save_table_to_csv'.")
 		if self.document_base is None:
