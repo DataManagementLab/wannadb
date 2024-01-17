@@ -121,8 +121,9 @@ def main():
         dataset_str = "nobel"
 
         # How many custom interactions are executed
-        for number_of_interactions in [0]:
+        for number_of_interactions in [10]:
 
+            print("NUM INTERACTION:" + str(number_of_interactions))
             # Create statistics object and get desired dataset
             statistics = Statistics(do_collect=True)
             dataset = DATASETS[[x[0] for x in DATASETS].index(dataset_str)][1]
@@ -134,10 +135,13 @@ def main():
             user_attribute_name2attribute_name, document_base = create_document_base(statistics, dataset, documents)
             user_attribute_names = statistics["user_provided_attribute_names"]
             preprocessing(statistics, dataset, document_base, documents)
-            path = os.path.join(os.path.dirname(__file__), "..", "cache", f"exp-{dataset.NAME}-preprocessed.bson")
+            path_to_bson = os.path.join(os.path.dirname(__file__), "..", "cache", f"exp-{dataset.NAME}-preprocessed.bson")
 
             # --- Matching phase --- #
             for attribute_name in dataset.ATTRIBUTES:
+
+                print("ATTRIBUTE:" + str(attribute_name))
+
                 statistics["matching"]["results"]["considered_as_match"][attribute_name] = set()
 
                 # random seeds have been randomly chosen once from [0, 1000000]
@@ -148,7 +152,7 @@ def main():
                     print(f"Run {run}")
 
                     # Load the document base again
-                    with open(path, "rb") as file:
+                    with open(path_to_bson, "rb") as file:
                         document_base = DocumentBase.from_bson(file.read())
 
                     # Define the matching pipeline
@@ -166,7 +170,7 @@ def main():
                                         "RelativePositionSignal"
                                     ]
                                 ),
-                                max_num_feedback=100,
+                                max_num_feedback=number_of_interactions,
                                 len_ranked_list=10,
                                 max_distance=0.2,
                                 num_random_docs=1,
