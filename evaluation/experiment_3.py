@@ -203,7 +203,8 @@ def main():
                         document_base=document_base,
                         interaction_callback=AutomaticRandomCustomMatchingFeedback(
                             documents,
-                            user_attribute_name2attribute_name
+                            user_attribute_name2attribute_name,
+                            attribute_name
                         ),
                         status_callback=EmptyStatusCallback(),
                         statistics=statistics["matching"]["runs"][str(run)]

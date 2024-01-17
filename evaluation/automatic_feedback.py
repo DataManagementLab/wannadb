@@ -13,14 +13,20 @@ class AutomaticRandomCustomMatchingFeedback(BaseInteractionCallback):
         we use this as a custom match and return a custom match event!
    """
 
-    def __init__(self, documents: List[Dict[str, Any]], user_attribute_name2dataset_attribute_name: Dict[str, str]):
+    def __init__(
+            self,
+            documents: List[Dict[str, Any]],
+            user_attribute_name2dataset_attribute_name: Dict[str, str],
+            attribute: str
+    ):
         self._documents: List[Dict[str, Any]] = documents
         self._user_attribute_name2dataset_attribute_name: Dict[str, str] = user_attribute_name2dataset_attribute_name
+        self._current_attribute = attribute
 
     def _call(self, pipeline_element_identifier: str, data: Dict[str, Any]) -> Dict[str, Any]:
         # Catch the call that decides whether this attribute should be matched and just return true for it
         if "nuggets" not in data.keys():
-            return {"do-attribute": True}
+            return {"do-attribute": self._current_attribute == data["attribute"].name}
 
         # Extract the needed data
         nuggets = data["nuggets"]
