@@ -1,3 +1,4 @@
+from wannadb.matching.custom_extractor import CustomSimilaritySpanExtractor
 from wannadb.resources import ResourceManager
 from wannadb.statistics import Statistics
 from evaluation.datasets.aviation import aviation
@@ -188,7 +189,7 @@ def main():
                                         RelativePositionEmbedder()
                                     ]
                                 ),
-                                find_additional_nuggets=QuestionAnsweringCustomMatchExtractor()
+                                find_additional_nuggets=CustomSimilaritySpanExtractor()
                             )
                         ]
                     )
