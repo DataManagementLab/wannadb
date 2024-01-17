@@ -114,6 +114,7 @@ class WannaDB_WebAPI:
 
 			logger.info(f"Document base loaded from BSON with id {document_id}.")
 			self.document_base = document_base
+
 		except Exception as e:
 			logger.error(str(e))
 			self.task_object.signals.error.emit(e)
@@ -244,49 +245,49 @@ class WannaDB_WebAPI:
 				self.task_object.signals.error.emit(Exception("Attribute name does not exist!"))
 		self.task_object.update(None)
 
-## todo: below not implemented yet
 
-	def forget_matches_for_attribute(self, attributes: list[Attribute]):
+	def forget_matches_for_attribute(self, attribute: Attribute):
 		logger.debug("Called function 'forget_matches_for_attribute'.")
 		if self.document_base is None:
 			logger.error("Document base not loaded!")
 			self.task_object.signals.error.emit(Exception("Document base not loaded!"))
 			return
+		self.sqLiteCacheDBWrapper.cache_db.delete_table(attribute.name)
 		try:
-			for attribute in attributes:
-				if attribute in self.document_base.attributes:
-					for document in self.document_base.documents:
-						if attribute.name in document.attribute_mappings.keys():
-							del document.attribute_mappings[attribute.name]
-					self.task_object.signals.status.emit(f"Matches for attribute '{attribute.name}' forgotten.")
-				else:
-					logger.error("Attribute name does not exist!")
-					self.task_object.signals.error.emit(Exception("Attribute name does not exist!"))
+			if attribute in self.document_base.attributes:
+				for document in self.document_base.documents:
+					if attribute.name in document.attribute_mappings.keys():
+						del document.attribute_mappings[attribute.name]
+				self.task_object.signals.status.emit(f"Matches for attribute '{attribute.name}' forgotten.")
+				self.task_object.signals.document_base_to_ui.emit(self.document_base)
+			else:
+				logger.error("Attribute name does not exist!")
+				self.task_object.signals.error.emit(Exception("Attribute name does not exist!"))
 		except Exception as e:
 			logger.error(str(e))
 			self.task_object.signals.error.emit(e)
 			raise e
 
-	def forget_matches(self, name: str):
+	def forget_matches(self):
 		logger.debug("Called function 'forget_matches'.")
 		if self.document_base is None:
 			logger.error("Document base not loaded!")
 			self.task_object.signals.error.emit(Exception("Document base not loaded!"))
 			return
+		for attribute in self.document_base.attributes:
+			self.sqLiteCacheDBWrapper.cache_db.delete_table(attribute.name)
+			self.sqLiteCacheDBWrapper.cache_db.create_table_by_name(attribute.name)
 		try:
-
-			cache_db = self.sqLiteCacheDBWrapper.cache_db
-			for attribute in self.document_base.attributes:
-				cache_db.delete_table(attribute.name)
-				cache_db.create_table_by_name(attribute.name)
 			for document in self.document_base.documents:
 				document.attribute_mappings.clear()
-			logger.debug(f"Matche: {name} forgotten.")
-			self.task_object.signals.status.emit(f"Matche: {name} forgotten.")
+			self.task_object.signals.document_base_to_ui.emit(self.document_base)
+			self.task_object.signals.finished.emit(1)
 		except Exception as e:
 			logger.error(str(e))
 			self.task_object.signals.error.emit(e)
 			raise e
+
+	## todo: below not implemented yet
 
 	def save_statistics_to_json(self):
 		logger.debug("Called function 'save_statistics_to_json'.")

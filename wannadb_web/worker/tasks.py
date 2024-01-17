@@ -40,10 +40,6 @@ logging.basicConfig(level=logging.DEBUG, format="%(asctime)s - %(name)s - %(leve
 @current_app.task(bind=True)
 def create_document_base_task(self, user_id, document_ids: list[int], attributes_dump: bytes, statistics_dump: bytes,
 							  base_name: str, organisation_id: int):
-	"""
-    define values
-	"""
-
 	attributes: list[Attribute] = pickle.loads(attributes_dump)
 	statistics: Statistics = pickle.loads(statistics_dump)
 
@@ -63,11 +59,10 @@ def create_document_base_task(self, user_id, document_ids: list[int], attributes
 	"""
 
 	api = WannaDB_WebAPI(user_id, task_object, base_name, organisation_id)
-
-	task_object.update(state=State.PENDING)
+	task_object.check()
 	try:
 		"""
-		decoding
+		Creating document base
 		"""
 		if not isinstance(attributes[0], Attribute):
 			task_object.update(State.FAILURE)
@@ -85,23 +80,11 @@ def create_document_base_task(self, user_id, document_ids: list[int], attributes
 				documents.append(Document(doc[0], doc[1]))
 		else:
 			print("No documents found")
-		"""
-		Creating document base
-		"""
 
 		api.create_document_base(documents, attributes, statistics)
-		if task_object.signals.error.msg:
-			task_object.update(State.FAILURE)
-
-		"""
-		saving document base
-		"""
+		task_object.check()
 
 		api.save_document_base_to_bson()
-
-		"""
-		response
-		"""
 
 		if task_object.signals.finished.msg is None:
 			task_object.update(State.ERROR)
@@ -116,7 +99,7 @@ def create_document_base_task(self, user_id, document_ids: list[int], attributes
 
 
 @current_app.task(bind=True)
-def add_attributes(self, user_id:int,  attributes_dump: Optional[bytes], base_name: str, organisation_id: int):
+def add_attributes(self, user_id: int, attributes_dump: Optional[bytes], base_name: str, organisation_id: int):
 	"""
 	define values
 	"""
@@ -137,16 +120,10 @@ def add_attributes(self, user_id:int,  attributes_dump: Optional[bytes], base_na
 	"""
 
 	api = WannaDB_WebAPI(user_id, task_object, base_name, organisation_id)
-	if task_object.signals.error.msg:
-		task_object.update(State.FAILURE)
-		raise task_object.signals.error.msg
-	task_object.update(state=State.PENDING)
+	task_object.check()
 
 	api.load_document_base_from_bson()
-	if task_object.signals.error.msg:
-		task_object.update(State.FAILURE)
-		raise task_object.signals.error.msg
-	task_object.update(state=State.PENDING)
+	task_object.check()
 
 	if attributes_dump is not None:
 		attributes: list[Attribute] = pickle.loads(attributes_dump)
@@ -154,6 +131,123 @@ def add_attributes(self, user_id:int,  attributes_dump: Optional[bytes], base_na
 		if task_object.signals.error.msg:
 			task_object.update(State.FAILURE)
 			raise task_object.signals.error.msg
+
+	api.save_document_base_to_bson()
+	task_object.check()
+	task_object.update(state=State.SUCCESS)
+
+
+@current_app.task(bind=True)
+def remove_attributes(self, user_id: int, attributes_dump: Optional[bytes], base_name: str, organisation_id: int):
+	"""
+	define values
+	"""
+
+	def task_callback_fn(state: str, meta: TaskObject):
+		if isinstance(state, str) and state is not None and len(state) > 0:
+			meta_dump = meta.to_dump()
+			self.update_state(state=state, meta=meta_dump)
+		else:
+			raise Exception("task_callback_fn error Invalid state")
+
+	task_callback = TaskUpdate(task_callback_fn)
+
+	task_object = TaskObject(task_callback)
+
+	"""
+	init api
+	"""
+
+	api = WannaDB_WebAPI(user_id, task_object, base_name, organisation_id)
+	task_object.check()
+
+	api.load_document_base_from_bson()
+	task_object.check()
+
+	if attributes_dump is not None:
+		attributes: list[Attribute] = pickle.loads(attributes_dump)
+		api.remove_attributes(attributes)
+		if task_object.signals.error.msg:
+			task_object.update(State.FAILURE)
+			raise task_object.signals.error.msg
+
+	api.save_document_base_to_bson()
+	task_object.check()
+	task_object.update(state=State.SUCCESS)
+
+
+@current_app.task(bind=True)
+def forget_matches_for_attribute(self, user_id: int, attribute_dump: Optional[bytes], base_name: str,
+								 organisation_id: int):
+	"""
+	define values
+	"""
+
+	def task_callback_fn(state: str, meta: TaskObject):
+		if isinstance(state, str) and state is not None and len(state) > 0:
+			meta_dump = meta.to_dump()
+			self.update_state(state=state, meta=meta_dump)
+		else:
+			raise Exception("task_callback_fn error Invalid state")
+
+	task_callback = TaskUpdate(task_callback_fn)
+
+	task_object = TaskObject(task_callback)
+
+	"""
+	init api
+	"""
+
+	api = WannaDB_WebAPI(user_id, task_object, base_name, organisation_id)
+	task_object.check()
+
+	api.load_document_base_from_bson()
+	task_object.check()
+
+	if attribute_dump is not None:
+		attribute: Attribute = pickle.loads(attribute_dump)
+		api.forget_matches_for_attribute(attribute)
+		if task_object.signals.error.msg:
+			task_object.update(State.FAILURE)
+			raise task_object.signals.error.msg
+
+	api.save_document_base_to_bson()
+	task_object.check()
+	task_object.update(state=State.SUCCESS)
+
+
+@current_app.task(bind=True)
+def forget_matches(self, user_id: int, attributes_dump: Optional[bytes], base_name: str, organisation_id: int):
+	"""
+	define values
+	"""
+
+	def task_callback_fn(state: str, meta: TaskObject):
+		if isinstance(state, str) and state is not None and len(state) > 0:
+			meta_dump = meta.to_dump()
+			self.update_state(state=state, meta=meta_dump)
+		else:
+			raise Exception("task_callback_fn error Invalid state")
+
+	task_callback = TaskUpdate(task_callback_fn)
+
+	task_object = TaskObject(task_callback)
+
+	"""
+	init api
+	"""
+
+	api = WannaDB_WebAPI(user_id, task_object, base_name, organisation_id)
+	task_object.check()
+
+	api.load_document_base_from_bson()
+	task_object.check()
+
+	api.forget_matches()
+	task_object.check()
+
+	api.save_document_base_to_bson()
+	task_object.check()
 	task_object.update(state=State.SUCCESS)
 
 
