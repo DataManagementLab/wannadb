@@ -99,8 +99,8 @@ def create_document():
 
 	return make_response({'task_id': task.id}, 202)
 
-@core_routes.route('/update/document_base', methods=['POST'])
-def create_document():
+@core_routes.route('/document_base/attributes', methods=['UPDATE'])
+def document_base():
 	"""
     Endpoint for update a document base.
 
