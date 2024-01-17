@@ -100,3 +100,9 @@ class TaskObject:
 		to = TaskObject(None,state)
 		to.signals = signals
 		return to
+
+	def check(self):
+		self.update(None)
+		if self.signals.error.msg:
+			self.update(State.FAILURE)
+			raise self.signals.error.msg
