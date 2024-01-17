@@ -118,7 +118,7 @@ def create_document_base_task(self, user_id, document_ids: list[int], attributes
 
 
 @current_app.task(bind=True)
-def update_document_base(self, base_name: str, user_id, attributes_dump: Optional[bytes], statistics_dump: bytes,
+def update_document_base(self, user_id,  attributes_dump: Optional[bytes], statistics_dump: bytes, base_name: str,
 						 organisation_id: int):
 	"""
 	define values
