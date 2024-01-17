@@ -62,7 +62,7 @@ def create_document_base_task(self, user_id, document_ids: list[int], attributes
 	init api
 	"""
 
-	api = WannaDB_WebAPI(1, task_object, base_name, organisation_id)
+	api = WannaDB_WebAPI(user_id, task_object, base_name, organisation_id)
 
 	task_object.update(state=State.PENDING)
 	try:
@@ -116,12 +116,10 @@ def create_document_base_task(self, user_id, document_ids: list[int], attributes
 
 
 @current_app.task(bind=True)
-def update_document_base(self, user_id:int,  attributes_dump: Optional[bytes], statistics_dump: bytes, base_name: str,
-						 organisation_id: int):
+def add_attributes(self, user_id:int,  attributes_dump: Optional[bytes], base_name: str, organisation_id: int):
 	"""
 	define values
 	"""
-	statistics: Statistics = pickle.loads(statistics_dump)
 
 	def task_callback_fn(state: str, meta: TaskObject):
 		if isinstance(state, str) and state is not None and len(state) > 0:
@@ -138,7 +136,7 @@ def update_document_base(self, user_id:int,  attributes_dump: Optional[bytes], s
 	init api
 	"""
 
-	api = WannaDB_WebAPI(1, task_object, base_name, organisation_id)
+	api = WannaDB_WebAPI(user_id, task_object, base_name, organisation_id)
 	if task_object.signals.error.msg:
 		task_object.update(State.FAILURE)
 		raise task_object.signals.error.msg
@@ -156,11 +154,7 @@ def update_document_base(self, user_id:int,  attributes_dump: Optional[bytes], s
 		if task_object.signals.error.msg:
 			task_object.update(State.FAILURE)
 			raise task_object.signals.error.msg
-		task_object.update(state=State.PENDING)
-		api.add_attributes(attributes)
-
-
-## todo: further manipulations here
+	task_object.update(state=State.SUCCESS)
 
 
 @current_app.task(bind=True)
