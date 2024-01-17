@@ -62,18 +62,15 @@ class Signals:
 		self.cache_db_to_ui = _Dump("cache_db_to_ui")
 
 	def to_json(self) -> dict[str, str]:
-		try:
-			return {self.feedback.type: self.feedback.to_json(),
-					self.error.type: self.error.to_json(),
-					self.status.type: self.status.to_json(),
-					self.finished.type: self.finished.to_json(),
-					self.document_base_to_ui.type: self.document_base_to_ui.to_json(),
-					self.statistics.type: self.statistics.to_json(),
-					self.feedback_request_to_ui.type: self.feedback_request_to_ui.to_json(),
-					self.cache_db_to_ui.type: self.cache_db_to_ui.to_json()}
-		except Exception as e:
-			print(e)
-			return {"error": "signals to json error"}
+		return {self.feedback.type: self.feedback.to_json(),
+				self.error.type: self.error.to_json(),
+				self.status.type: self.status.to_json(),
+				self.finished.type: self.finished.to_json(),
+				self.document_base_to_ui.type: self.document_base_to_ui.to_json(),
+				self.statistics.type: self.statistics.to_json(),
+				self.feedback_request_to_ui.type: self.feedback_request_to_ui.to_json(),
+				self.cache_db_to_ui.type: self.cache_db_to_ui.to_json()}
+
 
 
 class Emitable(ABC):
@@ -106,10 +103,7 @@ class _State(Emitable):
 		return self.__msg
 
 	def to_json(self):
-		return {
-			'type': self.type,
-			'msg': str(self.msg)
-		}
+		return str(self.msg)
 
 	def emit(self, status: str):
 		self.__msg = status
@@ -128,10 +122,7 @@ class _Signal(Emitable):
 		return self.__msg
 
 	def to_json(self):
-		return {
-			'type': self.type,
-			'msg': self.msg
-		}
+		return str(self.msg)
 
 	def emit(self, status: float):
 		self.__msg = status
@@ -150,10 +141,7 @@ class _Error(Emitable):
 		return self.__msg
 
 	def to_json(self):
-		return {
-			'type': self.type,
-			'msg': str(self.msg)
-		}
+		return str(self.msg)
 
 	def emit(self, exception: BaseException):
 		self.__msg = exception
@@ -213,10 +201,8 @@ class _Statistics(Emitable):
 		return self.__msg
 
 	def to_json(self):
-		return {
-			'type': self.type,
-			'msg': self.__msg.to_serializable()
-		}
+		return self.__msg.to_serializable()
+
 
 	def emit(self, statistic: Statistics):
 		self.__msg = statistic
@@ -232,10 +218,8 @@ class _Dump(Emitable):
 		return self.__msg
 
 	def to_json(self):
-		return {
-			'type': self.type,
-			'msg': json.dumps(self.msg)
-		}
+		return json.dumps(self.msg)
+
 
 	def emit(self, status):
 		self.__msg = status

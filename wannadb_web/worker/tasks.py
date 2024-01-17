@@ -64,21 +64,21 @@ def create_document_base_task(self, user_id, document_ids: list[int], attributes
 
 	api = WannaDB_WebAPI(1, task_object, base_name, organisation_id)
 
-	task_object.update(state=State.PENDING, msg="api created")
+	task_object.update(state=State.PENDING)
 	try:
 		"""
 		decoding
 		"""
 		if not isinstance(attributes[0], Attribute):
-			task_object.update(State.FAILURE, "Invalid attributes")
+			task_object.update(State.FAILURE)
 			raise Exception("Invalid attributes")
 
 		if not isinstance(statistics, Statistics):
-			task_object.update(State.FAILURE, "Invalid statistics")
+			task_object.update(State.FAILURE)
 			raise Exception("Invalid statistics")
 
 		docs = getDocuments(document_ids, user_id)
-		task_object.update(State.PENDING, "Creating document base")
+		task_object.update(State.PENDING)
 		documents = []
 		if docs:
 			for doc in docs:
@@ -91,7 +91,7 @@ def create_document_base_task(self, user_id, document_ids: list[int], attributes
 
 		api.create_document_base(documents, attributes, statistics)
 		if task_object.signals.error.msg:
-			task_object.update(State.FAILURE, api.signals)
+			task_object.update(State.FAILURE)
 
 		"""
 		saving document base
@@ -104,10 +104,8 @@ def create_document_base_task(self, user_id, document_ids: list[int], attributes
 		"""
 
 		if task_object.signals.finished.msg is None:
-			task_object.update(State.ERROR, "task_object signals not set?")
-		else:
-
-			task_object.update(State.SUCCESS)
+			task_object.update(State.ERROR)
+			raise Exception("task_object signals not set?")
 
 		task_object.update(State.SUCCESS)
 		return task_object.to_dump()
@@ -118,7 +116,7 @@ def create_document_base_task(self, user_id, document_ids: list[int], attributes
 
 
 @current_app.task(bind=True)
-def update_document_base(self, user_id,  attributes_dump: Optional[bytes], statistics_dump: bytes, base_name: str,
+def update_document_base(self, user_id:int,  attributes_dump: Optional[bytes], statistics_dump: bytes, base_name: str,
 						 organisation_id: int):
 	"""
 	define values
@@ -142,26 +140,27 @@ def update_document_base(self, user_id,  attributes_dump: Optional[bytes], stati
 
 	api = WannaDB_WebAPI(1, task_object, base_name, organisation_id)
 	if task_object.signals.error.msg:
-		task_object.update(State.FAILURE, api.signals)
+		task_object.update(State.FAILURE)
 		raise task_object.signals.error.msg
-	task_object.update(state=State.PENDING, msg="api created")
+	task_object.update(state=State.PENDING)
 
 	api.load_document_base_from_bson()
 	if task_object.signals.error.msg:
-		task_object.update(State.FAILURE, api.signals)
+		task_object.update(State.FAILURE)
 		raise task_object.signals.error.msg
-	task_object.update(state=State.PENDING, msg="document base loaded")
+	task_object.update(state=State.PENDING)
 
 	if attributes_dump is not None:
 		attributes: list[Attribute] = pickle.loads(attributes_dump)
 		api.add_attributes(attributes)
 		if task_object.signals.error.msg:
-			task_object.update(State.FAILURE, api.signals)
+			task_object.update(State.FAILURE)
 			raise task_object.signals.error.msg
-		task_object.update(state=State.PENDING, msg="attributes added")
+		task_object.update(state=State.PENDING)
 		api.add_attributes(attributes)
 
-	## todo: further manipulations here
+
+## todo: further manipulations here
 
 
 @current_app.task(bind=True)
@@ -190,8 +189,8 @@ def long_task(self):
 											   random.choice(adjective),
 											   random.choice(noun))
 			time.sleep(1)
-			task_object.update(state=State.PENDING, msg=data)
-		task_object.update(state=State.SUCCESS, msg='Task completed!')
+			task_object.update(state=State.PENDING)
+		task_object.update(state=State.SUCCESS)
 		return data
 	except Exception as e:
 		self.update_state(state=State.FAILURE.value, meta={'exception': str(e)})

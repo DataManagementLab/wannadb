@@ -169,5 +169,5 @@ def task_status(task_id):
 	if not isinstance(meta, bytes):
 		return make_response({"error": "task not correct"}, 404)
 	taskObject = TaskObject.from_dump(meta)
-	return make_response({"state": taskObject.state.value, "meta": taskObject.signals.to_json(), "msg": taskObject.msg},
+	return make_response({"state": taskObject.state.value, "meta": taskObject.signals.to_json()},
 						 200)
