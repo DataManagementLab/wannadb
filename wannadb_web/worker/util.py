@@ -38,7 +38,6 @@ class TaskObject:
 	task_update_fn: Optional[TaskUpdate]
 	__signals: Signals = field(default_factory=Signals)
 	__state: State = State.STARTED
-	msg: str = ""
 
 	@property
 	def status_callback(self):
@@ -83,25 +82,21 @@ class TaskObject:
 	def signals(self, signals: Signals):
 		self.__signals = signals
 
-	def update(self, state: Optional[State], msg=""):
+	def update(self, state: Optional[State]):
 		if self.task_update_fn is None:
 			raise Exception("update error task_update_fn is None do you want to update here?")
 		if isinstance(state, State) and state is not None:
 			self.state = state
-		if msg is not None:
-			self.msg = msg
 		self.task_update_fn(self.state.value, self)
 
 	def to_dump(self):
 		_state = self.state
 		_signals = self.signals
-		_msg = self.msg
-		return pickle.dumps((_state, _signals, _msg))
+		return pickle.dumps((_state, _signals))
 
 	@staticmethod
 	def from_dump(dump: bytes):
-		state, signals, msg = pickle.loads(dump)
+		state, signals = pickle.loads(dump)
 		to = TaskObject(None,state)
 		to.signals = signals
-		to.msg = msg
 		return to
