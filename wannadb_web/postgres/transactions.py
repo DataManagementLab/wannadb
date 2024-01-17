@@ -356,17 +356,23 @@ def adjUserAuthorisation(organisationName: str, sessionToken: str, userToAdjust:
 
 def addDocument(name: str, content: Union[str, bytes], organisationId: int, userid: int):
 	try:
+
 		if isinstance(content, str):
-			insert_data_query = sql.SQL("INSERT INTO documents (name,content,organisationid,userid) "
-										"VALUES (%s, %s,%s, %s) returning id;")
-		else:
-			insert_data_query = sql.SQL("INSERT INTO documents (name,content_byte,organisationid,userid) "
-										"VALUES (%s, %s,%s, %s) returning id;")
-		data_to_insert = (name, content, organisationId, userid)
-		response = execute_transaction(insert_data_query, data_to_insert, commit=True)
-		return int(response[0][0])
-	except IntegrityError:
+			insert_data_query = sql.SQL("INSERT INTO documents (name, content, organisationid, userid) "
+										"VALUES (%s, %s, %s, %s) returning id;")
+			string_data_to_insert = (name, content, organisationId, userid)
+			response = execute_transaction(insert_data_query, string_data_to_insert, commit=True)
+			return int(response[0][0])
+		elif isinstance(content, bytes):
+			insert_data_query = sql.SQL("INSERT INTO documents (name, content_byte, organisationid, userid) "
+										"VALUES (%s, %s, %s, %s) returning id;")
+			byte_data_to_insert = (name, content, organisationId, userid)
+			response = execute_transaction(insert_data_query, byte_data_to_insert, commit=True)
+			return int(response[0][0])
+
+	except IntegrityError as i:
+		logger.error(str(i))
 		return -1
 
 	except Exception as e:
-		print("addDocument failed because: \n", e)
+		logger.error(str(e))
