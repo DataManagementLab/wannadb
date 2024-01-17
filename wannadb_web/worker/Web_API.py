@@ -96,10 +96,11 @@ class WannaDB_WebAPI:
 			self.sqLiteCacheDBWrapper.reset_cache_db()
 
 			document_id, document = getDocument_by_name(self.document_base_name, self.organisation_id, self.user_id)
-			if isinstance(document, str):
+			if not isinstance(document, bytes):
 				logger.error("document is not a DocumentBase!")
 				self.task_object.signals.error.emit(Exception("document is not a DocumentBase!"))
 				return
+
 			document_base = DocumentBase.from_bson(document)
 
 			if not document_base.validate_consistency():
@@ -113,7 +114,6 @@ class WannaDB_WebAPI:
 
 			logger.info(f"Document base loaded from BSON with id {document_id}.")
 			self.document_base = document_base
-
 		except Exception as e:
 			logger.error(str(e))
 			self.task_object.signals.error.emit(e)
@@ -131,11 +131,13 @@ class WannaDB_WebAPI:
 			if document_id is None:
 				logger.error("Document base could not be saved to BSON!")
 			elif document_id == -1:
-				logger.error("Document base could not be saved to BSON! Document name already exists!")
+				logger.error(f"Document base could not be saved to BSON! Document {self.document_base_name} already exists!")
 				self.task_object.signals.error.emit(
-					Exception("Document base could not be saved to BSON! Document name already exists!"))
-			logger.info(f"Document base saved to BSON with ID {document_id}.")
-			self.task_object.signals.status.emit(f"Document base saved to BSON with ID {document_id}.")
+					Exception(f"Document base could not be saved to BSON! Document {self.document_base_name} already exists!"))
+			elif document_id > 0:
+				logger.info(f"Document base saved to BSON with ID {document_id}.")
+				self.task_object.signals.status.emit(f"Document base saved to BSON with ID {document_id}.")
+			return
 		except Exception as e:
 			logger.error(str(e))
 			self.task_object.signals.error.emit(e)
