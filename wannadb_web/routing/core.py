@@ -37,7 +37,7 @@ from wannadb.data.data import Attribute
 from wannadb.statistics import Statistics
 from wannadb_web.util import tokenDecode
 from wannadb_web.worker.data import nugget_to_json
-from wannadb_web.worker.tasks import create_document_base_task, long_task
+from wannadb_web.worker.tasks import create_document_base_task, long_task, update_document_base
 from wannadb_web.worker.util import TaskObject
 
 core_routes = Blueprint('core_routes', __name__, url_prefix='/core')
@@ -95,6 +95,56 @@ def create_document():
 	statisticsDump = pickle.dumps(statistics)
 
 	task = create_document_base_task.apply_async(args=(user_id, document_ids, attributesDump, statisticsDump,
+													   base_name, organisation_id))
+
+	return make_response({'task_id': task.id}, 202)
+
+@core_routes.route('/update/document_base', methods=['POST'])
+def create_document():
+	"""
+    Endpoint for update a document base.
+
+	This endpoint is used to update a document base from a list of attributes.
+
+	Example Header:
+	{
+		"Authorization": "your_authorization_token"
+	}
+
+    Example JSON Payload:
+    {
+        "organisationId": "your_organisation_id",
+        "baseName": "your_document_base_name",
+        "attributes": [
+        "plane","car","bike"
+        ]
+    }
+    """
+	form = request.form
+	# authorization = request.headers.get("authorization")
+	authorization = form.get("authorization")
+	organisation_id = form.get("organisationId")
+	base_name = form.get("baseName")
+	attributes_string = form.get("attributes")
+	if (organisation_id is None or base_name is None or attributes_string is None
+			or authorization is None):
+		return make_response({"error": "missing parameters"}, 400)
+	_token = tokenDecode(authorization)
+
+	if _token is False:
+		return make_response({"error": "invalid token"}, 401)
+
+	attributes = []
+	for att in attributes_string:
+		attributes.append(Attribute(att))
+
+	statistics = Statistics(False)
+	user_id = _token.id
+
+	attributesDump = pickle.dumps(attributes)
+	statisticsDump = pickle.dumps(statistics)
+
+	task = update_document_base.apply_async(args=(user_id, attributesDump, statisticsDump,
 													   base_name, organisation_id))
 
 	return make_response({'task_id': task.id}, 202)
