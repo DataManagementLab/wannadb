@@ -189,7 +189,7 @@ def main():
                                         RelativePositionEmbedder()
                                     ]
                                 ),
-                                find_additional_nuggets=CustomSimilaritySpanExtractor()
+                                find_additional_nuggets=QuestionAnsweringCustomMatchExtractor()
                             )
                         ]
                     )
@@ -211,7 +211,7 @@ def main():
                     )
 
                     # evaluate the matching process
-                    for attribute, attribute_name in zip(dataset.ATTRIBUTES, user_attribute_names):
+                    for attribute, attribute_name_eval in zip(dataset.ATTRIBUTES, user_attribute_names):
                         results = statistics["matching"]["runs"][str(run)]["results"][attribute]
                         results["num_should_be_filled_is_empty"] = 0
                         results["num_should_be_filled_is_correct"] = 0
@@ -221,8 +221,8 @@ def main():
 
                         for document, aset_document in zip(documents, document_base.documents):
                             found_nuggets = []
-                            if attribute_name in aset_document.attribute_mappings.keys():
-                                found_nuggets = aset_document.attribute_mappings[attribute_name]
+                            if attribute_name_eval in aset_document.attribute_mappings.keys():
+                                found_nuggets = aset_document.attribute_mappings[attribute_name_eval]
 
                             if document["mentions"][attribute]:  # document states cell's value
                                 if not found_nuggets:
