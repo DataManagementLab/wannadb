@@ -217,7 +217,7 @@ def forget_matches_for_attribute(self, user_id: int, attribute_dump: Optional[by
 
 
 @current_app.task(bind=True)
-def forget_matches(self, user_id: int, attributes_dump: Optional[bytes], base_name: str, organisation_id: int):
+def forget_matches(self, user_id: int, base_name: str, organisation_id: int):
 	"""
 	define values
 	"""
