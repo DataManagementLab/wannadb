@@ -110,6 +110,27 @@ class ParallelWrapper:
         return self.model.identifier + f"in parallel with {self.threads} threads"
 
 
+class DummyCustomMatchExtractor(BaseCustomMatchExtractor):
+    """
+        Extractor that does not do anything.
+    """
+
+    identifier: str = "DummyCustomMatchExtractor"
+
+    def __call__(
+            self, nugget: InformationNugget, documents: List[Document]
+    ) -> List[Tuple[Document, int, int]]:
+        """
+            Does not extract any nuggets, returns an empty list
+
+            :param nugget: The InformationNugget that should be matched against
+            :param documents: The set of documents to extract matches from, or a single document
+            :return: Returns an empty list
+        """
+
+        return []
+
+
 class ExactCustomMatchExtractor(BaseCustomMatchExtractor):
     """
         Extractor based on finding exact matches of the currently annotated custom span.
