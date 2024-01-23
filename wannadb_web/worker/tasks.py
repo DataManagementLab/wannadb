@@ -4,7 +4,6 @@ import time
 from typing import Optional, Any
 
 from celery import Task
-from redis import Redis
 
 import wannadb.resources
 from wannadb.data.data import Document, Attribute
@@ -33,11 +32,10 @@ class InitManager(Task):
 
 class BaseTask(Task):
 	name = "BaseTask"
+	_signals: Optional[Signals] = None
+	_redis_client: Optional[RedisCache] = None
 
-	def __init__(self, user_id: int = 0):
-		self._user_id = user_id
-		self._signals = Signals(user_id)
-		self._redis_client = RedisCache(user_id)
+	def __init__(self):
 		super().__init__()
 
 	def run(self, *args, **kwargs):
@@ -65,6 +63,8 @@ class BaseTask(Task):
 			   ) -> None:
 		if meta:
 			super().update_state(meta=meta)
+		if self._signals is None:
+			raise RuntimeError("self._signals is None!")
 		else:
 			super().update_state(state=str(state.value if state else None),
 								 meta=self._signals.to_json())
@@ -78,6 +78,8 @@ class BaseTask(Task):
 		raise NotImplementedError("user update() instead")
 
 	def get_new_input(self):
+		if self._redis_client is None:
+			raise RuntimeError("self._redis_client is None!")
 		_input = self._redis_client.get("input")
 		if _input is not None:
 			pass
@@ -104,16 +106,19 @@ class TestTask(BaseTask):
 class CreateDocumentBase(BaseTask):
 	name = "CreateDocumentBase"
 
-	def run(self, document_ids: list[int], attributes_dump: bytes, statistics_dump: bytes,
+	def run(self, user_id: int, document_ids: list[int], attributes_dump: bytes, statistics_dump: bytes,
 			base_name: str, organisation_id: int):
+		self._signals = Signals(user_id)
+		self._redis_client = RedisCache(user_id)
 		self.load()
 		attributes: list[Attribute] = pickle.loads(attributes_dump)
 		statistics: Statistics = pickle.loads(statistics_dump)
+		print(user_id)
 
 		"""
 		init api
 		"""
-		api = WannaDB_WebAPI(self._user_id, EmptyInteractionCallback(), base_name, organisation_id)
+		api = WannaDB_WebAPI(user_id, EmptyInteractionCallback(), base_name, organisation_id)
 		try:
 			"""
 			Creating document base
@@ -126,7 +131,7 @@ class CreateDocumentBase(BaseTask):
 				self.update(State.ERROR)
 				raise Exception("Invalid statistics")
 
-			docs = getDocuments(document_ids, self._user_id)
+			docs = getDocuments(document_ids, user_id)
 			self.update(State.PENDING)
 			documents = []
 			if docs:
