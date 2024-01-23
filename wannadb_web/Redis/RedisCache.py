@@ -17,6 +17,16 @@ class RedisCache:
 		user_key = f"{self.user_space_key}:{key}"
 		self.redis_client.set(name=user_key, value=value)
 
+	def sadd(self, key: str, *values: Union[str, bytes, int, float]) -> None:
+		"""Set a key-value pair in the user-specific space."""
+		user_key = f"{self.user_space_key}:{key}"
+		self.redis_client.sadd(name=user_key, value=values)
+
+	def spop(self, key: str) -> Optional[set]:
+		"""Set a key-value pair in the user-specific space."""
+		user_key = f"{self.user_space_key}:{key}"
+		return self.redis_client.smembers(name=user_key)
+
 	def get(self, key: str) -> Optional[Union[str, bytes, int, float]]:
 		"""Get the value associated with a key in the user-specific space."""
 		user_key = f"{self.user_space_key}:{key}"
