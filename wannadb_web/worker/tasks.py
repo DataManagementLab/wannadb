@@ -113,7 +113,6 @@ class CreateDocumentBase(BaseTask):
 		self.load()
 		attributes: list[Attribute] = pickle.loads(attributes_dump)
 		statistics: Statistics = pickle.loads(statistics_dump)
-		print(user_id)
 
 		"""
 		init api
