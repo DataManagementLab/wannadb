@@ -43,31 +43,17 @@ class BaseTask(Task):
 
 	@staticmethod
 	def load():
-		manager = RedisCache(0).get("manager")
-		if not isinstance(manager, bytes):
-			raise RuntimeError("manager is not bytes!")
-		if manager is None and wannadb.resources.MANAGER is None:
+		if wannadb.resources.MANAGER is None:
 			wannadb.resources.ResourceManager()
 			BaseTask.load()
-		_MANAGER: Optional["ResourceManager"] = pickle.loads(manager)
-		wannadb.resources.MANAGER = _MANAGER
-
-	@staticmethod
-	def save():
-		manager = pickle.dumps(wannadb.resources.MANAGER)
-		RedisCache(0).set("manager", manager)
+			return
+		logging.info("loaded")
 
 	def update(self,
-			   state: Optional[State] = None,
+			   state: State,
 			   meta: Optional[dict[str, Any]] = None,
 			   ) -> None:
-		if meta:
-			super().update_state(meta=meta)
-		if self._signals is None:
-			raise RuntimeError("self._signals is None!")
-		else:
-			super().update_state(state=str(state.value if state else None),
-								 meta=self._signals.to_json())
+		super().update_state(state=state.value, meta=meta)
 
 	def update_state(self,
 					 task_id: Optional[str] = None,
@@ -118,35 +104,32 @@ class CreateDocumentBase(BaseTask):
 		init api
 		"""
 		api = WannaDB_WebAPI(user_id, EmptyInteractionCallback(), base_name, organisation_id)
-		try:
-			"""
-			Creating document base
-			"""
-			if not isinstance(attributes[0], Attribute):
-				self.update(State.ERROR)
-				raise Exception("Invalid attributes")
 
-			if not isinstance(statistics, Statistics):
-				self.update(State.ERROR)
-				raise Exception("Invalid statistics")
+		"""
+		Creating document base
+		"""
+		if not isinstance(attributes[0], Attribute):
+			self.update(State.ERROR)
+			raise Exception("Invalid attributes")
 
-			docs = getDocuments(document_ids, user_id)
-			self.update(State.PENDING)
-			documents = []
-			if docs:
-				for doc in docs:
-					documents.append(Document(doc[0], doc[1]))
-			else:
-				print("No documents found")
+		if not isinstance(statistics, Statistics):
+			self.update(State.ERROR)
+			raise Exception("Invalid statistics")
 
-			api.create_document_base(documents, attributes, statistics)
+		docs = getDocuments(document_ids, user_id)
+		self.update(State.PENDING)
+		documents = []
+		if docs:
+			for doc in docs:
+				documents.append(Document(doc[0], doc[1]))
+		else:
+			print("No documents found")
 
-			api.save_document_base_to_bson()
+		api.create_document_base(documents, attributes, statistics)
 
-			self.update(State.SUCCESS)
-			return self
-		finally:
-			self.save()
+		api.save_document_base_to_bson()
+		self.update(State.SUCCESS)
+		return self
 
 #
 #
