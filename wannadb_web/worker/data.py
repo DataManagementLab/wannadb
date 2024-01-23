@@ -1,3 +1,4 @@
+import abc
 import json
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
@@ -6,6 +7,7 @@ from typing import Optional, Any
 from wannadb.data.data import DocumentBase, InformationNugget, Document, Attribute
 from wannadb.data.signals import BaseSignal
 from wannadb.statistics import Statistics
+from wannadb_web.Redis.RedisCache import RedisCache
 
 
 def signal_to_json(signal: BaseSignal):
@@ -51,15 +53,16 @@ def document_base_to_json(document_base: DocumentBase):
 
 
 class Signals:
-	def __init__(self):
-		self.feedback = _Signal("feedback")
-		self.status = _State("status")
-		self.finished = _Signal("finished")
-		self.error = _Error("error")
-		self.document_base_to_ui = _DocumentBase("document_base_to_ui")
-		self.statistics = _Statistics("statistics_to_ui")
-		self.feedback_request_to_ui = _Dump("feedback_request_to_ui")
-		self.cache_db_to_ui = _Dump("cache_db_to_ui")
+	def __init__(self, user_id: int):
+		self.pipeline = _State("pipeline", user_id)
+		self.feedback = _Signal("feedback", user_id)
+		self.status = _State("status", user_id)
+		self.finished = _Signal("finished", user_id)
+		self.error = _Error("error", user_id)
+		self.document_base_to_ui = _DocumentBase("document_base_to_ui", user_id)
+		self.statistics = _Statistics("statistics_to_ui", user_id)
+		self.feedback_request_to_ui = _Dump("feedback_request_to_ui", user_id)
+		self.cache_db_to_ui = _Dump("cache_db_to_ui", user_id)
 
 	def to_json(self) -> dict[str, str]:
 		return {self.feedback.type: self.feedback.to_json(),
@@ -72,14 +75,15 @@ class Signals:
 				self.cache_db_to_ui.type: self.cache_db_to_ui.to_json()}
 
 
+class Emitable(abc.ABC):
 
-class Emitable(ABC):
-	__msg: Optional[Any]
-
-	@abstractmethod
-	def __init__(self, emitable_type: str):
+	def __init__(self, emitable_type: str, user_id: int):
 		self.type = emitable_type
-		self.__msg = None
+		self.redis = RedisCache(user_id)
+
+	@property
+	def msg(self):
+		return self.redis.get(self.type)
 
 	@abstractmethod
 	def to_json(self):
@@ -90,136 +94,76 @@ class Emitable(ABC):
 		raise NotImplementedError
 
 
-@dataclass
 class _State(Emitable):
-	__msg: Optional[str]
-
-	def __init__(self, state_type: str):
-		super().__init__(state_type)
-		self.__msg = ""
-
-	@property
-	def msg(self):
-		return self.__msg
 
 	def to_json(self):
 		return str(self.msg)
 
 	def emit(self, status: str):
-		self.__msg = status
+		self.redis.set(self.type, status)
 
 
-@dataclass
 class _Signal(Emitable):
-	__msg: Optional[float]
-
-	def __init__(self, signal_type: str):
-		super().__init__(signal_type)
-		self.__msg = None
-
-	@property
-	def msg(self):
-		return self.__msg
 
 	def to_json(self):
 		return str(self.msg)
 
 	def emit(self, status: float):
-		self.__msg = status
+		self.redis.set(self.type, str(status))
 
 
-@dataclass
 class _Error(Emitable):
-	__msg: Optional[BaseException]
-
-	def __init__(self, error_type: str):
-		super().__init__(error_type)
-		self.__msg = None
-
-	@property
-	def msg(self):
-		return self.__msg
 
 	def to_json(self):
 		return str(self.msg)
 
 	def emit(self, exception: BaseException):
-		self.__msg = exception
+		self.redis.set(self.type, str(exception))
 
 
-@dataclass
 class _Nugget(Emitable):
-	__msg: Optional[InformationNugget]
-
-	def __init__(self, nugget_type: str):
-		super().__init__(nugget_type)
-		self.__msg = None
-
-	@property
-	def msg(self):
-		return self.__msg
 
 	def to_json(self):
 		if self.msg is None:
 			return {}
-		return nugget_to_json(self.msg)
+		if not isinstance(self.msg, str):
+			raise TypeError("_Nugget msg must be of type str")
+		return json.loads(self.msg)
 
-	def emit(self, status):
-		self.__msg = status
+	def emit(self, status: InformationNugget):
+		self.redis.set(self.type, json.dumps(nugget_to_json(status)))
 
 
-@dataclass
 class _DocumentBase(Emitable):
-	__msg: Optional[DocumentBase]
-
-	def __init__(self, document_type: str):
-		super().__init__(document_type)
-		self.__msg = None
-
-	@property
-	def msg(self):
-		return self.__msg
 
 	def to_json(self):
 		if self.msg is None:
 			return {}
-		return document_base_to_json(self.msg)
+		if not isinstance(self.msg, str):
+			self.redis.delete(self.type)
+			raise TypeError("_DocumentBase msg must be of type str, type is: " + str(type(self.msg)))
+		return json.loads(self.msg)
 
-	def emit(self, status):
-		self.__msg = status
+	def emit(self, status: DocumentBase):
+		self.redis.set(self.type, json.dumps(document_base_to_json(status)))
 
 
 class _Statistics(Emitable):
-	__msg: Statistics
 
-	def __init__(self, statistics_type: str):
-		super().__init__(statistics_type)
-		self.__msg = Statistics(False)
-
-	@property
-	def msg(self):
-		return self.__msg
+	def msg(self) -> "Statistics":
+		return Statistics(False)
 
 	def to_json(self):
-		return self.__msg.to_serializable()
-
+		return Statistics(False).to_serializable()
 
 	def emit(self, statistic: Statistics):
-		self.__msg = statistic
+		pass
 
 
 class _Dump(Emitable):
-	def __init__(self, dump_type: str):
-		super().__init__(dump_type)
-		self.__msg = None
-
-	@property
-	def msg(self):
-		return self.__msg
 
 	def to_json(self):
-		return json.dumps(self.msg)
-
+		return self.msg
 
 	def emit(self, status):
-		self.__msg = status
+		self.redis.set(self.type, json.dumps(status))

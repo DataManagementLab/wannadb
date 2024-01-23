@@ -19,6 +19,7 @@ _jwtkey = "secret"
 
 
 def tokenEncode(obj: dict[str, Any]):
+	obj["exp"] = datetime.datetime.now() + datetime.timedelta(hours=1)
 	return jwt.encode(obj, _jwtkey, algorithm="HS256")
 
 

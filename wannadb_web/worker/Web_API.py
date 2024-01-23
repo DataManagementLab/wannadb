@@ -4,10 +4,11 @@ import json
 import logging
 from typing import Optional
 
+import wannadb
 from wannadb import resources
 from wannadb.configuration import Pipeline
 from wannadb.data.data import Attribute, Document, DocumentBase
-from wannadb.interaction import EmptyInteractionCallback
+from wannadb.interaction import EmptyInteractionCallback, BaseInteractionCallback
 from wannadb.matching.distance import SignalsMeanDistance
 from wannadb.matching.matching import RankingBasedMatcher
 from wannadb.preprocessing.embedding import BERTContextSentenceEmbedder, RelativePositionEmbedder, \
@@ -18,35 +19,54 @@ from wannadb.preprocessing.label_paraphrasing import OntoNotesLabelParaphraser, 
 from wannadb.preprocessing.normalization import CopyNormalizer
 from wannadb.preprocessing.other_processing import ContextSentenceCacher
 from wannadb.statistics import Statistics
+from wannadb.status import BaseStatusCallback, StatusCallback
 from wannadb_web.SQLite.Cache_DB import SQLiteCacheDBWrapper
 from wannadb_web.postgres.queries import getDocument_by_name
 from wannadb_web.postgres.transactions import addDocument
-from wannadb_web.worker.util import TaskObject
+from wannadb_web.worker.data import Signals
 
 logger = logging.getLogger(__name__)
 
 
 class WannaDB_WebAPI:
 
-	def __init__(self, user_id: int, task_object: TaskObject, document_base_name: str, organisation_id: int):
+	def __init__(self, user_id: int,
+				 interaction_callback: BaseInteractionCallback, document_base_name: str, organisation_id: int):
+		self._document_base: Optional[DocumentBase] = None
 		self.user_id = user_id
+		self.interaction_callback = interaction_callback
+		self.signals = Signals(self.user_id)
 		self.sqLiteCacheDBWrapper = SQLiteCacheDBWrapper(user_id, db_file=":memory:")
-		self.task_object = task_object
 		self.document_base_name = document_base_name
-		self.document_base: Optional[DocumentBase] = None
 		self.organisation_id = organisation_id
 
-		if resources.MANAGER is None:
-			self.task_object.signals.error.emit(Exception("Resource Manager not initialized!"))
+		def status_callback_fn(message, progress):
+			self.signals.status.emit(str(message) + " " + str(progress))
+
+		self.status_callback = StatusCallback(status_callback_fn)
+
+		if wannadb.resources.MANAGER is None:
+			self.signals.error.emit(Exception("Resource Manager not initialized!"))
 			raise Exception("Resource Manager not initialized!")
 		if self.sqLiteCacheDBWrapper.cache_db.conn is None:
-			self.task_object.signals.error.emit(Exception("Cache db could not be initialized!"))
+			self.signals.error.emit(Exception("Cache db could not be initialized!"))
 			raise Exception("Cache db could not be initialized!")
 		logger.info("WannaDB_WebAPI initialized")
 
+	@property
+	def document_base(self):
+		return self._document_base
+
+	@document_base.setter
+	def document_base(self, value: DocumentBase):
+		if not isinstance(value, DocumentBase):
+			raise TypeError("Document base must be of type DocumentBase!")
+		self._document_base = value
+		self.signals.document_base_to_ui.emit(value)
+
 	def create_document_base(self, documents: list[Document], attributes: list[Attribute], statistics: Statistics):
 		logger.debug("Called slot 'create_document_base'.")
-		self.task_object.signals.status.emit("create_document_base")
+		self.signals.status.emit("create_document_base")
 		try:
 			self.sqLiteCacheDBWrapper.reset_cache_db()
 
@@ -55,10 +75,10 @@ class WannaDB_WebAPI:
 
 			if not document_base.validate_consistency():
 				logger.error("Document base is inconsistent!")
-				self.task_object.signals.error.emit(Exception("Document base is inconsistent!"))
+				self.signals.error.emit(Exception("Document base is inconsistent!"))
 
 			# load default preprocessing phase
-			self.task_object.signals.status.emit("Loading preprocessing phase...")
+			self.signals.status.emit("Loading preprocessing phase...")
 
 			# noinspection PyTypeChecker
 			preprocessing_phase = Pipeline([
@@ -74,20 +94,18 @@ class WannaDB_WebAPI:
 				RelativePositionEmbedder()
 			])
 
-			preprocessing_phase(document_base, EmptyInteractionCallback(), self.task_object.status_callback, statistics)
+			preprocessing_phase(document_base, EmptyInteractionCallback(), self.status_callback, statistics)
 
 			self.document_base = document_base
 
-			self.task_object.signals.document_base_to_ui.emit(document_base)
-			self.task_object.signals.statistics.emit(statistics)
-			self.task_object.signals.finished.emit(1)
-			self.task_object.signals.status.emit("Finished!")
-			self.task_object.update(None)
+			self.signals.statistics.emit(statistics)
+			self.signals.finished.emit(1)
+			self.signals.status.emit("Finished!")
 
 
 		except Exception as e:
 			logger.error(str(e))
-			self.task_object.signals.error.emit(e)
+			self.signals.error.emit(e)
 			raise e
 
 	def load_document_base_from_bson(self):
@@ -98,14 +116,14 @@ class WannaDB_WebAPI:
 			document_id, document = getDocument_by_name(self.document_base_name, self.organisation_id, self.user_id)
 			if not isinstance(document, bytes):
 				logger.error("document is not a DocumentBase!")
-				self.task_object.signals.error.emit(Exception("document is not a DocumentBase!"))
+				self.signals.error.emit(Exception("document is not a DocumentBase!"))
 				return
 
 			document_base = DocumentBase.from_bson(document)
 
 			if not document_base.validate_consistency():
 				logger.error("Document base is inconsistent!")
-				self.task_object.signals.error.emit(Exception("Document base is inconsistent!"))
+				self.signals.error.emit(Exception("Document base is inconsistent!"))
 				return
 
 			for attribute in document_base.attributes:
@@ -117,14 +135,14 @@ class WannaDB_WebAPI:
 
 		except Exception as e:
 			logger.error(str(e))
-			self.task_object.signals.error.emit(e)
+			self.signals.error.emit(e)
 			raise e
 
 	def save_document_base_to_bson(self):
 		logger.debug("Called function 'save_document_base_to_bson'.")
 		if self.document_base is None:
 			logger.error("Document base not loaded!")
-			self.task_object.signals.error.emit(Exception("Document base not loaded!"))
+			self.signals.error.emit(Exception("Document base not loaded!"))
 			return
 		try:
 			document_id = addDocument(self.document_base_name, self.document_base.to_bson(), self.organisation_id,
@@ -132,25 +150,26 @@ class WannaDB_WebAPI:
 			if document_id is None:
 				logger.error("Document base could not be saved to BSON!")
 			elif document_id == -1:
-				logger.error(f"Document base could not be saved to BSON! Document {self.document_base_name} already exists!")
-				self.task_object.signals.error.emit(
-					Exception(f"Document base could not be saved to BSON! Document {self.document_base_name} already exists!"))
+				logger.error(
+					f"Document base could not be saved to BSON! Document {self.document_base_name} already exists!")
+				self.signals.error.emit(
+					Exception(
+						f"Document base could not be saved to BSON! Document {self.document_base_name} already exists!"))
 			elif document_id > 0:
 				logger.info(f"Document base saved to BSON with ID {document_id}.")
-				self.task_object.signals.status.emit(f"Document base saved to BSON with ID {document_id}.")
+				self.signals.status.emit(f"Document base saved to BSON with ID {document_id}.")
 			return
 		except Exception as e:
 			logger.error(str(e))
-			self.task_object.signals.error.emit(e)
+			self.signals.error.emit(e)
 			raise e
 
-
-# todo: below not implemented yet
+	# todo: below not implemented yet
 	def save_table_to_csv(self):
 		logger.debug("Called function 'save_table_to_csv'.")
 		if self.document_base is None:
 			logger.error("Document base not loaded!")
-			self.task_object.signals.error.emit(Exception("Document base not loaded!"))
+			self.signals.error.emit(Exception("Document base not loaded!"))
 			return
 		try:
 			buffer = io.StringIO()
@@ -160,7 +179,7 @@ class WannaDB_WebAPI:
 				for document in self.document_base.documents:
 					if attribute.name not in document.attribute_mappings.keys():
 						logger.error("Cannot save a table with unpopulated attributes!")
-						self.task_object.signals.error.emit(
+						self.signals.error.emit(
 							Exception("Cannot save a table with unpopulated attributes!"))
 
 			# TODO: currently stores the text of the first matching nugget (if there is one)
@@ -182,30 +201,28 @@ class WannaDB_WebAPI:
 				writer.writerows(rows)
 		except Exception as e:
 			logger.error(str(e))
-			self.task_object.signals.error.emit(e)
+			self.signals.error.emit(e)
 			raise e
 
 	def add_attribute(self, attribute: Attribute):
 		logger.debug("Called function 'add_attribute'.")
 		if self.document_base is None:
 			logger.error("Document base not loaded!")
-			self.task_object.signals.error.emit(Exception("Document base not loaded!"))
+			self.signals.error.emit(Exception("Document base not loaded!"))
 		elif attribute in self.document_base.attributes:
 			logger.error("Attribute name already exists!")
-			self.task_object.signals.error.emit(Exception("Attribute name already exists!"))
+			self.signals.error.emit(Exception("Attribute name already exists!"))
 		else:
 			self.document_base.attributes.append(attribute)
 			logger.debug(f"Attribute '{attribute.name}' added.")
-			self.task_object.signals.status.emit(f"Attribute '{attribute.name}' added.")
+			self.signals.status.emit(f"Attribute '{attribute.name}' added.")
 			self.sqLiteCacheDBWrapper.cache_db.create_table_by_name(attribute.name)
-		self.task_object.update(None)
 
 	def add_attributes(self, attributes: list[Attribute]):
 		logger.debug("Called function 'add_attributes'.")
 		if self.document_base is None:
 			logger.error("Document base not loaded!")
-			self.task_object.signals.error.emit(Exception("Document base not loaded!"))
-			self.task_object.update(None)
+			self.signals.error.emit(Exception("Document base not loaded!"))
 			return
 
 		already_existing_names = []
@@ -219,15 +236,13 @@ class WannaDB_WebAPI:
 				self.document_base.attributes.append(attribute)
 				self.sqLiteCacheDBWrapper.cache_db.create_table_by_name(attribute.name)
 				logger.debug(f"Attribute '{attribute.name}' added.")
-		self.task_object.update(None)
 		return already_existing_names
 
 	def remove_attributes(self, attributes: list[Attribute]):
 		logger.debug("Called function 'remove_attribute'.")
 		if self.document_base is None:
 			logger.error("Document base not loaded!")
-			self.task_object.signals.error.emit(Exception("Document base not loaded!"))
-			self.task_object.update(None)
+			self.signals.error.emit(Exception("Document base not loaded!"))
 			return
 		for attribute in attributes:
 			if attribute in self.document_base.attributes:
@@ -239,18 +254,16 @@ class WannaDB_WebAPI:
 					if old_attribute == attribute:
 						self.document_base.attributes.remove(attribute)
 						break
-				self.task_object.signals.status.emit(f"Attribute '{attribute.name}' removed.")
+				self.signals.status.emit(f"Attribute '{attribute.name}' removed.")
 			else:
 				logger.error("Attribute name does not exist!")
-				self.task_object.signals.error.emit(Exception("Attribute name does not exist!"))
-		self.task_object.update(None)
-
+				self.signals.error.emit(Exception("Attribute name does not exist!"))
 
 	def forget_matches_for_attribute(self, attribute: Attribute):
 		logger.debug("Called function 'forget_matches_for_attribute'.")
 		if self.document_base is None:
 			logger.error("Document base not loaded!")
-			self.task_object.signals.error.emit(Exception("Document base not loaded!"))
+			self.signals.error.emit(Exception("Document base not loaded!"))
 			return
 		self.sqLiteCacheDBWrapper.cache_db.delete_table(attribute.name)
 		try:
@@ -258,21 +271,21 @@ class WannaDB_WebAPI:
 				for document in self.document_base.documents:
 					if attribute.name in document.attribute_mappings.keys():
 						del document.attribute_mappings[attribute.name]
-				self.task_object.signals.status.emit(f"Matches for attribute '{attribute.name}' forgotten.")
-				self.task_object.signals.document_base_to_ui.emit(self.document_base)
+				self.signals.status.emit(f"Matches for attribute '{attribute.name}' forgotten.")
+				self.signals.document_base_to_ui.emit(self.document_base)
 			else:
 				logger.error("Attribute name does not exist!")
-				self.task_object.signals.error.emit(Exception("Attribute name does not exist!"))
+				self.signals.error.emit(Exception("Attribute name does not exist!"))
 		except Exception as e:
 			logger.error(str(e))
-			self.task_object.signals.error.emit(e)
+			self.signals.error.emit(e)
 			raise e
 
 	def forget_matches(self):
 		logger.debug("Called function 'forget_matches'.")
 		if self.document_base is None:
 			logger.error("Document base not loaded!")
-			self.task_object.signals.error.emit(Exception("Document base not loaded!"))
+			self.signals.error.emit(Exception("Document base not loaded!"))
 			return
 		for attribute in self.document_base.attributes:
 			self.sqLiteCacheDBWrapper.cache_db.delete_table(attribute.name)
@@ -280,11 +293,11 @@ class WannaDB_WebAPI:
 		try:
 			for document in self.document_base.documents:
 				document.attribute_mappings.clear()
-			self.task_object.signals.document_base_to_ui.emit(self.document_base)
-			self.task_object.signals.finished.emit(1)
+			self.signals.document_base_to_ui.emit(self.document_base)
+			self.signals.finished.emit(1)
 		except Exception as e:
 			logger.error(str(e))
-			self.task_object.signals.error.emit(e)
+			self.signals.error.emit(e)
 			raise e
 
 	## todo: below not implemented yet
@@ -292,10 +305,10 @@ class WannaDB_WebAPI:
 	def save_statistics_to_json(self):
 		logger.debug("Called function 'save_statistics_to_json'.")
 		try:
-			return json.dumps(self.task_object.signals.statistics.to_json(), indent=2)
+			return json.dumps(self.signals.statistics.to_json(), indent=2)
 		except Exception as e:
 			logger.error(str(e))
-			self.task_object.signals.error.emit(e)
+			self.signals.error.emit(e)
 			raise e
 
 	def interactive_table_population(self):
@@ -304,11 +317,11 @@ class WannaDB_WebAPI:
 		try:
 			if self.document_base is None:
 				logger.error("Document base not loaded!")
-				self.task_object.signals.error.emit(Exception("Document base not loaded!"))
+				self.signals.error.emit(Exception("Document base not loaded!"))
 				return
 
 			# load default matching phase
-			self.task_object.signals.status.emit("Loading matching phase...")
+			self.signals.status.emit("Loading matching phase...")
 
 			# TODO: this should not be implemented here!
 			def find_additional_nuggets(nugget, documents):
@@ -363,11 +376,11 @@ class WannaDB_WebAPI:
 				]
 			)
 
-			matching_phase(self.document_base, self.task_object.interaction_callback, self.task_object.status_callback,
-						   self.task_object.signals.statistics.msg)
-			self.task_object.signals.document_base_to_ui.emit(self.document_base)
-			self.task_object.signals.finished.emit(1)
+			matching_phase(self.document_base, self.interaction_callback, self.status_callback,
+						   self.signals.statistics.msg())
+			self.signals.document_base_to_ui.emit(self.document_base)
+			self.signals.finished.emit(1)
 		except Exception as e:
 			logger.error(str(e))
-			self.task_object.signals.error.emit(e)
+			self.signals.error.emit(e)
 			raise e

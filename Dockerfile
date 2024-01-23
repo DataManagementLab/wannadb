@@ -43,6 +43,8 @@ FROM build as dev
 
 #CMD [ "python", "app.py" ]
 
+CMD ["mypy","--install-types", "--non-interactive"]
+
 CMD ["flask", "--app", "app", "--debug", "run","--host","0.0.0.0", "--port", "8000" ]
 
 
