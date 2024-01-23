@@ -94,9 +94,8 @@ def create_document():
 
 	attributesDump = pickle.dumps(attributes)
 	statisticsDump = pickle.dumps(statistics)
-
-	task = CreateDocumentBase(user_id).apply_async(args=(document_ids, attributesDump, statisticsDump,
-													   base_name, organisation_id))
+	task = CreateDocumentBase().apply_async(args=(user_id, document_ids, attributesDump, statisticsDump,
+												  base_name, organisation_id))
 
 	return make_response({'task_id': task.id}, 202)
 
