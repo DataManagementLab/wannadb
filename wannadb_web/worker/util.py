@@ -8,7 +8,7 @@ from wannadb.status import StatusCallback
 from wannadb_web.worker.data import Signals
 
 
-class TaskUpdate:
+class TaskCallback:
 	"""Task callback that is initialized with a callback function."""
 
 	def __init__(self, callback_fn: Callable[[str, Any], None]):
@@ -25,9 +25,9 @@ class TaskUpdate:
 
 class State(enum.Enum):
 	STARTED = 'STARTED'
+	WAITING = 'WAITING'
 	PENDING = 'PENDING'
 	SUCCESS = 'SUCCESS'
-	FAILURE = 'FAILURE'
 	ERROR = 'ERROR'
 
 
@@ -35,7 +35,7 @@ class State(enum.Enum):
 class TaskObject:
 	"""Class for representing the response of a task."""
 
-	task_update_fn: Optional[TaskUpdate]
+	task_update_fn: Optional[TaskCallback]
 	__signals: Signals = field(default_factory=Signals)
 	__state: State = State.STARTED
 
@@ -104,5 +104,5 @@ class TaskObject:
 	def check(self):
 		self.update(None)
 		if self.signals.error.msg:
-			self.update(State.FAILURE)
+			self.update(State.ERROR)
 			raise self.signals.error.msg

@@ -29,16 +29,16 @@ Author: Leon Wenderoth
 """
 import logging.config
 import pickle
+from typing import Optional
 
 from celery.result import AsyncResult
-from flask import Blueprint, make_response, jsonify, url_for, request
+from flask import Blueprint, make_response, request
 
 from wannadb.data.data import Attribute
 from wannadb.statistics import Statistics
+from wannadb_web.Redis.RedisCache import RedisCache
 from wannadb_web.util import tokenDecode
-from wannadb_web.worker.data import nugget_to_json
-from wannadb_web.worker.tasks import create_document_base_task, long_task, update_document_base
-from wannadb_web.worker.util import TaskObject
+from wannadb_web.worker.tasks import CreateDocumentBase
 
 core_routes = Blueprint('core_routes', __name__, url_prefix='/core')
 
@@ -72,9 +72,10 @@ def create_document():
 	form = request.form
 	# authorization = request.headers.get("authorization")
 	authorization = form.get("authorization")
-	organisation_id = form.get("organisationId")
+	organisation_id: Optional[int] = form.get("organisationId")
 	base_name = form.get("baseName")
-	document_ids = form.get("document_ids")
+	document_ids: Optional[list[int]] = form.get("document_ids")
+	document_ids = [2, 3]
 	attributes_string = form.get("attributes")
 	if (organisation_id is None or base_name is None or document_ids is None or attributes_string is None
 			or authorization is None):
@@ -94,10 +95,11 @@ def create_document():
 	attributesDump = pickle.dumps(attributes)
 	statisticsDump = pickle.dumps(statistics)
 
-	task = create_document_base_task.apply_async(args=(user_id, document_ids, attributesDump, statisticsDump,
+	task = CreateDocumentBase(user_id).apply_async(args=(document_ids, attributesDump, statisticsDump,
 													   base_name, organisation_id))
 
 	return make_response({'task_id': task.id}, 202)
+
 
 @core_routes.route('/document_base/attributes', methods=['UPDATE'])
 def document_base():
@@ -144,30 +146,29 @@ def document_base():
 	attributesDump = pickle.dumps(attributes)
 	statisticsDump = pickle.dumps(statistics)
 
-	task = update_document_base.apply_async(args=(user_id, attributesDump, statisticsDump,
-													   base_name, organisation_id))
 
-	return make_response({'task_id': task.id}, 202)
-
-
-@core_routes.route('/longtask', methods=['POST'])
-def longtask():
-	task = long_task.apply_async()
-	return jsonify(str(task.id)), 202, {'Location': url_for('core_routes.task_status',
-															task_id=task.id)}
+# @core_routes.route('/longtask', methods=['POST'])
+# def longtask():
+# 	task = long_task.apply_async()
+# 	return jsonify(str(task.id)), 202, {'Location': url_for('core_routes.task_status',
+# 															task_id=task.id)}
 
 
-@core_routes.route('/status/<task_id>')
-def task_status(task_id):
+@core_routes.route('/status/<task_id>', methods=['GET'])
+def task_status(task_id: str):
 	task: AsyncResult = AsyncResult(task_id)
-	meta = task.info
-	if meta is None:
-		return make_response({"error": "task not found"}, 404)
-	if task.status == "FAILURE":
-		return make_response(
-			{"state": "FAILURE", "meta": str(meta)}, 500)
-	if not isinstance(meta, bytes):
-		return make_response({"error": "task not correct"}, 404)
-	taskObject = TaskObject.from_dump(meta)
-	return make_response({"state": taskObject.state.value, "meta": taskObject.signals.to_json()},
-						 200)
+	status = task.status
+	print(task.info)
+	if status == "FAILURE":
+		return make_response({"state": "FAILURE", "meta": str(task.result)}, 500)
+	if status == "SUCCESS":
+		return make_response({"state": "SUCCESS", "meta": str(task.result)}, 200)
+	if status is None:
+		return make_response({"error": "task not found"}, 500)
+	return make_response({"state": task.status, "meta": str(task.result)}, 202)
+
+
+@core_routes.route('/status/<task_id>', methods=['POST'])
+def task_update(task_id: str):
+	redis_client = RedisCache(int(task_id)).redis_client
+	redis_client.set("input", "test")
