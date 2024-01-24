@@ -100,14 +100,18 @@ class CreateDocumentBase(BaseTask):
 		self.load()
 		attributes: list[Attribute] = []
 		statistics: Statistics = pickle.loads(statistics_dump)
-
+		print("attributes_strings:", attributes_strings)
+  # convert attributes_strings to an array
+		attributes_strings = list[str](attributes_strings)
 		for attribute_string in attributes_strings:
+			print("attribute_string:", attribute_string)
 			if attribute_string == "":
 				logger.error("Attribute names cannot be empty!")
 				raise Exception("Attribute names cannot be empty!")
-			if attribute_string in [attribute.name for attribute in attributes]:
-				logger.error("Attribute names must be unique!")
-				raise Exception("Attribute names must be unique!")
+			for attribute in attributes:
+				if attribute_string == attribute.name:
+					logger.error("Attribute names must be unique!")
+					raise Exception("Attribute names must be unique: " + attribute_string)
 			attributes.append(Attribute(attribute_string))
 
 		"""

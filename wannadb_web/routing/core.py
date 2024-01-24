@@ -62,12 +62,8 @@ def create_document():
     {
         "organisationId": "your_organisation_id",
         "baseName": "your_document_base_name",
-        "document_ids": [
-        1, 2, 3
-        ],
-        "attributes": [
-        "plane","car","bike"
-        ]
+        "document_ids": "1, 2, 3",
+        "attributes": "plane,car,bike"
     }
     """
 	form = request.form
@@ -84,6 +80,9 @@ def create_document():
 
 	if _token is False:
 		return make_response({"error": "invalid token"}, 401)
+
+	attributes_strings = attributes_strings.split(",")
+	document_ids = document_ids.split(",")
 
 	statistics = Statistics(False)
 	user_id = _token.id
