@@ -53,6 +53,7 @@ def document_base_to_json(document_base: DocumentBase):
 
 class Signals:
 	def __init__(self, user_id: str):
+		self.__user_id = user_id
 		self.pipeline = _State("pipeline", user_id)
 		self.feedback = _Signal("feedback", user_id)
 		self.status = _State("status", user_id)
@@ -60,7 +61,7 @@ class Signals:
 		self.error = _Error("error", user_id)
 		self.document_base_to_ui = _DocumentBase("document_base_to_ui", user_id)
 		self.statistics = _Statistics("statistics_to_ui", user_id)
-		self.feedback_request_to_ui = _Dump("feedback_request_to_ui", user_id)
+		self.feedback_request_to_ui = _Feedback("feedback_request_to_ui", user_id)
 		self.cache_db_to_ui = _Dump("cache_db_to_ui", user_id)
 
 	def to_json(self) -> dict[str, str]:
@@ -72,6 +73,9 @@ class Signals:
 				self.statistics.type: self.statistics.to_json(),
 				self.feedback_request_to_ui.type: self.feedback_request_to_ui.to_json(),
 				self.cache_db_to_ui.type: self.cache_db_to_ui.to_json()}
+
+	def reset(self):
+		RedisCache(self.__user_id).delete_user_space()
 
 
 class Emitable(abc.ABC):
@@ -153,7 +157,6 @@ class _DocumentBase(Emitable):
 
 class _Statistics(Emitable):
 
-
 	@property
 	def msg(self):
 		return "not implemented"
@@ -163,6 +166,17 @@ class _Statistics(Emitable):
 
 	def emit(self, statistic: Statistics):
 		pass
+
+
+class _Feedback(Emitable):
+
+	def to_json(self):
+		if self.msg is None:
+			return {}
+		return json.loads(self.msg)
+
+	def emit(self, status: dict[str, Any]):
+		self.redis.set(self.type, json.dumps(status))
 
 
 class _Dump(Emitable):
