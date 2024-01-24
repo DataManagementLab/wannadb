@@ -39,7 +39,7 @@ from wannadb.statistics import Statistics
 from wannadb_web.Redis.RedisCache import RedisCache
 from wannadb_web.util import tokenDecode
 from wannadb_web.worker.data import Signals
-from wannadb_web.worker.tasks import CreateDocumentBase, BaseTask
+from wannadb_web.worker.tasks import CreateDocumentBase, BaseTask, DocumentBaseAddAttributes
 
 core_routes = Blueprint('core_routes', __name__, url_prefix='/core')
 
@@ -67,7 +67,6 @@ def create_document():
     }
     """
 	form = request.form
-	# authorization = request.headers.get("authorization")
 	authorization = form.get("authorization")
 	organisation_id: Optional[int] = form.get("organisationId")
 	base_name = form.get("baseName")
@@ -110,7 +109,6 @@ def document_base():
     }
     """
 	form = request.form
-	# authorization = request.headers.get("authorization")
 	authorization = form.get("authorization")
 	organisation_id = form.get("organisationId")
 	base_name = form.get("baseName")
@@ -132,8 +130,12 @@ def document_base():
 	statistics = Statistics(False)
 	user_id = _token.id
 
-	attributesDump = pickle.dumps(attributes)
-	statisticsDump = pickle.dumps(statistics)
+	#attributesDump = pickle.dumps(attributes)
+	#statisticsDump = pickle.dumps(statistics)
+	task = DocumentBaseAddAttributes().apply_async(args=(user_id, attributes_strings,
+												  base_name, organisation_id))
+
+	return make_response({'task_id': task.id}, 202)
 
 
 # @core_routes.route('/longtask', methods=['POST'])
