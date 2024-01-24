@@ -37,6 +37,20 @@ class RedisCache:
 		user_key = f"{self.user_space_key}:{key}"
 		self.redis_client.delete(user_key)
 
+	def delete_user_space(self) -> None:
+		"""Delete all entries associated with the user-specific space."""
+		user_space_pattern = f"{self.user_space_key}:*"
+
+		# Use SCAN to get all keys matching the pattern
+		keys_to_delete = []
+		cursor = '0'
+		while cursor != 0:
+			cursor, keys = self.redis_client.scan(cursor=cursor, match=user_space_pattern)
+			keys_to_delete.extend(keys)
+
+		# Delete all keys found
+		if keys_to_delete:
+			self.redis_client.delete(*keys_to_delete)
 
 	def close(self) -> None:
 		"""Close the Redis connection for the user-specific space."""
