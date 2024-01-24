@@ -21,7 +21,7 @@ services:
         build:
             context: .
             dockerfile: Dockerfile
-            target: worker
+            target: worker-prod
         tty: true
         command: ['celery', '-A', 'celery_app', 'worker', '-l', 'info']
         env_file:
@@ -36,7 +36,7 @@ services:
         build:
             context: .
             dockerfile: Dockerfile
-            target: worker
+            target: worker-prod
         tty: true
         command: ['celery', '-A', 'celery_app', 'flower']
         env_file:
