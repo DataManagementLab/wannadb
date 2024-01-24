@@ -250,15 +250,15 @@ def document_base_attribute_update():
 # 															task_id=task.id)}
 
 
-@core_routes.route('/status/<token>/<task_id>', methods=['GET'])
-def task_status(token: str,task_id: str):
- 
-	_token = tokenDecode(token)
-
-	if _token is False:
-		return make_response({"error": "invalid token"}, 401)
-	user_id = _token.id
- 
+@core_routes.route('/status/<task_id>', methods=['GET'])
+def task_status(task_id: str):
+	## todo: um des richtige feedback zu bekommen muss entweder die task_id oder der user_id mitgegeben werden
+	## Signals(task_id).to_json()
+	## oder
+	## Signals(user_id).to_json()
+	## die id muss die gleiche sein wie in
+	## wannadb_web/worker/Web_API.py
+	## also muss
 	task: AsyncResult = BaseTask().AsyncResult(task_id=task_id)
 	status = task.status
 	if status == "FAILURE":
@@ -281,44 +281,3 @@ def task_update(task_id: str):
 	## {	------------------	}
 
 	signals.feedback_request_from_ui.emit(request.json.get("feedback"))
-
-
-## todo: renaming of the endpoint
-
-@core_routes.route('/document_base/order/nugget', methods=['POST'])
-def sort_nuggets():
-	"""
-    Endpoint for creating a document base.
-
-	This endpoint is used to create a document base from a list of document ids and a list of attributes.
-
-	Example Header:
-	{
-		"Authorization": "your_authorization_token"
-	}
-
-    Example JSON Payload:
-    {
-        "organisationId": "your_organisation_id",
-        "baseName": "your_document_base_name",
-        "document_id": "1",   (important: only one document id)
-        "attributes": "plane,car,bike"
-    }
-    """
-	form = request.form
-	authorization = form.get("authorization")
-	organisation_id: Optional[int] = form.get("organisationId")
-	base_name = form.get("baseName")
-	document_id = form.get("document_ids")
-	if organisation_id is None or base_name is None or document_id is None or authorization is None:
-		return make_response({"error": "missing parameters"}, 400)
-	_token = tokenDecode(authorization)
-	
-	if _token is False:
-		return make_response({"error": "invalid token"}, 401)
-	
-	user_id = _token.id
-	
-	task = DocumentBaseGetOrderedNuggets().apply_async(args=(user_id, base_name, organisation_id, document_id))
-	
-	return make_response({'task_id': task.id}, 202)
