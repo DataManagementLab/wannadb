@@ -23,11 +23,9 @@ services:
             dockerfile: Dockerfile
             target: worker
         tty: true
-        command: ['celery', '-A', 'app.celery', 'worker', '-l', 'info']
+        command: ['celery', '-A', 'celery_app', 'worker', '-l', 'info']
         env_file:
             - wannadb_web/.env/.dev
-        volumes:
-            - ./:/home/wannadb
         networks:
             - mynetwork
         depends_on:
@@ -40,11 +38,9 @@ services:
             dockerfile: Dockerfile
             target: worker
         tty: true
-        command: ['celery', '-A', 'app.celery', 'flower']
+        command: ['celery', '-A', 'celery_app', 'flower']
         env_file:
             - wannadb_web/.env/.dev
-        volumes:
-            - ./:/home/wannadb
         networks:
             - mynetwork
         ports:
