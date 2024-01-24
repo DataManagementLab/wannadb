@@ -35,7 +35,7 @@ class WannaDB_WebAPI:
 		self._document_base: Optional[DocumentBase] = None
 		self.user_id = user_id
 		self.interaction_callback = interaction_callback
-		self.signals = Signals(self.user_id)
+		self.signals = Signals(str(self.user_id))
 		self.sqLiteCacheDBWrapper = SQLiteCacheDBWrapper(user_id, db_file=":memory:")
 		self.document_base_name = document_base_name
 		self.organisation_id = organisation_id
