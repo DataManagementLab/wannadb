@@ -76,9 +76,8 @@ def create_document():
 	organisation_id: Optional[int] = form.get("organisationId")
 	base_name = form.get("baseName")
 	document_ids: Optional[list[int]] = form.get("document_ids")
-	document_ids = [2, 3]
-	attributes_string = form.get("attributes")
-	if (organisation_id is None or base_name is None or document_ids is None or attributes_string is None
+	attributes_strings = form.get("attributes")
+	if (organisation_id is None or base_name is None or document_ids is None or attributes_strings is None
 			or authorization is None):
 		return make_response({"error": "missing parameters"}, 400)
 	_token = tokenDecode(authorization)
@@ -86,16 +85,11 @@ def create_document():
 	if _token is False:
 		return make_response({"error": "invalid token"}, 401)
 
-	attributes = []
-	for att in attributes_string:
-		attributes.append(Attribute(att))
-
 	statistics = Statistics(False)
 	user_id = _token.id
 
-	attributesDump = pickle.dumps(attributes)
 	statisticsDump = pickle.dumps(statistics)
-	task = CreateDocumentBase().apply_async(args=(user_id, document_ids, attributesDump, statisticsDump,
+	task = CreateDocumentBase().apply_async(args=(user_id, document_ids, attributes_strings, statisticsDump,
 												  base_name, organisation_id))
 
 	return make_response({'task_id': task.id}, 202)
@@ -169,5 +163,5 @@ def task_status(task_id: str):
 
 @core_routes.route('/status/<task_id>', methods=['POST'])
 def task_update(task_id: str):
-	redis_client = RedisCache(int(task_id)).redis_client
+	redis_client = RedisCache(task_id).redis_client
 	redis_client.set("input", "test")
