@@ -110,6 +110,7 @@ class CreateDocumentBase(BaseTask):
 		"""
 		init api
 		"""
+		## todo hier muss self.request.id durchgeleitet werden und in signals(request_id) gespeichert werden
 		api = WannaDB_WebAPI(user_id, base_name, organisation_id)
 
 		"""

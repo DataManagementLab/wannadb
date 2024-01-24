@@ -149,6 +149,13 @@ def document_base():
 
 @core_routes.route('/status/<task_id>', methods=['GET'])
 def task_status(task_id: str):
+	## todo: um des richtige feedback zu bekommen muss entweder die task_id oder der user_id mitgegeben werden
+	## Signals(task_id).to_json()
+	## oder
+	## Signals(user_id).to_json()
+	## die id muss die gleiche sein wie in
+	## wannadb_web/worker/Web_API.py
+	## also muss
 	task: AsyncResult = BaseTask().AsyncResult(task_id=task_id)
 	status = task.status
 	if status == "FAILURE":
@@ -162,5 +169,9 @@ def task_status(task_id: str):
 
 @core_routes.route('/status/<task_id>', methods=['POST'])
 def task_update(task_id: str):
-	redis_client = RedisCache(task_id).redis_client
-	redis_client.set("input", "test")
+	signals = Signals(task_id)
+
+	## todo: hier muss feedback emitted werden im format:
+	## {	------------------	}
+
+	signals.feedback_request_from_ui.emit(request.json.get("feedback"))
