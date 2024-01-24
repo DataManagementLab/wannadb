@@ -1,8 +1,7 @@
 import abc
 import json
-from abc import ABC, abstractmethod
-from dataclasses import dataclass
-from typing import Optional, Any
+from abc import abstractmethod
+from typing import Any
 
 from wannadb.data.data import DocumentBase, InformationNugget, Document, Attribute
 from wannadb.data.signals import BaseSignal
@@ -53,7 +52,7 @@ def document_base_to_json(document_base: DocumentBase):
 
 
 class Signals:
-	def __init__(self, user_id: int):
+	def __init__(self, user_id: str):
 		self.pipeline = _State("pipeline", user_id)
 		self.feedback = _Signal("feedback", user_id)
 		self.status = _State("status", user_id)
@@ -77,13 +76,16 @@ class Signals:
 
 class Emitable(abc.ABC):
 
-	def __init__(self, emitable_type: str, user_id: int):
+	def __init__(self, emitable_type: str, user_id: str):
 		self.type = emitable_type
 		self.redis = RedisCache(user_id)
 
 	@property
 	def msg(self):
-		return self.redis.get(self.type)
+		msg = self.redis.get(self.type)
+		if msg is None:
+			return None
+		return msg
 
 	@abstractmethod
 	def to_json(self):
@@ -97,7 +99,7 @@ class Emitable(abc.ABC):
 class _State(Emitable):
 
 	def to_json(self):
-		return str(self.msg)
+		return self.msg.decode("utf-8")
 
 	def emit(self, status: str):
 		self.redis.set(self.type, status)
@@ -115,7 +117,7 @@ class _Signal(Emitable):
 class _Error(Emitable):
 
 	def to_json(self):
-		return str(self.msg)
+		return self.msg.decode("utf-8")
 
 	def emit(self, exception: BaseException):
 		self.redis.set(self.type, str(exception))
@@ -128,7 +130,7 @@ class _Nugget(Emitable):
 			return {}
 		if not isinstance(self.msg, str):
 			raise TypeError("_Nugget msg must be of type str")
-		return json.loads(self.msg)
+		return self.msg
 
 	def emit(self, status: InformationNugget):
 		self.redis.set(self.type, json.dumps(nugget_to_json(status)))
@@ -139,9 +141,6 @@ class _DocumentBase(Emitable):
 	def to_json(self):
 		if self.msg is None:
 			return {}
-		if not isinstance(self.msg, str):
-			self.redis.delete(self.type)
-			raise TypeError("_DocumentBase msg must be of type str, type is: " + str(type(self.msg)))
 		return json.loads(self.msg)
 
 	def emit(self, status: DocumentBase):
@@ -150,8 +149,10 @@ class _DocumentBase(Emitable):
 
 class _Statistics(Emitable):
 
-	def msg(self) -> "Statistics":
-		return Statistics(False)
+
+	@property
+	def msg(self):
+		return "not implemented"
 
 	def to_json(self):
 		return Statistics(False).to_serializable()

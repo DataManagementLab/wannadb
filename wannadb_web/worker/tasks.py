@@ -27,7 +27,7 @@ class InitManager(Task):
 		if wannadb.resources.MANAGER is None:
 			raise RuntimeError("Resource_Manager is None!")
 		manager = pickle.dumps(wannadb.resources.MANAGER)
-		RedisCache(0).set("manager", manager)
+		RedisCache("0").set("manager", manager)
 
 
 class BaseTask(Task):
@@ -94,8 +94,8 @@ class CreateDocumentBase(BaseTask):
 
 	def run(self, user_id: int, document_ids: list[int], attributes_dump: bytes, statistics_dump: bytes,
 			base_name: str, organisation_id: int):
-		self._signals = Signals(user_id)
-		self._redis_client = RedisCache(user_id)
+		self._signals = Signals(str(self.request.id))
+		self._redis_client = RedisCache(str(self.request.id))
 		self.load()
 		attributes: list[Attribute] = pickle.loads(attributes_dump)
 		statistics: Statistics = pickle.loads(statistics_dump)
