@@ -152,12 +152,12 @@ def task_status(task_id: str):
 	task: AsyncResult = BaseTask().AsyncResult(task_id=task_id)
 	status = task.status
 	if status == "FAILURE":
-		return make_response({"state": "FAILURE", "meta": Signals(task_id)}, 500)
+		return make_response({"state": "FAILURE", "meta": Signals(task_id).to_json()}, 500)
 	if status == "SUCCESS":
-		return make_response({"state": "SUCCESS", "meta": Signals(task_id)}, 200)
+		return make_response({"state": "SUCCESS", "meta": Signals(task_id).to_json()}, 200)
 	if status is None:
 		return make_response({"error": "task not found"}, 500)
-	return make_response({"state": task.status, "meta": Signals(task_id)}, 202)
+	return make_response({"state": task.status, "meta": Signals(task_id).to_json()}, 202)
 
 
 @core_routes.route('/status/<task_id>', methods=['POST'])
