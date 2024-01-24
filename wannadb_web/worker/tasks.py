@@ -137,8 +137,13 @@ class CreateDocumentBase(BaseTask):
 		api.create_document_base(documents, attributes, statistics)
 
 		api.save_document_base_to_bson()
-		self.update(State.SUCCESS)
+		if api.signals.error.msg is None:
+			api.update_document_base_to_bson()
+			self.update(State.SUCCESS)
+			return self
+		self.update(State.ERROR)
 		return self
+
 
 class DocumentBaseLoad(BaseTask):
 	name = "DocumentBaseLoad"
@@ -147,7 +152,12 @@ class DocumentBaseLoad(BaseTask):
 		self.load()
 		api = WannaDB_WebAPI(user_id, base_name, organisation_id)
 		api.load_document_base_from_bson()
+		if api.signals.error.msg is None:
+			self.update(State.SUCCESS)
+			return self
+		self.update(State.ERROR)
 		return self
+
 
 class DocumentBaseAddAttributes(BaseTask):
 	name = "DocumentBaseAddAttributes"
@@ -168,7 +178,12 @@ class DocumentBaseAddAttributes(BaseTask):
 		api = WannaDB_WebAPI(user_id, base_name, organisation_id)
 		api.load_document_base_from_bson()
 		api.add_attributes(attributes)
-		api.update_document_base_to_bson()
+		if api.signals.error.msg is None:
+			api.update_document_base_to_bson()
+			self.update(State.SUCCESS)
+			return self
+		self.update(State.ERROR)
+		return self
 
 
 class DocumentBaseRemoveAttributes(BaseTask):
@@ -192,6 +207,10 @@ class DocumentBaseRemoveAttributes(BaseTask):
 		api.remove_attributes(attributes)
 		if api.signals.error.msg is None:
 			api.update_document_base_to_bson()
+			self.update(State.SUCCESS)
+			return self
+		self.update(State.ERROR)
+		return self
 
 
 class DocumentBaseForgetMatches(BaseTask):
@@ -215,6 +234,10 @@ class DocumentBaseForgetMatches(BaseTask):
 		api.forget_matches()
 		if api.signals.error.msg is None:
 			api.update_document_base_to_bson()
+			self.update(State.SUCCESS)
+			return self
+		self.update(State.ERROR)
+		return self
 
 
 class DocumentBaseForgetMatchesForAttribute(BaseTask):
@@ -230,6 +253,10 @@ class DocumentBaseForgetMatchesForAttribute(BaseTask):
 		api.forget_matches_for_attribute(attribute)
 		if api.signals.error.msg is None:
 			api.update_document_base_to_bson()
+			self.update(State.SUCCESS)
+			return self
+		self.update(State.ERROR)
+		return self
 
 
 class DocumentBaseInteractiveTablePopulation(BaseTask):
@@ -245,3 +272,7 @@ class DocumentBaseInteractiveTablePopulation(BaseTask):
 		api.interactive_table_population()
 		if api.signals.error.msg is None:
 			api.update_document_base_to_bson()
+			self.update(State.SUCCESS)
+			return self
+		self.update(State.ERROR)
+		return self
