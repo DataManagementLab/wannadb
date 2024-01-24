@@ -101,18 +101,12 @@ def document_base():
 
 	This endpoint is used to update a document base from a list of attributes.
 
-	Example Header:
-	{
-		"Authorization": "your_authorization_token"
-	}
-
-    Example JSON Payload:
+    Example Form Payload:
     {
+		"authorization": "your_authorization_token"
         "organisationId": "your_organisation_id",
         "baseName": "your_document_base_name",
-        "attributes": [
-        "plane","car","bike"
-        ]
+        "attributes": "plane,car,bike"
     }
     """
 	form = request.form
@@ -128,6 +122,8 @@ def document_base():
 
 	if _token is False:
 		return make_response({"error": "invalid token"}, 401)
+
+	attributes_strings = attributes_strings.split(",")
 
 	attributes = []
 	for att in attributes_string:
@@ -147,24 +143,24 @@ def document_base():
 # 															task_id=task.id)}
 
 
-@core_routes.route('/status/<task_id>', methods=['GET'])
-def task_status(task_id: str):
-	## todo: um des richtige feedback zu bekommen muss entweder die task_id oder der user_id mitgegeben werden
-	## Signals(task_id).to_json()
-	## oder
-	## Signals(user_id).to_json()
-	## die id muss die gleiche sein wie in
-	## wannadb_web/worker/Web_API.py
-	## also muss
+@core_routes.route('/status/<token>/<task_id>', methods=['GET'])
+def task_status(token: str,task_id: str):
+ 
+	_token = tokenDecode(token)
+
+	if _token is False:
+		return make_response({"error": "invalid token"}, 401)
+	user_id = _token.id
+ 
 	task: AsyncResult = BaseTask().AsyncResult(task_id=task_id)
 	status = task.status
 	if status == "FAILURE":
-		return make_response({"state": "FAILURE", "meta": Signals(task_id).to_json()}, 500)
+		return make_response({"state": "FAILURE", "meta": Signals(user_id).to_json()}, 500)
 	if status == "SUCCESS":
-		return make_response({"state": "SUCCESS", "meta": Signals(task_id).to_json()}, 200)
+		return make_response({"state": "SUCCESS", "meta": Signals(user_id).to_json()}, 200)
 	if status is None:
 		return make_response({"error": "task not found"}, 500)
-	return make_response({"state": task.status, "meta": Signals(task_id).to_json()}, 202)
+	return make_response({"state": task.status, "meta": Signals(user_id).to_json()}, 202)
 
 
 @core_routes.route('/status/<task_id>', methods=['POST'])
