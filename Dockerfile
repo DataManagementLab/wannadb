@@ -37,6 +37,10 @@ RUN pip install --use-pep517 pytest
 
 FROM build as worker
 
+FROM build as worker-prod
+
+#copy the rest
+COPY . .
 
 
 FROM build as dev 
@@ -48,10 +52,8 @@ CMD ["mypy","--install-types", "--non-interactive"]
 CMD ["flask", "--app", "app", "--debug", "run","--host","0.0.0.0", "--port", "8000" ]
 
 
-FROM build as prod
+FROM worker-prod as prod
 
-#copy the rest
-COPY . .
 
 RUN chmod +x wannadb_web/entrypoint.sh
 
