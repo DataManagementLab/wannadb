@@ -75,7 +75,7 @@ def createDocumentsTable(schema):
 			REFERENCES {schema}.users (id) MATCH SIMPLE
 			ON UPDATE CASCADE 
 			ON DELETE CASCADE 
-			NOT VALID,
+			NOT VALID
 	)
 
 	TABLESPACE pg_default;""")
@@ -370,7 +370,6 @@ def addDocument(name: str, content: Union[str, bytes], organisationId: int, user
 
 	except IntegrityError as i:
 		logger.error(str(i))
-		print("addDocument failed because: \n", i)
 		return -1
 
 	except Exception as e:
