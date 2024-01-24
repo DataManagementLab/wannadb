@@ -38,6 +38,7 @@ from wannadb.data.data import Attribute
 from wannadb.statistics import Statistics
 from wannadb_web.Redis.RedisCache import RedisCache
 from wannadb_web.util import tokenDecode
+from wannadb_web.worker.data import Signals
 from wannadb_web.worker.tasks import CreateDocumentBase, BaseTask
 
 core_routes = Blueprint('core_routes', __name__, url_prefix='/core')
@@ -157,14 +158,13 @@ def document_base():
 def task_status(task_id: str):
 	task: AsyncResult = BaseTask().AsyncResult(task_id=task_id)
 	status = task.status
-	print(task.info)
 	if status == "FAILURE":
-		return make_response({"state": "FAILURE", "meta": str(task.result)}, 500)
+		return make_response({"state": "FAILURE", "meta": Signals(task_id)}, 500)
 	if status == "SUCCESS":
-		return make_response({"state": "SUCCESS", "meta": str(task.result)}, 200)
+		return make_response({"state": "SUCCESS", "meta": Signals(task_id)}, 200)
 	if status is None:
 		return make_response({"error": "task not found"}, 500)
-	return make_response({"state": task.status, "meta": str(task.result)}, 202)
+	return make_response({"state": task.status, "meta": Signals(task_id)}, 202)
 
 
 @core_routes.route('/status/<task_id>', methods=['POST'])

@@ -7,10 +7,10 @@ logger = logging.getLogger(__name__)
 
 
 class RedisCache:
-	def __init__(self, user_id: int) -> None:
+	def __init__(self, user_id: str) -> None:
 		"""Initialize the RedisCache instance for a specific user."""
 		self.redis_client = util.connectRedis()
-		self.user_space_key = f"user:{str(user_id)}"
+		self.user_space_key = f"user:{user_id}"
 
 	def set(self, key: str, value: Union[str, bytes, int, float]) -> None:
 		"""Set a key-value pair in the user-specific space."""
