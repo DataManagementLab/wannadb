@@ -211,8 +211,8 @@ def getDocumentsForOrganization(organisation_id: int):
 	return doc_array
 
 def getDocumentBaseForOrganization(organisation_id: int):
-	select_query = sql.SQL("""SELECT id, name,content,content_byte
-						 FROM documents
+	select_query = sql.SQL("""SELECT id, name,content,content_byte 
+						 FROM documents 
 						 WHERE organisationid = (%s)
 						 """)
 	result = execute_query(select_query, (organisation_id,))
