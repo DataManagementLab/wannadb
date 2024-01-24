@@ -85,6 +85,7 @@ class WannaDB_WebAPI:
 			raise TypeError("Document base must be of type DocumentBase!")
 		self._document_base = value
 		self.signals.document_base_to_ui.emit(value)
+		return
 
 	def create_document_base(self, documents: list[Document], attributes: list[Attribute], statistics: Statistics):
 		logger.debug("Called slot 'create_document_base'.")
