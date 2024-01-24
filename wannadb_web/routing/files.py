@@ -1,6 +1,6 @@
 from flask import Blueprint, request, make_response
 
-from wannadb_web.postgres.queries import deleteDocumentContent, getDocument, getDocumentsForOrganization, updateDocumentContent
+from wannadb_web.postgres.queries import deleteDocumentContent, getDocument, getDocumentBaseForOrganization, getDocumentsForOrganization, updateDocumentContent
 from wannadb_web.util import tokenDecode
 from wannadb_web.postgres.transactions import addDocument
 
@@ -54,6 +54,20 @@ def get_files_for_organization(_id):
 	documents = getDocumentsForOrganization(org_id)
 
 	return make_response(documents, 200)
+
+@main_routes.route('/organization/get/documentbase/<_id>', methods=['GET'])
+def get_documentbase_for_organization(_id):
+	authorization = request.headers.get("authorization")
+	org_id = int(_id)
+
+	token = tokenDecode(authorization)
+	if token is None:
+		return make_response({'error': 'no authorization'}, 401)
+
+
+	document_base = getDocumentBaseForOrganization(org_id)
+
+	return make_response(document_base, 200)
 
 @main_routes.route('/update/file/content', methods=['POST'])
 def update_file_content():
