@@ -270,7 +270,7 @@ def getDocuments(document_ids: list[int], user_id: int):
 					content = document[2]
 					b_documents.append((str(name), bytes(content)))
 				return b_documents
-	return []
+	return [(None,None)]
 
 
 def getDocument_ids(organisation_id: int, user_id: int):
