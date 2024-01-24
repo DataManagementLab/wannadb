@@ -140,6 +140,14 @@ class CreateDocumentBase(BaseTask):
 		self.update(State.SUCCESS)
 		return self
 
+class DocumentBaseLoad(BaseTask):
+	name = "DocumentBaseLoad"
+
+	def run(self, user_id: int, base_name: str, organisation_id: int):
+		self.load()
+		api = WannaDB_WebAPI(user_id, base_name, organisation_id)
+		api.load_document_base_from_bson()
+		return self
 
 class DocumentBaseAddAttributes(BaseTask):
 	name = "DocumentBaseAddAttributes"
