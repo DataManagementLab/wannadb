@@ -104,6 +104,7 @@ class WannaDB_WebAPI:
 			raise TypeError("Document base must be of type DocumentBase!")
 		self._document_base = value
 		self.signals.document_base_to_ui.emit(value)
+		return
 
 	def get_ordert_nuggets(self, document_id: int):
 		document = getDocument(document_id, self.user_id)
