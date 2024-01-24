@@ -250,15 +250,15 @@ def document_base_attribute_update():
 # 															task_id=task.id)}
 
 
-@core_routes.route('/status/<task_id>', methods=['GET'])
-def task_status(task_id: str):
-	## todo: um des richtige feedback zu bekommen muss entweder die task_id oder der user_id mitgegeben werden
-	## Signals(task_id).to_json()
-	## oder
-	## Signals(user_id).to_json()
-	## die id muss die gleiche sein wie in
-	## wannadb_web/worker/Web_API.py
-	## also muss
+@core_routes.route('/status/<token>/<task_id>', methods=['GET'])
+def task_status(token: str,task_id: str):
+ 
+	_token = tokenDecode(token)
+
+	if _token is False:
+		return make_response({"error": "invalid token"}, 401)
+	user_id = _token.id
+ 
 	task: AsyncResult = BaseTask().AsyncResult(task_id=task_id)
 	status = task.status
 	if status == "FAILURE":
