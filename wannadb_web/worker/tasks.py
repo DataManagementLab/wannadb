@@ -17,6 +17,7 @@ from wannadb_web.worker.data import Signals
 from wannadb_web.worker.util import State
 
 logging.basicConfig(level=logging.DEBUG, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+logger = logging.getLogger()
 
 
 class InitManager(Task):
@@ -92,13 +93,22 @@ class TestTask(BaseTask):
 class CreateDocumentBase(BaseTask):
 	name = "CreateDocumentBase"
 
-	def run(self, user_id: int, document_ids: list[int], attributes_dump: bytes, statistics_dump: bytes,
+	def run(self, user_id: int, document_ids: list[int], attributes_strings: list[str], statistics_dump: bytes,
 			base_name: str, organisation_id: int):
 		self._signals = Signals(str(self.request.id))
 		self._redis_client = RedisCache(str(self.request.id))
 		self.load()
-		attributes: list[Attribute] = pickle.loads(attributes_dump)
+		attributes: list[Attribute] = []
 		statistics: Statistics = pickle.loads(statistics_dump)
+
+		for attribute_string in attributes_strings:
+			if attribute_string == "":
+				logger.error("Attribute names cannot be empty!")
+				raise Exception("Attribute names cannot be empty!")
+			if attribute_string in [attribute.name for attribute in attributes]:
+				logger.error("Attribute names must be unique!")
+				raise Exception("Attribute names must be unique!")
+			attributes.append(Attribute(attribute_string))
 
 		"""
 		init api
@@ -118,12 +128,13 @@ class CreateDocumentBase(BaseTask):
 
 		docs = getDocuments(document_ids, user_id)
 		self.update(State.PENDING)
-		documents = []
+		documents: list[Document] = []
 		if docs:
 			for doc in docs:
 				documents.append(Document(doc[0], doc[1]))
 		else:
-			print("No documents found")
+			self.update(State.ERROR)
+			raise Exception("No documents found")
 
 		api.create_document_base(documents, attributes, statistics)
 
