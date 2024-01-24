@@ -99,6 +99,8 @@ class Emitable(abc.ABC):
 class _State(Emitable):
 
 	def to_json(self):
+		if self.msg is None:
+			return ""
 		return self.msg.decode("utf-8")
 
 	def emit(self, status: str):
@@ -117,6 +119,8 @@ class _Signal(Emitable):
 class _Error(Emitable):
 
 	def to_json(self):
+		if self.msg is None:
+			return ""
 		return self.msg.decode("utf-8")
 
 	def emit(self, exception: BaseException):

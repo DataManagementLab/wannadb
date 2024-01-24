@@ -203,8 +203,6 @@ def getDocumentsForOrganization(organisation_id: int):
 		content = ''
 		if document[2]:
 			content = document[2]
-		elif document[3]:
-			content = document[3]
 		doc_array.append({
 			"id": id,
 			"name": name,
