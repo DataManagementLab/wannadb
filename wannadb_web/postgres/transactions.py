@@ -76,8 +76,6 @@ def createDocumentsTable(schema):
 			ON UPDATE CASCADE 
 			ON DELETE CASCADE 
 			NOT VALID,
-		CONSTRAINT check_only_one_filled
-			check (((content IS NOT NULL) AND (content_byte IS NULL)) OR ((content IS NOT NULL) AND (content_byte IS NULL)))
 	)
 
 	TABLESPACE pg_default;""")
@@ -372,6 +370,7 @@ def addDocument(name: str, content: Union[str, bytes], organisationId: int, user
 
 	except IntegrityError as i:
 		logger.error(str(i))
+		print("addDocument failed because: \n", i)
 		return -1
 
 	except Exception as e:
