@@ -165,6 +165,8 @@ class WannaDB_WebAPI:
 	def save_document_base_to_bson(self):
 		logger.debug("Called function 'save_document_base_to_bson'.")
 
+		# TODO does not work in prod!!!
+
 		try:
 			document_id = addDocument(self.document_base_name, self.document_base.to_bson(), self.organisation_id,
 									  self.user_id)
