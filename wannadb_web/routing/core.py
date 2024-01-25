@@ -120,8 +120,9 @@ def load_document_base():
 
 	return make_response({'task_id': task.id}, 202)
 
-@core_routes.route('/document_base/interactive', methods=['POST'])
-def interactive_document_base():
+
+@core_routes.route('/document_base/attributes/add', methods=['UPDATE'])
+def document_base_attribute_add():
 	"""
     Endpoint for interactive document population
 
