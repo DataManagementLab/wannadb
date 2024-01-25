@@ -45,7 +45,7 @@ def attribute_to_json(attribute: Attribute):
 
 def document_base_to_json(document_base: DocumentBase):
 	return {
-		'msg': {"attributes ": [attribute.name for attribute in document_base.attributes],
+		'msg': {"attributes": [attribute.name for attribute in document_base.attributes],
 				"nuggets": [nugget_to_json(nugget) for nugget in document_base.nuggets]
 				}
 	}

@@ -39,7 +39,7 @@ from wannadb.statistics import Statistics
 from wannadb_web.Redis.RedisCache import RedisCache
 from wannadb_web.util import tokenDecode
 from wannadb_web.worker.data import Signals
-from wannadb_web.worker.tasks import CreateDocumentBase, BaseTask, DocumentBaseAddAttributes
+from wannadb_web.worker.tasks import CreateDocumentBase, BaseTask, DocumentBaseAddAttributes, DocumentBaseLoad
 
 core_routes = Blueprint('core_routes', __name__, url_prefix='/core')
 
@@ -47,19 +47,15 @@ logger = logging.getLogger(__name__)
 
 
 @core_routes.route('/document_base', methods=['POST'])
-def create_document():
+def create_document_base():
 	"""
     Endpoint for creating a document base.
 
 	This endpoint is used to create a document base from a list of document ids and a list of attributes.
 
-	Example Header:
-	{
-		"Authorization": "your_authorization_token"
-	}
-
-    Example JSON Payload:
+    Example Form Payload:
     {
+		"authorization": "your_authorization_token"
         "organisationId": "your_organisation_id",
         "baseName": "your_document_base_name",
         "document_ids": "1, 2, 3",
@@ -92,9 +88,41 @@ def create_document():
 
 	return make_response({'task_id': task.id}, 202)
 
+@core_routes.route('/document_base/load', methods=['POST'])
+def load_document_base():
+	"""
+    Endpoint for loading a document base.
 
-@core_routes.route('/document_base/attributes', methods=['UPDATE'])
-def document_base():
+	This endpoint is used to load a document base from a name and an organisation id.
+
+    Example Form Payload:
+    {
+		"authorization": "your_authorization_token"
+        "organisationId": "your_organisation_id",
+        "baseName": "your_document_base_name",
+    }
+    """
+	form = request.form
+	authorization = form.get("authorization")
+	organisation_id: Optional[int] = form.get("organisationId")
+	base_name = form.get("baseName")
+	if (organisation_id is None or base_name is None
+			or authorization is None):
+		return make_response({"error": "missing parameters"}, 400)
+	_token = tokenDecode(authorization)
+
+	if _token is False:
+		return make_response({"error": "invalid token"}, 401)
+
+	user_id = _token.id
+
+	task = DocumentBaseLoad().apply_async(args=(user_id, base_name, organisation_id))
+
+	return make_response({'task_id': task.id}, 202)
+
+
+@core_routes.route('/document_base/attributes/add', methods=['UPDATE'])
+def document_base_attribute_add():
 	"""
     Endpoint for update a document base.
 

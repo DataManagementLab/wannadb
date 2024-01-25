@@ -152,6 +152,8 @@ class DocumentBaseLoad(BaseTask):
 		self.load()
 		api = WannaDB_WebAPI(user_id, base_name, organisation_id)
 		api.load_document_base_from_bson()
+		#self.update(State.SUCCESS)
+		#return self
 		if api.signals.error.msg is None:
 			self.update(State.SUCCESS)
 			return self
