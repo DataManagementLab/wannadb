@@ -323,7 +323,7 @@ def main():
                     horizontalalignment="center"
                 )
 
-            plt.savefig(path + "exp3-percent-mentioned.pdf", format="pdf", transparent=True)
+            plt.savefig(os.path.join(path, "exp3-percent-mentioned.pdf"), format="pdf", transparent=True)
 
             ################################################################################################################
             # percentage extracted by attribute
@@ -346,7 +346,7 @@ def main():
                     horizontalalignment="center"
                 )
 
-            plt.savefig(path + "exp3-percent-extracted.pdf", format="pdf", transparent=True)
+            plt.savefig(os.path.join(path, "exp3-percent-extracted.pdf"), format="pdf", transparent=True)
 
             ################################################################################################################
             # F1-Scores by attribute
@@ -369,7 +369,7 @@ def main():
                     horizontalalignment="center"
                 )
 
-            plt.savefig(path + "exp3-f1-scores.pdf", format="pdf", transparent=True)
+            plt.savefig(os.path.join(path, "exp3-f1-scores.pdf"), format="pdf", transparent=True)
 
             # Reset timekeeping df to be empty for every run with another count of interactions
             USED_EXTRACTOR.reset_time_keeping()
