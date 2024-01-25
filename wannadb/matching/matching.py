@@ -328,15 +328,24 @@ class RankingBasedMatcher(BaseMatcher):
                                 document[CurrentMatchIndexSignal] = ix
                     distances_based_on_label = False
 
-                    # Find more nuggets that are similar to this match, perform timekeeping
+                    # Find more nuggets that are similar to this match
                     t_minus_custom_extraction = time.time()
                     additional_nuggets: List[Tuple[Document, int, int]] = self._find_additional_nuggets(confirmed_nugget, remaining_documents)
                     t_custom_extraction = time.time() - t_minus_custom_extraction
-                    self._find_additional_nuggets.time_keeping.append(t_custom_extraction)
+
+                    # Perform time keeping and logging
+                    self._find_additional_nuggets.perform_time_keeping(
+                        feedback_result["document"],
+                        len(remaining_documents),
+                        t_custom_extraction,
+                        feedback_result["start"],
+                        feedback_result["end"]
+                    )
                     logger.info(f"Execution of custom match extraction"
                                 f" with {str(self._find_additional_nuggets)}"
                                 f" took {t_custom_extraction} seconds"
                                 f" for {len(remaining_documents)} documents.")
+
                     statistics[attribute.name]["num_additional_nuggets"] += len(additional_nuggets)
                     if len(additional_nuggets) == 0:
                         continue

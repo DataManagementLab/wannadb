@@ -7,6 +7,7 @@ import abc
 import faiss
 import logging
 import multiprocessing
+import pandas as pd
 import numpy as np
 import time
 from itertools import repeat
@@ -26,7 +27,9 @@ class BaseCustomMatchExtractor(abc.ABC):
     """
 
     identifier: str = "BaseCustomMatchExtractor"
-    time_keeping = []
+    time_keeping = pd.DataFrame(
+        columns=["document", "remaining_documents", "time", "document_text", "feedback_start", "feedback_end"]
+    )
 
     @abc.abstractmethod
     def __call__(self, nugget: InformationNugget, documents: List[Document]) -> List[Tuple[Document, int, int]]:
@@ -59,6 +62,36 @@ class BaseCustomMatchExtractor(abc.ABC):
         if not isinstance(documents, list):
             documents = [documents]
         return documents
+
+    def perform_time_keeping(
+            self, document: Document, remaining_document_count: int, t: float, start: int, end: int
+    ) -> None:
+        """
+            Perform time-keeping for this extractor by saving the document that has been given feedback to,
+            the remaining document count,  the time needed for that round of feedback, and the span of the
+            given feedback.
+
+            :param document: The document that is given feedback for
+            :param remaining_document_count: How many documents are still left
+            :param t: The time needed for that feedback round
+            :param start: The index of the beginning of the feedback span
+            :param end: The index of the end of the feedback span
+            :return: None
+        """
+
+        # Append a new row to the dataframe and insert the new entry
+        self.time_keeping.loc[
+            0 if pd.isnull(self.time_keeping.index.max()) else self.time_keeping.index.max() + 1
+        ] = [document.name, remaining_document_count, t, document.text, start, end]
+
+    def reset_time_keeping(self):
+        """
+            Resets the time keeping dataframe to be empty.
+        """
+
+        self.time_keeping = pd.DataFrame(
+            columns=["document", "remaining_documents", "time", "document_text", "feedback_start", "feedback_end"]
+        )
 
 
 class ParallelWrapper:

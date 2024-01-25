@@ -26,6 +26,7 @@ import numpy as np
 import json
 import matplotlib.pyplot as plt
 import seaborn as sns
+import pickle
 
 
 DATASETS = [("aviation", aviation), ("nobel", nobel)]
@@ -121,12 +122,12 @@ def preprocessing(statistics, dataset, document_base, documents):
 def main():
 
     with ResourceManager() as resource_manager:
+
         dataset_str = "nobel"
 
         # How many custom interactions are executed
-        for number_of_interactions in [10]:
+        for number_of_interactions in range(0, 31, 5):
 
-            print("NUM INTERACTION:" + str(number_of_interactions))
             # Create statistics object and get desired dataset
             statistics = Statistics(do_collect=True)
             dataset = DATASETS[[x[0] for x in DATASETS].index(dataset_str)][1]
@@ -145,11 +146,14 @@ def main():
                 statistics["matching"]["results"]["considered_as_match"][attribute_name] = set()
 
             # random seeds have been randomly chosen once from [0, 1000000]
-            random_seeds = [200488, 422329, 449756] # [200488, 422329, 449756, 739608, 983889, 836016, 264198, 908457, 205619, 461905]
+            random_seeds = [
+                794009, 287762, 880883, 663238, 137616, 543468, 329177, 322737, 343909, 824474,
+                220481, 832096, 962731, 345784, 317557, 696622, 675696, 467273, 475463, 540128
+            ]
 
             for run, random_seed in enumerate(random_seeds):
 
-                print(f"Run {run}")
+                print(f"--- Interactions {number_of_interactions}, Run {run} ---")
 
                 # Load the document base again
                 with open(path_to_bson, "rb") as file:
@@ -274,10 +278,13 @@ def main():
                                 USED_EXTRACTOR.identifier, f"{number_of_interactions}")
             if not os.path.isdir(path):
                 os.makedirs(path, exist_ok=True)
-            path = str(os.path.join(path, RESULTS_FILENAME))
-            with open(path, "w") as file:
+            path_result_json = str(os.path.join(path, RESULTS_FILENAME))
+            with open(path_result_json, "w") as file:
                 json.dump(statistics.to_serializable(), file, indent=4)
 
+            # Store inference time df
+            with open(os.path.join(path, "time_keeping.pkl"), "wb") as f:
+                pickle.dump(USED_EXTRACTOR.time_keeping, f)
 
             ################################################################################################################
             # draw plots
@@ -316,7 +323,7 @@ def main():
                     horizontalalignment="center"
                 )
 
-            plt.savefig(path[:-5] + "-percent-mentioned.pdf", format="pdf", transparent=True)
+            plt.savefig(path + "exp3-percent-mentioned.pdf", format="pdf", transparent=True)
 
             ################################################################################################################
             # percentage extracted by attribute
@@ -339,7 +346,7 @@ def main():
                     horizontalalignment="center"
                 )
 
-            plt.savefig(path[:-5] + "-percent-extracted.pdf", format="pdf", transparent=True)
+            plt.savefig(path + "exp3-percent-extracted.pdf", format="pdf", transparent=True)
 
             ################################################################################################################
             # F1-Scores by attribute
@@ -362,7 +369,10 @@ def main():
                     horizontalalignment="center"
                 )
 
-            plt.savefig(path[:-5] + "-f1-scores.pdf", format="pdf", transparent=True)
+            plt.savefig(path + "exp3-f1-scores.pdf", format="pdf", transparent=True)
+
+            # Reset timekeeping df to be empty for every run with another count of interactions
+            USED_EXTRACTOR.reset_time_keeping()
 
 
 if __name__ == "__main__":
