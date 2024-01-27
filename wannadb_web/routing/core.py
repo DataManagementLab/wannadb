@@ -39,7 +39,7 @@ from wannadb.statistics import Statistics
 from wannadb_web.Redis.RedisCache import RedisCache
 from wannadb_web.util import tokenDecode
 from wannadb_web.worker.data import Signals
-from wannadb_web.worker.tasks import CreateDocumentBase, BaseTask, DocumentBaseAddAttributes, DocumentBaseLoad
+from wannadb_web.worker.tasks import CreateDocumentBase, BaseTask, DocumentBaseAddAttributes, DocumentBaseLoad, DocumentBaseUpdateAttributes
 
 core_routes = Blueprint('core_routes', __name__, url_prefix='/core')
 
@@ -121,12 +121,12 @@ def load_document_base():
 	return make_response({'task_id': task.id}, 202)
 
 
-@core_routes.route('/document_base/attributes/add', methods=['UPDATE'])
+@core_routes.route('/document_base/attributes/add', methods=['POST'])
 def document_base_attribute_add():
 	"""
-    Endpoint for update a document base.
+    Endpoint for add attributes to a document base.
 
-	This endpoint is used to update a document base from a list of attributes.
+	This endpoint is used to add attributes to a document base from a list of attributes.
 
     Example Form Payload:
     {
@@ -165,6 +165,49 @@ def document_base_attribute_add():
 
 	return make_response({'task_id': task.id}, 202)
 
+@core_routes.route('/document_base/attributes/update', methods=['POST'])
+def document_base_attribute_update():
+	"""
+    Endpoint for update the attributes of a document base.
+
+	This endpoint is used to update the attributes of a document base from a list of attributes.
+
+    Example Form Payload:
+    {
+		"authorization": "your_authorization_token"
+        "organisationId": "your_organisation_id",
+        "baseName": "your_document_base_name",
+        "attributes": "plane,car,bike"
+    }
+    """
+	form = request.form
+	authorization = form.get("authorization")
+	organisation_id = form.get("organisationId")
+	base_name = form.get("baseName")
+	attributes_string = form.get("attributes")
+	if (organisation_id is None or base_name is None or attributes_string is None
+			or authorization is None):
+		return make_response({"error": "missing parameters"}, 400)
+	_token = tokenDecode(authorization)
+
+	if _token is False:
+		return make_response({"error": "invalid token"}, 401)
+
+	attributes_string = attributes_string.split(",")
+
+	#attributes = []
+	#for att in attributes_string:
+	#	attributes.append(Attribute(att))
+	#
+	#statistics = Statistics(False)
+ 
+	user_id = _token.id
+
+	task = DocumentBaseUpdateAttributes().apply_async(args=(user_id, attributes_string,
+												  base_name, organisation_id))
+
+	return make_response({'task_id': task.id}, 202)
+
 
 # @core_routes.route('/longtask', methods=['POST'])
 # def longtask():
@@ -187,10 +230,13 @@ def task_status(token: str,task_id: str):
 	if status == "FAILURE":
 		return make_response({"state": "FAILURE", "meta": Signals(user_id).to_json()}, 500)
 	if status == "SUCCESS":
-		return make_response({"state": "SUCCESS", "meta": Signals(user_id).to_json()}, 200)
+		signals = Signals(user_id).to_json()
+		return make_response({"state": "SUCCESS", "meta": signals}, 200)
 	if status is None:
 		return make_response({"error": "task not found"}, 500)
-	return make_response({"state": task.status, "meta": Signals(user_id).to_json()}, 202)
+
+	signals = Signals(user_id).to_json()
+	return make_response({"state": task.status, "meta": signals}, 202)
 
 
 @core_routes.route('/status/<task_id>', methods=['POST'])

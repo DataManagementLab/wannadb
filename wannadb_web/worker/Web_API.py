@@ -156,6 +156,7 @@ class WannaDB_WebAPI:
 
 			logger.info(f"Document base loaded from BSON with id {document_id}.")
 			self.document_base = document_base
+			self.document_id = document_id
 
 		except Exception as e:
 			logger.error(str(e))
@@ -164,8 +165,6 @@ class WannaDB_WebAPI:
 
 	def save_document_base_to_bson(self):
 		logger.debug("Called function 'save_document_base_to_bson'.")
-
-		# TODO does not work in prod!!!
 
 		try:
 			document_id = addDocument(self.document_base_name, self.document_base.to_bson(), self.organisation_id,
@@ -197,6 +196,13 @@ class WannaDB_WebAPI:
 			self.signals.error.emit(Exception("Document ID not set!"))
 			return
 		try:
+			print("BASE")
+			print(self.document_base)
+			print("ID")
+			print(self.document_id)
+			print("ATT")
+			print(self.document_base.attributes)
+   
 			status = updateDocumentContent(self.document_id, self.document_base.to_bson())
 			if status is False:
 				logger.error(f"Document base could not be saved to BSON! Document {self.document_id} does not exist!")
@@ -289,6 +295,17 @@ class WannaDB_WebAPI:
 			else:
 				logger.error("Attribute name does not exist!")
 				self.signals.error.emit(Exception("Attribute name does not exist!"))
+    
+	def update_attributes(self, attributes: list[Attribute]):
+		logger.debug("Called function 'update_attributes'.")
+		self.document_base.attributes.clear()
+		for attribute in attributes:
+			if attribute is None:
+				logger.info("Attribute name must not be empty and was thus ignored.")
+			else:
+				self.document_base.attributes.append(attribute)
+				self.sqLiteCacheDBWrapper.cache_db.create_table_by_name(attribute.name)
+				logger.debug(f"Attribute '{attribute.name}' added.")
 
 	def forget_matches_for_attribute(self, attribute: Attribute):
 		logger.debug("Called function 'forget_matches_for_attribute'.")
