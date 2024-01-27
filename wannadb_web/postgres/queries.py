@@ -143,7 +143,7 @@ def getDocument_by_name(document_name: str, organisation_id: int, user_id: int) 
 			Exception: if multiple documents with that name are found
 	"""
 
-	select_query = sql.SQL("""SELECT id,content,content_byte
+	select_query = sql.SQL("""SELECT id,content,content_byte 
 							 FROM documents d
 							 JOIN membership m ON d.organisationid = m.organisationid
 							 WHERE d.name = (%s) AND m.userid = (%s) AND m.organisationid = (%s)

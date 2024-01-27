@@ -29,8 +29,9 @@ def tokenDecode(string: str):
 	try:
 		decoded_token = jwt.decode(string, _jwtkey, leeway=datetime.timedelta(minutes=1), algorithms="HS256",
 								   verify=True)
-	except jwt.ExpiredSignatureError:
-		return False
+	#except jwt.ExpiredSignatureError:
+	except:
+		return None
 	user = decoded_token.get('user')
 	_id = int(decoded_token.get('id'))
 	exp = decoded_token.get('exp')

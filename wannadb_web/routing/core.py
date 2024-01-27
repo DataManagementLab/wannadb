@@ -121,40 +121,6 @@ def load_document_base():
 	return make_response({'task_id': task.id}, 202)
 
 
-@core_routes.route('/document_base/attributes/add', methods=['UPDATE'])
-def document_base_attribute_add():
-	"""
-    Endpoint for interactive document population
-
-	This endpoint is used to load a document base from a name and an organisation id.
-
-    Example Form Payload:
-    {
-		"authorization": "your_authorization_token"
-        "organisationId": "your_organisation_id",
-        "baseName": "your_document_base_name",
-    }
-    """
-	form = request.form
-	authorization = form.get("authorization")
-	organisation_id: Optional[int] = form.get("organisationId")
-	base_name = form.get("baseName")
- 
-	if (organisation_id is None or base_name is None
-			or authorization is None):
-		return make_response({"error": "missing parameters"}, 400)
-	_token = tokenDecode(authorization)
-
-	if _token is False:
-		return make_response({"error": "invalid token"}, 401)
-
-	user_id = _token.id
-
-	task = DocumentBaseInteractiveTablePopulation().apply_async(args=(user_id, base_name, organisation_id))
-
-	return make_response({'task_id': task.id}, 202)
-
-
 @core_routes.route('/document_base/attributes/add', methods=['POST'])
 def document_base_attribute_add():
 	"""
@@ -198,7 +164,6 @@ def document_base_attribute_add():
 												  base_name, organisation_id))
 
 	return make_response({'task_id': task.id}, 202)
-
 
 @core_routes.route('/document_base/attributes/update', methods=['POST'])
 def document_base_attribute_update():

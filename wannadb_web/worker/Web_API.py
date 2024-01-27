@@ -202,8 +202,6 @@ class WannaDB_WebAPI:
 	def save_document_base_to_bson(self):
 		logger.debug("Called function 'save_document_base_to_bson'.")
 
-		# TODO does not work in prod!!!
-
 		try:
 			document_id = addDocument(self.document_base_name, self.document_base.to_bson(), self.organisation_id,
 									  self.user_id)
@@ -234,6 +232,13 @@ class WannaDB_WebAPI:
 			self.signals.error.emit(Exception("Document ID not set!"))
 			return
 		try:
+			print("BASE")
+			print(self.document_base)
+			print("ID")
+			print(self.document_id)
+			print("ATT")
+			print(self.document_base.attributes)
+   
 			status = updateDocumentContent(self.document_id, self.document_base.to_bson())
 			if status is False:
 				logger.error(f"Document base could not be saved to BSON! Document {self.document_id} does not exist!")
