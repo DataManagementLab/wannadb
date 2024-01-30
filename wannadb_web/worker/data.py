@@ -26,6 +26,12 @@ def nugget_to_json(nugget: InformationNugget):
 		"start_char": str(nugget.start_char)}
 
 
+def nuggets_to_json(nuggets: list[InformationNugget]):
+	return {
+		str(i): nugget_to_json(nugget) for i, nugget in enumerate(nuggets)
+	}
+
+
 def document_to_json(document: Document):
 	return {
 		"name": document.name,
@@ -63,6 +69,7 @@ class Signals:
 		self.statistics = _Statistics("statistics_to_ui", user_id)
 		self.feedback_request_to_ui = _Feedback("feedback_request_to_ui", user_id)
 		self.cache_db_to_ui = _Dump("cache_db_to_ui", user_id)
+		self.ordert_nuggets = _Nuggets("ordert_nuggets", user_id)
 
 	def to_json(self) -> dict[str, str]:
 		return {self.feedback.type: self.feedback.to_json(),
@@ -131,7 +138,7 @@ class _Error(Emitable):
 		self.redis.set(self.type, str(exception))
 
 
-class _Nugget(Emitable):
+class _Nuggets(Emitable):
 
 	def to_json(self):
 		if self.msg is None:
@@ -140,8 +147,8 @@ class _Nugget(Emitable):
 			raise TypeError("_Nugget msg must be of type str")
 		return self.msg
 
-	def emit(self, status: InformationNugget):
-		self.redis.set(self.type, json.dumps(nugget_to_json(status)))
+	def emit(self, status: list[InformationNugget]):
+		self.redis.set(self.type, json.dumps(nuggets_to_json(status)))
 
 
 class _DocumentBase(Emitable):
