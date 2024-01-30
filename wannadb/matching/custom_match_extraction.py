@@ -1,6 +1,8 @@
 """
     File containing all code related to extraction of additional nuggets from documents based on custom matches
     annotated by the user.
+
+    Authors: DASP Seminar WiSe23/24
 """
 
 import abc
@@ -9,10 +11,13 @@ import logging
 import multiprocessing
 import pandas as pd
 import numpy as np
+import re
+import spacy
 import time
 from itertools import repeat
 from nltk import ngrams
 from nltk.corpus import wordnet
+from spacy.tokenizer import Tokenizer
 from typing import List, Tuple
 from transformers import pipeline
 from wannadb import resources
@@ -133,7 +138,6 @@ class ParallelWrapper:
         pool.terminate()
 
         # Post-process results by collapsing into one list and return
-        logger.info([result[0] for result in thread_results if len(result) > 0])
         return [result[0] for result in thread_results if len(result) > 0]
 
     def __str__(self):
@@ -200,6 +204,56 @@ class ExactCustomMatchExtractor(BaseCustomMatchExtractor):
                     start += len(nug_text)
 
         return new_nuggets
+
+
+class CustomSimilaritySpanExtractor(BaseCustomMatchExtractor):
+    """
+        This extractor aims to identify similar patterns among tokens that share similar semantic meanings.
+    """
+    identifier: str = "CustomHighlightExtractor"
+
+    def __init__(self) -> None:
+        """
+            Initiate the spaCy pipeline.
+            Incorporate a custom tokenization rule that exclusively extracts tokens separated by whitespaces.
+        """
+        self.nlp = spacy.load("en_core_web_md")
+        self.nlp.tokenizer = Tokenizer(self.nlp.vocab, token_match=re.compile(r'\S+').match)
+
+    def __call__(self, nugget: InformationNugget, documents: List[Document]) -> List[Tuple[Document, int, int]]:
+        """
+
+            When the document contains a token with a similar semantic meaning to a token in the custom nugget,
+            the extractor captures the corresponding span, maintains the same format as in the nugget,
+            and includes this new span as a new nugget.
+
+            :param nugget: The InformationNugget that should be matched against
+            :param documents: The set of documents to extract matches from
+            :return: Returns a List of Tuples of matching nuggets, where the first entry denotes the corresponding
+            document of the nugget, the second and third entry denote the start and end indices of the match.
+        """
+
+        nugget_tokens = [token for token in self.nlp(nugget.text) if token.text.strip() != ""]
+        result = []
+
+        for doc in documents:
+            document_tokens = [token for token in self.nlp(doc.text)]
+
+            for i, doc_tok in enumerate(document_tokens):
+                for j, nug_tok in enumerate(nugget_tokens):
+                    sim = doc_tok.similarity(nug_tok)
+                    if sim > 0.95 and not nug_tok.is_stop:
+                        start_index_tok = i - j
+                        end_index_tok = start_index_tok + len(nugget_tokens) - 1
+                        span = document_tokens[max(start_index_tok, 0):min(end_index_tok + 1, len(document_tokens) - 1)]
+                        new_nugget = " ".join([tok.text for tok in span])
+
+                        start_index = doc.text.find(new_nugget)
+                        end_index = start_index + len(new_nugget)
+                        logger.info("extracted new nugget: " + new_nugget)
+                        result.append((doc, start_index, end_index))
+
+        return result
 
 
 class NgramCustomMatchExtractor(BaseCustomMatchExtractor):
@@ -551,9 +605,6 @@ class FaissSemanticSimilarityExtractor(BaseCustomMatchExtractor):
                 doc_start_idx = doc.text.find(potential_match)
                 doc_end_idx = doc_start_idx + len(potential_match)
                 matches.append((doc, doc_start_idx, doc_end_idx))
-
-                # Logging
-                logger.info("Extractor found match: " + potential_match)
 
             """
             OLD VERSION; MIGHT STILL TRY OUT

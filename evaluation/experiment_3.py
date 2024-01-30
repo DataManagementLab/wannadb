@@ -1,4 +1,3 @@
-from wannadb.matching.custom_extractor import CustomSimilaritySpanExtractor
 from wannadb.resources import ResourceManager
 from wannadb.statistics import Statistics
 from evaluation.datasets.aviation import aviation
@@ -18,8 +17,8 @@ from wannadb.status import EmptyStatusCallback
 from wannadb.configuration import Pipeline
 from wannadb.matching.distance import SignalsMeanDistance
 from wannadb.matching.matching import RankingBasedMatcher
-from wannadb.matching.custom_match_extraction import QuestionAnsweringCustomMatchExtractor,\
-    FaissSemanticSimilarityExtractor, DummyCustomMatchExtractor
+from wannadb.matching.custom_match_extraction import CustomSimilaritySpanExtractor, DummyCustomMatchExtractor,\
+    FaissSemanticSimilarityExtractor, QuestionAnsweringCustomMatchExtractor, WordNetSimilarityCustomMatchExtractor
 import os
 import random
 import numpy as np
