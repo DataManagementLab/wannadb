@@ -236,3 +236,17 @@ class DocumentBaseInteractiveTablePopulation(BaseTask):
 		api.interactive_table_population()
 		if api.signals.error.msg is None:
 			api.update_document_base_to_bson()
+
+
+class DocumentBaseGetOrdertNuggets(BaseTask):
+	name = "DocumentBaseGetOrdertNuggets"
+
+	def run(self, user_id: int, base_name: str, organisation_id: int, document_id: int):
+		self._signals = Signals(str(self.request.id))
+		self._redis_client = RedisCache(str(self.request.id))
+		self.load()
+
+		api = WannaDB_WebAPI(user_id, base_name, organisation_id)
+		api.load_document_base_from_bson()
+		api.get_ordert_nuggets(document_id)
+		# no need to update the document base
