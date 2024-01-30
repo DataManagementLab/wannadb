@@ -343,7 +343,7 @@ class WordNetSimilarityCustomMatchExtractor(BaseCustomMatchExtractor):
 
     identifier: str = "WordNetSimilarityCustomMatchExtractor"
 
-    def __init__(self, threshold=0.6) -> None:
+    def __init__(self, threshold=0.8) -> None:
         """
             Initialize this extractor by specifying the threshold that needs to be succeeded in order to classify
             something as a match.
@@ -373,34 +373,39 @@ class WordNetSimilarityCustomMatchExtractor(BaseCustomMatchExtractor):
         # Potential preprocessing
         documents = self.preprocess_documents(documents)
 
-        # Compute the wordnet category for the nugget
-        nugget_syn = wordnet.synsets(nugget.text)
+        # Get all unigrams for the nugget text
+        nugget_unigrams = nugget.text.split()
+        ngram_length = len(nugget_unigrams)
 
-        # If there is none, terminate since it won't work
-        if len(nugget_syn) < 1:
-            logger.info(f"Custom match {nugget.text} has no WordNet entry, no Wu-Palmer-Similarity computable")
-            return []
+        # Iterate over all unigrams for this query nugget and compute its wordnet entry
+        for unigram_idx, nugget_unigram in enumerate(nugget_unigrams):
+            nugget_syn = wordnet.synsets(nugget_unigram)
 
-        # Potential preprocessing
-        documents = self.preprocess_documents(documents)
+            # Iterate over all documents unigram-wise and compute their wordnet entry
+            for doc in documents:
+                loc = 0
+                split_doc = doc.text.split()
+                for tok_idx, tok in enumerate(split_doc):
+                    syn = wordnet.synsets(tok)
 
-        # Otherwise, iterate through all documents, all tokens of it and get the wordnet entry
-        # Use loc to keep track of current position in a document and to shorten search time in documents
-        for doc in documents:
-            loc = 0
-            for tok in doc.text.split(" "):
-                syn = wordnet.synsets(tok)
+                    # If there is one: Compute Wu-Palmer-Similarity and threshold it
+                    if len(syn) > 0:
+                        if nugget_syn[0].wup_similarity(syn[0]) > self.threshold:
 
-                # If there is one: Compute Wu-Palmer-Similarity and threshold it to classify matches
-                if len(syn) > 0:
-                    if nugget_syn[0].wup_similarity(syn[0]) > self.threshold:
+                            # Edge case handling
+                            if tok_idx - unigram_idx < 0 or tok_idx - unigram_idx + ngram_length >= len(split_doc):
+                                continue
 
-                        # Find the index in the text and append
-                        idx = doc.text.find(tok, loc)
-                        if idx > -1:
-                            logger.info(tok)
-                            matches.append((doc, idx, idx + len(tok)))
-                            loc = idx
+                            # Assemble a span around the found token according to the found unigram.
+                            # If the unigram is at the k-th position in the query nugget, we use the found token as
+                            # k-th nugget of the ngram and extract the next n-k tokens according to the ngram structure.
+                            found_span = " ".join(split_doc[tok_idx - unigram_idx:tok_idx - unigram_idx + ngram_length])
+
+                            # Find the index in the text and append to the list of matches
+                            idx = doc.text.find(found_span, loc)
+                            if idx > -1:
+                                matches.append((doc, idx, idx + len(tok)))
+                                loc = idx
 
         # Return the matches
         return matches
@@ -495,9 +500,14 @@ class FaissSemanticSimilarityExtractor(BaseCustomMatchExtractor):
         # Get tuple of potential ngram indices that contain this nugget
         query_nugget_split = nugget.text.split()
         query_nugget_ngram_length = len(query_nugget_split)
+
+        """
+        BELONGS TO OLD VERSION BELOW
+        
         potential_ngram_tuple_idx = [
             (i, i + query_nugget_ngram_length) for i in range(-query_nugget_ngram_length + 1, 1)
         ]
+        """
 
         # Get the embeddings of each 1gram of the potential ngram query nugget. If the query nugget in itself
         # is already an onegram, this corresponds just to query_vector
@@ -544,10 +554,6 @@ class FaissSemanticSimilarityExtractor(BaseCustomMatchExtractor):
 
                 # Logging
                 logger.info("Extractor found match: " + potential_match)
-
-            # TODO: Maybe add the single nugget itself if the ngrams do not match?
-            # Eg: Query: "Sri Lanka", found: "Germany" -> the Germany etc. is worse than just Germany
-            # Or simply assume that it would've been picked up earlier
 
             """
             OLD VERSION; MIGHT STILL TRY OUT
