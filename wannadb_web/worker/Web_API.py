@@ -9,7 +9,8 @@ import wannadb
 from wannadb import resources
 from wannadb.configuration import Pipeline
 from wannadb.data.data import Attribute, Document, DocumentBase
-from wannadb.interaction import EmptyInteractionCallback, BaseInteractionCallback, InteractionCallback
+from wannadb.data.signals import CachedDistanceSignal
+from wannadb.interaction import EmptyInteractionCallback, InteractionCallback
 from wannadb.matching.distance import SignalsMeanDistance
 from wannadb.matching.matching import RankingBasedMatcher
 from wannadb.preprocessing.embedding import BERTContextSentenceEmbedder, RelativePositionEmbedder, \
@@ -20,9 +21,9 @@ from wannadb.preprocessing.label_paraphrasing import OntoNotesLabelParaphraser, 
 from wannadb.preprocessing.normalization import CopyNormalizer
 from wannadb.preprocessing.other_processing import ContextSentenceCacher
 from wannadb.statistics import Statistics
-from wannadb.status import BaseStatusCallback, StatusCallback
+from wannadb.status import StatusCallback
 from wannadb_web.SQLite.Cache_DB import SQLiteCacheDBWrapper
-from wannadb_web.postgres.queries import getDocument_by_name, updateDocumentContent
+from wannadb_web.postgres.queries import getDocument_by_name, updateDocumentContent, getDocument
 from wannadb_web.postgres.transactions import addDocument
 from wannadb_web.worker.data import Signals
 
@@ -85,6 +86,22 @@ class WannaDB_WebAPI:
 			raise TypeError("Document base must be of type DocumentBase!")
 		self._document_base = value
 		self.signals.document_base_to_ui.emit(value)
+
+	def get_ordert_nuggets(self, document_id: int):
+		document = getDocument(document_id, self.user_id)
+		if document is None:
+			logger.error(f"Document with id {document_id} not found!")
+			self.signals.error.emit(Exception(f"Document with id {document_id} not found!"))
+			return
+		document_name = document[0]
+		logger.debug("get_ordert_nuggets")
+		self.signals.status.emit("get_ordert_nuggets")
+		for document in self.document_base.documents:
+			if document.name == document_name:
+				self.signals.ordert_nuggets.emit(list(sorted(document.nuggets, key=lambda x: x[CachedDistanceSignal])))
+				return
+		logger.error(f"Document \"{document_name}\" not found in document base!")
+		self.signals.error.emit(Exception(f"Document \"{document_name}\" not found in document base!"))
 
 	def create_document_base(self, documents: list[Document], attributes: list[Attribute], statistics: Statistics):
 		logger.debug("Called slot 'create_document_base'.")
