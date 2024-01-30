@@ -39,8 +39,7 @@ from wannadb.statistics import Statistics
 from wannadb_web.Redis.RedisCache import RedisCache
 from wannadb_web.util import tokenDecode
 from wannadb_web.worker.data import Signals
-from wannadb_web.worker.tasks import CreateDocumentBase, BaseTask
-from wannadb.data.signals import CachedDistanceSignal
+from wannadb_web.worker.tasks import CreateDocumentBase, BaseTask, DocumentBaseGetOrdertNuggets
 
 core_routes = Blueprint('core_routes', __name__, url_prefix='/core')
 
@@ -166,16 +165,43 @@ def task_update(task_id: str):
 	redis_client = RedisCache(task_id).redis_client
 	redis_client.set("input", "test")
 
-@core_routes.route('/fix_button', methods=['POST'])
-def fix_button():
-	try:
-		data = request.json
-		# the nugget is type of InformationNugget
-		inf_Nugget= data.get("InformationNugget")
-		document = inf_Nugget.document
-		nuggets_sorted_by_distance = list(sorted(document.nuggets, key=lambda x: x[CachedDistanceSignal]))
-		fix_button_result = [nugget for nugget in nuggets_sorted_by_distance]
-		return make_response({"status": "success", "result": fix_button_result})
-	except Exception as e:
-		return make_response({"status": "error", "error_message": str(e)}), 500
 
+## todo: renaming of the endpoint
+
+@core_routes.route('/fix_button', methods=['POST'])
+def sort_nuggets():
+	"""
+    Endpoint for creating a document base.
+
+	This endpoint is used to create a document base from a list of document ids and a list of attributes.
+
+	Example Header:
+	{
+		"Authorization": "your_authorization_token"
+	}
+
+    Example JSON Payload:
+    {
+        "organisationId": "your_organisation_id",
+        "baseName": "your_document_base_name",
+        "document_id": "1",   (important: only one document id)
+        "attributes": "plane,car,bike"
+    }
+    """
+	form = request.form
+	authorization = form.get("authorization")
+	organisation_id: Optional[int] = form.get("organisationId")
+	base_name = form.get("baseName")
+	document_id = form.get("document_ids")
+	if organisation_id is None or base_name is None or document_id is None or authorization is None:
+		return make_response({"error": "missing parameters"}, 400)
+	_token = tokenDecode(authorization)
+
+	if _token is False:
+		return make_response({"error": "invalid token"}, 401)
+
+	user_id = _token.id
+
+	task = DocumentBaseGetOrdertNuggets().apply_async(args=(user_id, base_name, organisation_id, document_id))
+
+	return make_response({'task_id': task.id}, 202)
