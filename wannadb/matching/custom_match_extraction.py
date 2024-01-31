@@ -11,6 +11,7 @@ import logging
 import multiprocessing
 import pandas as pd
 import numpy as np
+import nltk
 import re
 import spacy
 import time
@@ -408,6 +409,9 @@ class WordNetSimilarityCustomMatchExtractor(BaseCustomMatchExtractor):
         # Set threshold for the score by which a match is classified as valid
         self.threshold = threshold
 
+        # Download wordnet, if not already done
+        nltk.download("wordnet")
+
     def __call__(
             self, nugget: InformationNugget, documents: List[Document]
     ) -> List[Tuple[Document, int, int]]:
@@ -434,6 +438,14 @@ class WordNetSimilarityCustomMatchExtractor(BaseCustomMatchExtractor):
         # Iterate over all unigrams for this query nugget and compute its wordnet entry
         for unigram_idx, nugget_unigram in enumerate(nugget_unigrams):
             nugget_syn = wordnet.synsets(nugget_unigram)
+
+            # This unigram might not have an entry
+            if len(nugget_syn) <= 0:
+                continue
+
+            # TODO: Maybe remove stop words because currently, we look at all words in the custom match, so also words
+            # TODO: like it or is, which will appear a lot in all documents and thus result in a lot of matches
+            # TODO: Or maybe compute final cosine similarity of the found span with the actual whole nugget
 
             # Iterate over all documents unigram-wise and compute their wordnet entry
             for doc in documents:
