@@ -70,6 +70,7 @@ class Signals:
 		self.feedback_request_to_ui = _Feedback("feedback_request_to_ui", user_id)
 		self.cache_db_to_ui = _Dump("cache_db_to_ui", user_id)
 		self.ordert_nuggets = _Nuggets("ordert_nuggets", user_id)
+		self.match_feedback = _MatchFeedback("match_feedback", user_id)
 
 	def to_json(self) -> dict[str, str]:
 		return {self.feedback.type: self.feedback.to_json(),
@@ -106,6 +107,14 @@ class Emitable(abc.ABC):
 	def emit(self, status: Any):
 		raise NotImplementedError
 
+class _MatchFeedback(Emitable):
+	def to_json(self):
+		if self.msg is None:
+			return {}
+		return json.loads(self.msg)
+
+	def emit(self, status: dict[str, Any]):
+		self.redis.set(self.type, json.dumps(status))
 
 class _State(Emitable):
 
@@ -125,7 +134,7 @@ class _Signal(Emitable):
 
 	def emit(self, status: float):
 		self.redis.set(self.type, str(status))
-
+		
 
 class _Error(Emitable):
 

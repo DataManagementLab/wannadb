@@ -8,7 +8,7 @@ from typing import Optional
 import wannadb
 from wannadb import resources
 from wannadb.configuration import Pipeline
-from wannadb.data.data import Attribute, Document, DocumentBase
+from wannadb.data.data import Attribute, Document, DocumentBase, InformationNugget
 from wannadb.data.signals import CachedDistanceSignal
 from wannadb.interaction import EmptyInteractionCallback, InteractionCallback
 from wannadb.matching.distance import SignalsMeanDistance
@@ -102,7 +102,46 @@ class WannaDB_WebAPI:
 				return
 		logger.error(f"Document \"{document_name}\" not found in document base!")
 		self.signals.error.emit(Exception(f"Document \"{document_name}\" not found in document base!"))
+	
 
+#### TODO to check from here ###
+	def getDocument(self,document_name):
+		for document in self.document_base.documents:
+					if document.name == document_name:
+						return document
+	
+	def confirm_nugget(self, nugget:str, document, start_index, end_index):
+		try:
+			if document.text.rfind(nugget, start_index, end_index) >= 0:
+				return True
+			else:
+				self.signals.error.emit(Exception("Nugget is not in the Text"))
+		except Exception as e:
+			logger.error(str(e))
+			self.signals.error.emit(e)
+			raise e
+	
+	def match_feedback(self, nugget, document_name, start_index = None, end_index = None):
+		logger.debug("match_feedback")
+		self.signals.status.emit("match_feedback")
+		if isinstance(nugget, str): 
+			document = self.getDocument(document_name)
+			if self.confirm_nugget(nugget, document,start_index, end_index):
+				self.signals.match_feedback.emit({
+						"message": "custom-match",
+						"document": document,
+						"start": start_index,
+						"end": end_index
+				})
+		else:
+			self.signals.match_feedback.emit({
+					"message": "is-match",
+					"nugget": nugget,
+					"not-a-match": None
+			})
+
+#### END here ###
+	
 	def create_document_base(self, documents: list[Document], attributes: list[Attribute], statistics: Statistics):
 		logger.debug("Called slot 'create_document_base'.")
 		self.signals.status.emit("create_document_base")
