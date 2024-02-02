@@ -251,6 +251,11 @@ class CustomSimilaritySpanExtractor(BaseCustomMatchExtractor):
 
                         start_index = doc.text.find(new_nugget)
                         end_index = start_index + len(new_nugget)
+
+                        # Safety check: nugget might potentially not be found
+                        if start_index < 0:
+                            continue
+
                         logger.info("extracted new nugget: " + new_nugget)
                         result.append((doc, start_index, end_index))
 
