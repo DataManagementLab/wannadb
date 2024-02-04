@@ -36,6 +36,7 @@ class WannaDB_WebAPI:
 		self._document_id: Optional[int] = None
 		self._document_base: Optional[DocumentBase] = None
 		self.user_id = user_id
+		self._feedback = None
 
 		self.signals = Signals(str(self.user_id))
 		self.signals.reset()
@@ -63,7 +64,18 @@ class WannaDB_WebAPI:
 			self.signals.error.emit(Exception("Cache db could not be initialized!"))
 			raise Exception("Cache db could not be initialized!")
 		logger.info("WannaDB_WebAPI initialized")
+	
 
+	@property
+	def feedback(self):
+		if self._feedback is None:
+			raise Exception("Feedback is not set!")
+		return self._feedback
+	
+	@feedback.setter
+	def feedback(self, value:dict):
+		self._feedback = value
+	
 	@property
 	def document_id(self):
 		if self._document_id is None:
@@ -103,44 +115,6 @@ class WannaDB_WebAPI:
 		logger.error(f"Document \"{document_name}\" not found in document base!")
 		self.signals.error.emit(Exception(f"Document \"{document_name}\" not found in document base!"))
 	
-
-#### TODO to check from here ###
-	def getDocument(self,document_name):
-		for document in self.document_base.documents:
-					if document.name == document_name:
-						return document
-	
-	def confirm_nugget(self, nugget:str, document, start_index, end_index):
-		try:
-			if document.text.rfind(nugget, start_index, end_index) >= 0:
-				return True
-			else:
-				self.signals.error.emit(Exception("Nugget is not in the Text"))
-		except Exception as e:
-			logger.error(str(e))
-			self.signals.error.emit(e)
-			raise e
-	
-	def match_feedback(self, nugget, document_name, start_index = None, end_index = None):
-		logger.debug("match_feedback")
-		self.signals.status.emit("match_feedback")
-		if isinstance(nugget, str): 
-			document = self.getDocument(document_name)
-			if self.confirm_nugget(nugget, document,start_index, end_index):
-				self.signals.match_feedback.emit({
-						"message": "custom-match",
-						"document": document,
-						"start": start_index,
-						"end": end_index
-				})
-		else:
-			self.signals.match_feedback.emit({
-					"message": "is-match",
-					"nugget": nugget,
-					"not-a-match": None
-			})
-
-#### END here ###
 	
 	def create_document_base(self, documents: list[Document], attributes: list[Attribute], statistics: Statistics):
 		logger.debug("Called slot 'create_document_base'.")
