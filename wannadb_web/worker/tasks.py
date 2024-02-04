@@ -1,12 +1,12 @@
 import logging
 import pickle
 import time
-from typing import Optional, Any
+from typing import Optional, Any, Union
 
 from celery import Task
 
 import wannadb.resources
-from wannadb.data.data import Document, Attribute
+from wannadb.data.data import Document, Attribute, DocumentBase, InformationNugget
 from wannadb.interaction import EmptyInteractionCallback
 from wannadb.resources import ResourceManager
 from wannadb.statistics import Statistics
@@ -250,3 +250,40 @@ class DocumentBaseGetOrdertNuggets(BaseTask):
 		api.load_document_base_from_bson()
 		api.get_ordert_nuggets(document_id)
 		# no need to update the document base
+
+
+def getDocument(document_name : str, document_base : DocumentBase):
+		for document in document_base.documents:
+					if document.name == document_name:
+						return document
+	
+def nugget_exist(nugget:str, document:Document, start_index:int, end_index:int):
+	if document.text.rfind(nugget, start_index, end_index) >= 0:
+			return True
+	else:
+			raise Exception("Nugget does not exist in the given Text")
+	
+
+def match_feedback(nugget:Union[str, InformationNugget] , document_name :str , document_base : DocumentBase, start_index :int = None, end_index:int = None):
+	logger.debug("match_feedback")
+	if isinstance(nugget, str):
+		document = getDocument(document_name,document_base)
+		if document is None:
+			logger.error("The document is missing in document base")
+			raise Exception("The document is missing in document base")
+		if start_index is None or end_index is None:
+			logger.error("Start-index or end-index are missing to find the custom nugget")
+			raise Exception("Start-index or end-index are missing to find the custom nugget")
+		elif nugget_exist(nugget, document,start_index, end_index):
+			return {
+					"message": "custom-match",
+					"document": document,
+					"start": start_index,
+					"end": end_index
+			}
+	else:
+		return {
+				"message": "is-match",
+				"nugget": nugget ,
+				"not-a-match": None
+		}
