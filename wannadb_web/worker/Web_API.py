@@ -191,6 +191,7 @@ class WannaDB_WebAPI:
 
 			logger.info(f"Document base loaded from BSON with id {document_id}.")
 			self.document_base = document_base
+			self.document_id = document_id
 
 		except Exception as e:
 			logger.error(str(e))
@@ -322,6 +323,17 @@ class WannaDB_WebAPI:
 			else:
 				logger.error("Attribute name does not exist!")
 				self.signals.error.emit(Exception("Attribute name does not exist!"))
+    
+	def update_attributes(self, attributes: list[Attribute]):
+		logger.debug("Called function 'update_attributes'.")
+		self.document_base.attributes.clear()
+		for attribute in attributes:
+			if attribute is None:
+				logger.info("Attribute name must not be empty and was thus ignored.")
+			else:
+				self.document_base.attributes.append(attribute)
+				self.sqLiteCacheDBWrapper.cache_db.create_table_by_name(attribute.name)
+				logger.debug(f"Attribute '{attribute.name}' added.")
 
 	def forget_matches_for_attribute(self, attribute: Attribute):
 		logger.debug("Called function 'forget_matches_for_attribute'.")
