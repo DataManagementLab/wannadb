@@ -160,6 +160,8 @@ class DocumentBaseAddAttributes(BaseTask):
 		api.load_document_base_from_bson()
 		api.add_attributes(attributes)
 		api.update_document_base_to_bson()
+		self.update(State.SUCCESS)
+		return self
 
 
 class DocumentBaseRemoveAttributes(BaseTask):
@@ -183,6 +185,8 @@ class DocumentBaseRemoveAttributes(BaseTask):
 		api.remove_attributes(attributes)
 		if api.signals.error.msg is None:
 			api.update_document_base_to_bson()
+			self.update(State.SUCCESS)
+			return self
 
 
 class DocumentBaseForgetMatches(BaseTask):
@@ -206,6 +210,8 @@ class DocumentBaseForgetMatches(BaseTask):
 		api.forget_matches()
 		if api.signals.error.msg is None:
 			api.update_document_base_to_bson()
+			self.update(State.SUCCESS)
+			return self
 
 
 class DocumentBaseForgetMatchesForAttribute(BaseTask):
@@ -221,6 +227,8 @@ class DocumentBaseForgetMatchesForAttribute(BaseTask):
 		api.forget_matches_for_attribute(attribute)
 		if api.signals.error.msg is None:
 			api.update_document_base_to_bson()
+			self.update(State.SUCCESS)
+			return self
 
 
 class DocumentBaseInteractiveTablePopulation(BaseTask):
@@ -236,6 +244,8 @@ class DocumentBaseInteractiveTablePopulation(BaseTask):
 		api.interactive_table_population()
 		if api.signals.error.msg is None:
 			api.update_document_base_to_bson()
+			self.update(State.SUCCESS)
+			return self
 
 
 class DocumentBaseGetOrderedNuggets(BaseTask):
@@ -250,14 +260,50 @@ class DocumentBaseGetOrderedNuggets(BaseTask):
 		api.load_document_base_from_bson()
 		api.get_ordert_nuggets(document_id)
 		# no need to update the document base
+		self.update(State.SUCCESS)
+		return self
 
 
-def getDocument(document_name : str, document_base : DocumentBase):
-		for document in document_base.documents:
-					if document.name == document_name:
-						return document
+
+
+
+class DocumentBaseConfirmNugget(BaseTask):
+	name = "DocumentBaseGetOrderedNuggets"
 	
-def nugget_exist(nugget:str, document:Document, start_index:int, end_index:int):
+	def run(self, user_id: int, base_name: str, organisation_id: int,
+	        document_id_for_nugget_x: int, nugget: Union[str, InformationNugget],
+	        start_index: int, end_index: int, interactive_call_task_id: str):
+		"""
+		:param user_id: user id
+		:param base_name: name of base document
+		:param organisation_id: organisation id of the document base
+		:param document_id_for_nugget_x: the document id for the document that gets a new nugget
+		:param nugget: the Nugget that gets confirmed
+		:param start_index: start of the nugget in the document
+		:param end_index: end of the nugget in the document
+		:param interactive_call_task_id: the same task id that's used for interactive call
+		"""
+		self._signals = Signals(interactive_call_task_id)
+		self._redis_client = RedisCache(str(self.request.id))
+		self.load()
+		
+		api = WannaDB_WebAPI(user_id, base_name, organisation_id)
+		api.load_document_base_from_bson()
+		
+		document_name, document_text = getDocuments([document_id_for_nugget_x], user_id)[0]
+		
+		document = Document(document_name, document_text)
+		
+		self._signals.match_feedback.emit(match_feedback(nugget, document, start_index, end_index))
+		# no need to update the document base the doc will be saved in the interactive call
+		if api.signals.error.msg is None:
+			api.update_document_base_to_bson()
+			self.update(State.SUCCESS)
+			return self
+		
+
+
+def nugget_exist(nugget: str, document: Document, start_index: int, end_index: int):
 	if document.text.rfind(nugget, start_index, end_index) >= 0:
 			return True
 	else:
