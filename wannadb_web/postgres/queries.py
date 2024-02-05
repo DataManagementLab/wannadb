@@ -143,7 +143,7 @@ def getDocument_by_name(document_name: str, organisation_id: int, user_id: int) 
 			Exception: if multiple documents with that name are found
 	"""
 
-	select_query = sql.SQL("""SELECT name,content,content_byte 
+	select_query = sql.SQL("""SELECT id,content,content_byte
 							 FROM documents d
 							 JOIN membership m ON d.organisationid = m.organisationid
 							 WHERE d.name = (%s) AND m.userid = (%s) AND m.organisationid = (%s)
@@ -152,13 +152,13 @@ def getDocument_by_name(document_name: str, organisation_id: int, user_id: int) 
 	result = execute_query(select_query, (document_name, user_id, organisation_id,))
 	if len(result) == 1:
 		document = result[0]
-		name = document[0]
+		id = document[0]
 		if document[1]:
 			content = document[1]
-			return str(name), str(content)
+			return str(id), str(content)
 		elif document[2]:
 			content = document[2]
-			return str(name), bytes(content)
+			return str(id), bytes(content)
 	elif len(result) > 1:
 		raise Exception("Multiple documents with the same name found")
 	raise Exception("No document with that name found")
@@ -200,13 +200,37 @@ def getDocumentsForOrganization(organisation_id: int):
 	for document in result:
 		id = document[0]
 		name = document[1]
-		content = ''
-		if document[2]:
-			content = document[2]
+		if document[2] == None:
+			continue
+		content = document[2]
 		doc_array.append({
 			"id": id,
 			"name": name,
 			"content": content
+		})
+	return doc_array
+
+def getDocumentBaseForOrganization(organisation_id: int):
+	select_query = sql.SQL("""SELECT id, name,content,content_byte
+						 FROM documents
+						 WHERE organisationid = (%s)
+						 """)
+	result = execute_query(select_query, (organisation_id,))
+
+	if result is None or len(result) == 0:
+		return []
+
+	doc_array = []
+
+	for document in result:
+		id = document[0]
+		name = document[1]
+		if document[3] == None:
+			continue
+		content = document[3]
+		doc_array.append({
+			"id": id,
+			"name": name,
 		})
 	return doc_array
 
