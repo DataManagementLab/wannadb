@@ -39,7 +39,8 @@ from wannadb.statistics import Statistics
 from wannadb_web.Redis.RedisCache import RedisCache
 from wannadb_web.util import tokenDecode
 from wannadb_web.worker.data import Signals
-from wannadb_web.worker.tasks import CreateDocumentBase, BaseTask, DocumentBaseGetOrderedNuggets
+from wannadb_web.worker.tasks import CreateDocumentBase, BaseTask, DocumentBaseAddAttributes, DocumentBaseLoad, \
+	DocumentBaseUpdateAttributes, DocumentBaseGetOrderedNuggets
 
 core_routes = Blueprint('core_routes', __name__, url_prefix='/core')
 
@@ -47,19 +48,15 @@ logger = logging.getLogger(__name__)
 
 
 @core_routes.route('/document_base', methods=['POST'])
-def create_document():
+def create_document_base():
 	"""
     Endpoint for creating a document base.
 
 	This endpoint is used to create a document base from a list of document ids and a list of attributes.
 
-	Example Header:
-	{
-		"Authorization": "your_authorization_token"
-	}
-
-    Example JSON Payload:
+    Example Form Payload:
     {
+		"authorization": "your_authorization_token"
         "organisationId": "your_organisation_id",
         "baseName": "your_document_base_name",
         "document_ids": "1, 2, 3",
@@ -67,7 +64,6 @@ def create_document():
     }
     """
 	form = request.form
-	# authorization = request.headers.get("authorization")
 	authorization = form.get("authorization")
 	organisation_id: Optional[int] = form.get("organisationId")
 	base_name = form.get("baseName")
@@ -93,30 +89,55 @@ def create_document():
 
 	return make_response({'task_id': task.id}, 202)
 
-
-@core_routes.route('/document_base/attributes', methods=['UPDATE'])
-def document_base():
+@core_routes.route('/document_base/load', methods=['POST'])
+def load_document_base():
 	"""
-    Endpoint for update a document base.
+    Endpoint for loading a document base.
 
-	This endpoint is used to update a document base from a list of attributes.
+	This endpoint is used to load a document base from a name and an organisation id.
 
-	Example Header:
-	{
-		"Authorization": "your_authorization_token"
-	}
-
-    Example JSON Payload:
+    Example Form Payload:
     {
+		"authorization": "your_authorization_token"
         "organisationId": "your_organisation_id",
         "baseName": "your_document_base_name",
-        "attributes": [
-        "plane","car","bike"
-        ]
     }
     """
 	form = request.form
-	# authorization = request.headers.get("authorization")
+	authorization = form.get("authorization")
+	organisation_id: Optional[int] = form.get("organisationId")
+	base_name = form.get("baseName")
+	if (organisation_id is None or base_name is None
+			or authorization is None):
+		return make_response({"error": "missing parameters"}, 400)
+	_token = tokenDecode(authorization)
+
+	if _token is False:
+		return make_response({"error": "invalid token"}, 401)
+
+	user_id = _token.id
+
+	task = DocumentBaseLoad().apply_async(args=(user_id, base_name, organisation_id))
+
+	return make_response({'task_id': task.id}, 202)
+
+
+@core_routes.route('/document_base/attributes/add', methods=['POST'])
+def document_base_attribute_add():
+	"""
+    Endpoint for add attributes to a document base.
+
+	This endpoint is used to add attributes to a document base from a list of attributes.
+
+    Example Form Payload:
+    {
+		"authorization": "your_authorization_token"
+        "organisationId": "your_organisation_id",
+        "baseName": "your_document_base_name",
+        "attributes": "plane,car,bike"
+    }
+    """
+	form = request.form
 	authorization = form.get("authorization")
 	organisation_id = form.get("organisationId")
 	base_name = form.get("baseName")
@@ -129,6 +150,8 @@ def document_base():
 	if _token is False:
 		return make_response({"error": "invalid token"}, 401)
 
+	attributes_strings = attributes_string.split(",")
+
 	attributes = []
 	for att in attributes_string:
 		attributes.append(Attribute(att))
@@ -136,8 +159,56 @@ def document_base():
 	statistics = Statistics(False)
 	user_id = _token.id
 
-	attributesDump = pickle.dumps(attributes)
-	statisticsDump = pickle.dumps(statistics)
+	#attributesDump = pickle.dumps(attributes)
+	#statisticsDump = pickle.dumps(statistics)
+	task = DocumentBaseAddAttributes().apply_async(args=(user_id, attributes_strings,
+												  base_name, organisation_id))
+
+	return make_response({'task_id': task.id}, 202)
+
+
+@core_routes.route('/document_base/attributes/update', methods=['POST'])
+def document_base_attribute_update():
+	"""
+    Endpoint for update the attributes of a document base.
+
+	This endpoint is used to update the attributes of a document base from a list of attributes.
+
+    Example Form Payload:
+    {
+		"authorization": "your_authorization_token"
+        "organisationId": "your_organisation_id",
+        "baseName": "your_document_base_name",
+        "attributes": "plane,car,bike"
+    }
+    """
+	form = request.form
+	authorization = form.get("authorization")
+	organisation_id = form.get("organisationId")
+	base_name = form.get("baseName")
+	attributes_string = form.get("attributes")
+	if (organisation_id is None or base_name is None or attributes_string is None
+			or authorization is None):
+		return make_response({"error": "missing parameters"}, 400)
+	_token = tokenDecode(authorization)
+
+	if _token is False:
+		return make_response({"error": "invalid token"}, 401)
+
+	attributes_string = attributes_string.split(",")
+
+	#attributes = []
+	#for att in attributes_string:
+	#	attributes.append(Attribute(att))
+	#
+	#statistics = Statistics(False)
+ 
+	user_id = _token.id
+
+	task = DocumentBaseUpdateAttributes().apply_async(args=(user_id, attributes_string,
+												  base_name, organisation_id))
+
+	return make_response({'task_id': task.id}, 202)
 
 
 # @core_routes.route('/longtask', methods=['POST'])
@@ -147,23 +218,37 @@ def document_base():
 # 															task_id=task.id)}
 
 
-@core_routes.route('/status/<task_id>', methods=['GET'])
-def task_status(task_id: str):
+@core_routes.route('/status/<token>/<task_id>', methods=['GET'])
+def task_status(token: str,task_id: str):
+ 
+	_token = tokenDecode(token)
+
+	if _token is False:
+		return make_response({"error": "invalid token"}, 401)
+	user_id = _token.id
+ 
 	task: AsyncResult = BaseTask().AsyncResult(task_id=task_id)
 	status = task.status
 	if status == "FAILURE":
-		return make_response({"state": "FAILURE", "meta": Signals(task_id).to_json()}, 500)
+		return make_response({"state": "FAILURE", "meta": Signals(user_id).to_json()}, 500)
 	if status == "SUCCESS":
-		return make_response({"state": "SUCCESS", "meta": Signals(task_id).to_json()}, 200)
+		signals = Signals(user_id).to_json()
+		return make_response({"state": "SUCCESS", "meta": signals}, 200)
 	if status is None:
 		return make_response({"error": "task not found"}, 500)
-	return make_response({"state": task.status, "meta": Signals(task_id).to_json()}, 202)
+
+	signals = Signals(user_id).to_json()
+	return make_response({"state": task.status, "meta": signals}, 202)
 
 
 @core_routes.route('/status/<task_id>', methods=['POST'])
 def task_update(task_id: str):
-	redis_client = RedisCache(task_id).redis_client
-	redis_client.set("input", "test")
+	signals = Signals(task_id)
+
+	## todo: hier muss feedback emitted werden im format:
+	## {	------------------	}
+
+	signals.feedback_request_from_ui.emit(request.json.get("feedback"))
 
 
 ## todo: renaming of the endpoint
@@ -196,12 +281,12 @@ def sort_nuggets():
 	if organisation_id is None or base_name is None or document_id is None or authorization is None:
 		return make_response({"error": "missing parameters"}, 400)
 	_token = tokenDecode(authorization)
-
+	
 	if _token is False:
 		return make_response({"error": "invalid token"}, 401)
-
+	
 	user_id = _token.id
-
+	
 	task = DocumentBaseGetOrderedNuggets().apply_async(args=(user_id, base_name, organisation_id, document_id))
-
+	
 	return make_response({'task_id': task.id}, 202)
