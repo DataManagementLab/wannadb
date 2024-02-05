@@ -39,7 +39,7 @@ from wannadb.statistics import Statistics
 from wannadb_web.Redis.RedisCache import RedisCache
 from wannadb_web.util import tokenDecode
 from wannadb_web.worker.data import Signals
-from wannadb_web.worker.tasks import CreateDocumentBase, BaseTask, DocumentBaseGetOrdertNuggets
+from wannadb_web.worker.tasks import CreateDocumentBase, BaseTask, DocumentBaseGetOrderedNuggets
 
 core_routes = Blueprint('core_routes', __name__, url_prefix='/core')
 
@@ -202,6 +202,6 @@ def sort_nuggets():
 
 	user_id = _token.id
 
-	task = DocumentBaseGetOrdertNuggets().apply_async(args=(user_id, base_name, organisation_id, document_id))
+	task = DocumentBaseGetOrderedNuggets().apply_async(args=(user_id, base_name, organisation_id, document_id))
 
 	return make_response({'task_id': task.id}, 202)
