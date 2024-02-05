@@ -310,10 +310,10 @@ def nugget_exist(nugget: str, document: Document, start_index: int, end_index: i
 			raise Exception("Nugget does not exist in the given Text")
 	
 
-def match_feedback(nugget:Union[str, InformationNugget] , document_name :str , document_base : DocumentBase, start_index :int = None, end_index:int = None):
+def match_feedback(nugget: Union[str, InformationNugget], document: Document,
+                   start_index: int = None, end_index: int = None):
 	logger.debug("match_feedback")
 	if isinstance(nugget, str):
-		document = getDocument(document_name,document_base)
 		if document is None:
 			logger.error("The document is missing in document base")
 			raise Exception("The document is missing in document base")
