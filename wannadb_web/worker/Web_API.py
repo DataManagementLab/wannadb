@@ -52,9 +52,15 @@ class WannaDB_WebAPI:
 		def interaction_callback_fn(pipeline_element_identifier, feedback_request):
 			feedback_request["identifier"] = pipeline_element_identifier
 			self.signals.feedback_request_to_ui.emit(feedback_request)
-			logger.info("Waiting for feedback...")
-			time.sleep(2)
-
+			
+			start_time = time.time()
+			while (time.time() - start_time) < 300:
+				msg = self.signals.match_feedback.msg
+				if msg is not None:
+					return msg
+				time.sleep(2)
+			raise TimeoutError("no match_feedback in time provided")
+			
 		self.interaction_callback = InteractionCallback(interaction_callback_fn)
 
 		if wannadb.resources.MANAGER is None:
