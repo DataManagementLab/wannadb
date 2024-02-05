@@ -22,7 +22,7 @@ logger = logging.getLogger()
 
 class InitManager(Task):
 	name = "InitManager"
-
+	
 	def run(self, *args, **kwargs):
 		ResourceManager()
 		if wannadb.resources.MANAGER is None:
@@ -35,13 +35,13 @@ class BaseTask(Task):
 	name = "BaseTask"
 	_signals: Optional[Signals] = None
 	_redis_client: Optional[RedisCache] = None
-
+	
 	def __init__(self):
 		super().__init__()
-
+	
 	def run(self, *args, **kwargs):
 		raise NotImplementedError("BaseTask is abstract")
-
+	
 	@staticmethod
 	def load():
 		if wannadb.resources.MANAGER is None:
@@ -49,34 +49,34 @@ class BaseTask(Task):
 			BaseTask.load()
 			return
 		logging.info("loaded")
-
+	
 	def update(self,
-			   state: State,
-			   meta: Optional[dict[str, Any]] = None,
-			   ) -> None:
+	           state: State,
+	           meta: Optional[dict[str, Any]] = None,
+	           ) -> None:
 		super().update_state(state=state.value, meta=meta)
-
+	
 	def update_state(self,
-					 task_id: Optional[str] = None,
-					 state: Optional[str] = None,
-					 meta: Any = None,
-					 **kwargs: Any
-					 ) -> None:
+	                 task_id: Optional[str] = None,
+	                 state: Optional[str] = None,
+	                 meta: Any = None,
+	                 **kwargs: Any
+	                 ) -> None:
 		raise NotImplementedError("user update() instead")
-
+	
 	def get_new_input(self):
 		if self._redis_client is None:
 			raise RuntimeError("self._redis_client is None!")
 		_input = self._redis_client.get("input")
 		if _input is not None:
 			pass
-
+		
 		return _input
 
 
 class TestTask(BaseTask):
 	name = "TestTask"
-
+	
 	def run(self, *args, **kwargs):
 		super().run()
 		self.update(state=State.PENDING)
@@ -92,9 +92,9 @@ class TestTask(BaseTask):
 
 class CreateDocumentBase(BaseTask):
 	name = "CreateDocumentBase"
-
+	
 	def run(self, user_id: int, document_ids: list[int], attributes_strings: list[str], statistics_dump: bytes,
-			base_name: str, organisation_id: int):
+	        base_name: str, organisation_id: int):
 		self.load()
 		attributes: list[Attribute] = []
 		statistics: Statistics = pickle.loads(statistics_dump)
@@ -106,23 +106,23 @@ class CreateDocumentBase(BaseTask):
 				logger.error("Attribute names must be unique!")
 				raise Exception("Attribute names must be unique!")
 			attributes.append(Attribute(attribute_string))
-
+		
 		"""
 		init api
 		"""
 		api = WannaDB_WebAPI(user_id, base_name, organisation_id)
-
+		
 		"""
 		Creating document base
 		"""
 		if not isinstance(attributes[0], Attribute):
 			self.update(State.ERROR)
 			raise Exception("Invalid attributes")
-
+		
 		if not isinstance(statistics, Statistics):
 			self.update(State.ERROR)
 			raise Exception("Invalid statistics")
-
+		
 		docs = getDocuments(document_ids, user_id)
 		self.update(State.PENDING)
 		documents: list[Document] = []
@@ -132,9 +132,9 @@ class CreateDocumentBase(BaseTask):
 		else:
 			self.update(State.ERROR)
 			raise Exception("No documents found")
-
+		
 		api.create_document_base(documents, attributes, statistics)
-
+		
 		api.save_document_base_to_bson()
 		self.update(State.SUCCESS)
 		return self
@@ -142,11 +142,11 @@ class CreateDocumentBase(BaseTask):
 
 class DocumentBaseAddAttributes(BaseTask):
 	name = "DocumentBaseAddAttributes"
-
+	
 	def run(self, user_id: int, attributes_strings: list[str], base_name: str, organisation_id: int):
 		self.load()
 		attributes: list[Attribute] = []
-
+		
 		for attribute_string in attributes_strings:
 			if attribute_string == "":
 				logger.error("Attribute names cannot be empty!")
@@ -155,7 +155,7 @@ class DocumentBaseAddAttributes(BaseTask):
 				logger.error("Attribute names must be unique!")
 				raise Exception("Attribute names must be unique!")
 			attributes.append(Attribute(attribute_string))
-
+		
 		api = WannaDB_WebAPI(user_id, base_name, organisation_id)
 		api.load_document_base_from_bson()
 		api.add_attributes(attributes)
@@ -166,11 +166,11 @@ class DocumentBaseAddAttributes(BaseTask):
 
 class DocumentBaseRemoveAttributes(BaseTask):
 	name = "DocumentBaseRemoveAttributes"
-
+	
 	def run(self, user_id: int, attributes_strings: list[str], base_name: str, organisation_id: int):
 		self.load()
 		attributes: list[Attribute] = []
-
+		
 		for attribute_string in attributes_strings:
 			if attribute_string == "":
 				logger.error("Attribute names cannot be empty!")
@@ -179,7 +179,7 @@ class DocumentBaseRemoveAttributes(BaseTask):
 				logger.error("Attribute names must be unique!")
 				raise Exception("Attribute names must be unique!")
 			attributes.append(Attribute(attribute_string))
-
+		
 		api = WannaDB_WebAPI(user_id, base_name, organisation_id)
 		api.load_document_base_from_bson()
 		api.remove_attributes(attributes)
@@ -191,11 +191,11 @@ class DocumentBaseRemoveAttributes(BaseTask):
 
 class DocumentBaseForgetMatches(BaseTask):
 	name = "DocumentBaseForgetMatches"
-
+	
 	def run(self, user_id: int, attributes_strings: list[str], base_name: str, organisation_id: int):
 		self.load()
 		attributes: list[Attribute] = []
-
+		
 		for attribute_string in attributes_strings:
 			if attribute_string == "":
 				logger.error("Attribute names cannot be empty!")
@@ -204,7 +204,7 @@ class DocumentBaseForgetMatches(BaseTask):
 				logger.error("Attribute names must be unique!")
 				raise Exception("Attribute names must be unique!")
 			attributes.append(Attribute(attribute_string))
-
+		
 		api = WannaDB_WebAPI(user_id, base_name, organisation_id)
 		api.load_document_base_from_bson()
 		api.forget_matches()
@@ -216,12 +216,12 @@ class DocumentBaseForgetMatches(BaseTask):
 
 class DocumentBaseForgetMatchesForAttribute(BaseTask):
 	name = "DocumentBaseForgetMatches"
-
+	
 	def run(self, user_id: int, attribute_string: str, base_name: str, organisation_id: int):
 		self.load()
-
+		
 		attribute = (Attribute(attribute_string))
-
+		
 		api = WannaDB_WebAPI(user_id, base_name, organisation_id)
 		api.load_document_base_from_bson()
 		api.forget_matches_for_attribute(attribute)
@@ -233,12 +233,12 @@ class DocumentBaseForgetMatchesForAttribute(BaseTask):
 
 class DocumentBaseInteractiveTablePopulation(BaseTask):
 	name = "DocumentBaseInteractiveTablePopulation"
-
+	
 	def run(self, user_id: int, base_name: str, organisation_id: int):
 		self._signals = Signals(str(self.request.id))
 		self._redis_client = RedisCache(str(self.request.id))
 		self.load()
-
+		
 		api = WannaDB_WebAPI(user_id, base_name, organisation_id)
 		api.load_document_base_from_bson()
 		api.interactive_table_population()
@@ -250,21 +250,18 @@ class DocumentBaseInteractiveTablePopulation(BaseTask):
 
 class DocumentBaseGetOrderedNuggets(BaseTask):
 	name = "DocumentBaseGetOrderedNuggets"
-
+	
 	def run(self, user_id: int, base_name: str, organisation_id: int, document_id: int):
 		self._signals = Signals(str(self.request.id))
 		self._redis_client = RedisCache(str(self.request.id))
 		self.load()
-
+		
 		api = WannaDB_WebAPI(user_id, base_name, organisation_id)
 		api.load_document_base_from_bson()
 		api.get_ordert_nuggets(document_id)
 		# no need to update the document base
 		self.update(State.SUCCESS)
 		return self
-
-
-
 
 
 class DocumentBaseConfirmNugget(BaseTask):
@@ -300,15 +297,14 @@ class DocumentBaseConfirmNugget(BaseTask):
 			api.update_document_base_to_bson()
 			self.update(State.SUCCESS)
 			return self
-		
 
 
 def nugget_exist(nugget: str, document: Document, start_index: int, end_index: int):
 	if document.text.rfind(nugget, start_index, end_index) >= 0:
-			return True
+		return True
 	else:
-			raise Exception("Nugget does not exist in the given Text")
-	
+		raise Exception("Nugget does not exist in the given Text")
+
 
 def match_feedback(nugget: Union[str, InformationNugget], document: Document,
                    start_index: int = None, end_index: int = None):
@@ -320,16 +316,16 @@ def match_feedback(nugget: Union[str, InformationNugget], document: Document,
 		if start_index is None or end_index is None:
 			logger.error("Start-index or end-index are missing to find the custom nugget")
 			raise Exception("Start-index or end-index are missing to find the custom nugget")
-		elif nugget_exist(nugget, document,start_index, end_index):
+		elif nugget_exist(nugget, document, start_index, end_index):
 			return {
-					"message": "custom-match",
-					"document": document,
-					"start": start_index,
-					"end": end_index
+				"message": "custom-match",
+				"document": document,
+				"start": start_index,
+				"end": end_index
 			}
 	else:
 		return {
-				"message": "is-match",
-				"nugget": nugget ,
-				"not-a-match": None
+			"message": "is-match",
+			"nugget": nugget,
+			"not-a-match": None
 		}
