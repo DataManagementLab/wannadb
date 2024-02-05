@@ -136,7 +136,27 @@ class CreateDocumentBase(BaseTask):
 		api.create_document_base(documents, attributes, statistics)
 		
 		api.save_document_base_to_bson()
-		self.update(State.SUCCESS)
+		if api.signals.error.msg is None:
+			api.update_document_base_to_bson()
+			self.update(State.SUCCESS)
+			return self
+		self.update(State.ERROR)
+		return self
+
+
+class DocumentBaseLoad(BaseTask):
+	name = "DocumentBaseLoad"
+
+	def run(self, user_id: int, base_name: str, organisation_id: int):
+		self.load()
+		api = WannaDB_WebAPI(user_id, base_name, organisation_id)
+		api.load_document_base_from_bson()
+		#self.update(State.SUCCESS)
+		#return self
+		if api.signals.error.msg is None:
+			self.update(State.SUCCESS)
+			return self
+		self.update(State.ERROR)
 		return self
 
 
@@ -159,10 +179,38 @@ class DocumentBaseAddAttributes(BaseTask):
 		api = WannaDB_WebAPI(user_id, base_name, organisation_id)
 		api.load_document_base_from_bson()
 		api.add_attributes(attributes)
-		api.update_document_base_to_bson()
-		self.update(State.SUCCESS)
+		if api.signals.error.msg is None:
+			api.update_document_base_to_bson()
+			self.update(State.SUCCESS)
+			return self
+		self.update(State.ERROR)
 		return self
 
+class DocumentBaseUpdateAttributes(BaseTask):
+	name = "DocumentBaseAddAttributes"
+
+	def run(self, user_id: int, attributes_strings: list[str], base_name: str, organisation_id: int):
+		self.load()
+		attributes: list[Attribute] = []
+
+		for attribute_string in attributes_strings:
+			if attribute_string == "":
+				logger.error("Attribute names cannot be empty!")
+				raise Exception("Attribute names cannot be empty!")
+			if attribute_string in [attribute.name for attribute in attributes]:
+				logger.error("Attribute names must be unique!")
+				raise Exception("Attribute names must be unique!")
+			attributes.append(Attribute(attribute_string))
+
+		api = WannaDB_WebAPI(user_id, base_name, organisation_id)
+		api.load_document_base_from_bson()
+		api.update_attributes(attributes)
+		if api.signals.error.msg is None:
+			api.update_document_base_to_bson()
+			self.update(State.SUCCESS)
+			return self
+		self.update(State.ERROR)
+		return self
 
 class DocumentBaseRemoveAttributes(BaseTask):
 	name = "DocumentBaseRemoveAttributes"
@@ -187,6 +235,8 @@ class DocumentBaseRemoveAttributes(BaseTask):
 			api.update_document_base_to_bson()
 			self.update(State.SUCCESS)
 			return self
+		self.update(State.ERROR)
+		return self
 
 
 class DocumentBaseForgetMatches(BaseTask):
@@ -212,6 +262,8 @@ class DocumentBaseForgetMatches(BaseTask):
 			api.update_document_base_to_bson()
 			self.update(State.SUCCESS)
 			return self
+		self.update(State.ERROR)
+		return self
 
 
 class DocumentBaseForgetMatchesForAttribute(BaseTask):
@@ -229,6 +281,8 @@ class DocumentBaseForgetMatchesForAttribute(BaseTask):
 			api.update_document_base_to_bson()
 			self.update(State.SUCCESS)
 			return self
+		self.update(State.ERROR)
+		return self
 
 
 class DocumentBaseInteractiveTablePopulation(BaseTask):
