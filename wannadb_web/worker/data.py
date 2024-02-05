@@ -68,12 +68,14 @@ class Signals:
 		self.document_base_to_ui = _DocumentBase("document_base_to_ui", user_id)
 		self.statistics = _Statistics("statistics_to_ui", user_id)
 		self.feedback_request_to_ui = _Feedback("feedback_request_to_ui", user_id)
+		self.feedback_request_from_ui = _Feedback("feedback_request_from_ui", user_id)
 		self.cache_db_to_ui = _Dump("cache_db_to_ui", user_id)
 		self.ordert_nuggets = _Nuggets("ordert_nuggets", user_id)
 		self.match_feedback = _MatchFeedback("match_feedback", user_id)
 	
 	def to_json(self) -> dict[str, str]:
-		return {self.feedback.type: self.feedback.to_json(),
+		return {"user_id": self.__user_id,
+				self.feedback.type: self.feedback.to_json(),
 		        self.error.type: self.error.to_json(),
 		        self.status.type: self.status.to_json(),
 		        self.finished.type: self.finished.to_json(),
