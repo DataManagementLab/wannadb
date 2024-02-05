@@ -238,8 +238,8 @@ class DocumentBaseInteractiveTablePopulation(BaseTask):
 			api.update_document_base_to_bson()
 
 
-class DocumentBaseGetOrdertNuggets(BaseTask):
-	name = "DocumentBaseGetOrdertNuggets"
+class DocumentBaseGetOrderedNuggets(BaseTask):
+	name = "DocumentBaseGetOrderedNuggets"
 
 	def run(self, user_id: int, base_name: str, organisation_id: int, document_id: int):
 		self._signals = Signals(str(self.request.id))
