@@ -107,12 +107,22 @@ class Emitable(abc.ABC):
 	def emit(self, status: Any):
 		raise NotImplementedError
 
+
 class _MatchFeedback(Emitable):
+	
+	@property
+	def msg(self):
+		msg = self.redis.get(self.type)
+		if msg is None:
+			return None
+		m: dict[str, Any] = json.loads(msg)
+		return m
+	
 	def to_json(self):
 		if self.msg is None:
 			return {}
 		return json.loads(self.msg)
-
+	
 	def emit(self, status: dict[str, Any]):
 		self.redis.set(self.type, json.dumps(status))
 
