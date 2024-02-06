@@ -237,6 +237,9 @@ class CustomSimilaritySpanExtractor(BaseCustomMatchExtractor):
         nugget_tokens = [token for token in self.nlp(nugget.text) if token.text.strip() != ""]
         result = []
 
+        # Potential preprocessing
+        documents = self.preprocess_documents(documents)
+
         for doc in documents:
             document_tokens = [token for token in self.nlp(doc.text)]
 
@@ -256,7 +259,6 @@ class CustomSimilaritySpanExtractor(BaseCustomMatchExtractor):
                         if start_index < 0:
                             continue
 
-                        logger.info("extracted new nugget: " + new_nugget)
                         result.append((doc, start_index, end_index))
 
         return result
@@ -448,9 +450,7 @@ class WordNetSimilarityCustomMatchExtractor(BaseCustomMatchExtractor):
             if len(nugget_syn) <= 0:
                 continue
 
-            # TODO: Maybe remove stop words because currently, we look at all words in the custom match, so also words
-            # TODO: like it or is, which will appear a lot in all documents and thus result in a lot of matches
-            # TODO: Or maybe compute final cosine similarity of the found span with the actual whole nugget
+            # TODO: Maybe remove stop words
 
             # Iterate over all documents unigram-wise and compute their wordnet entry
             for doc in documents:
@@ -572,14 +572,6 @@ class FaissSemanticSimilarityExtractor(BaseCustomMatchExtractor):
         query_nugget_split = nugget.text.split()
         query_nugget_ngram_length = len(query_nugget_split)
 
-        """
-        BELONGS TO OLD VERSION BELOW
-        
-        potential_ngram_tuple_idx = [
-            (i, i + query_nugget_ngram_length) for i in range(-query_nugget_ngram_length + 1, 1)
-        ]
-        """
-
         # Get the embeddings of each 1gram of the potential ngram query nugget. If the query nugget in itself
         # is already an onegram, this corresponds just to query_vector
         query_nugget_embeddings = [
@@ -622,26 +614,5 @@ class FaissSemanticSimilarityExtractor(BaseCustomMatchExtractor):
                 doc_start_idx = doc.text.find(potential_match)
                 doc_end_idx = doc_start_idx + len(potential_match)
                 matches.append((doc, doc_start_idx, doc_end_idx))
-
-            """
-            OLD VERSION; MIGHT STILL TRY OUT
-            
-            # Try to match it to the ngram length of the query
-            for (ngram_idx_1, ngram_idx_2) in potential_ngram_tuple_idx:
-                potential_ngram = doc_text_split[pos_in_doc + ngram_idx_1: pos_in_doc + ngram_idx_2]
-
-                # If it is within the bounds of the document
-                if len(potential_ngram) == query_nugget_ngram_length:
-                    potential_match = " ".join(potential_ngram)
-                    potential_match_embed = self.embedding_model.encode([potential_match])
-
-                    # If some distance is exceeded, append it to the list of matches
-                    if self.distance(query_vector[0], potential_match_embed[0]) > self.threshold:
-
-                        # Get the index of the match in the document
-                        doc_start_idx = doc.text.find(potential_match)
-                        doc_end_idx = doc_start_idx + len(potential_match)
-                        matches.append((doc, doc_start_idx, doc_end_idx))
-            """
 
         return matches
