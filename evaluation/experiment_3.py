@@ -32,6 +32,8 @@ DATASETS = [("aviation", aviation), ("nobel", nobel)]
 
 RESULTS_FILENAME = r"exp-3.json"
 
+# NOTE: If the FAISS extractor is to be used, this needs to be placed into the main method and take the read
+# document base as parameter, ideally only once while the document base is first loaded
 USED_EXTRACTOR = DummyCustomMatchExtractor()
 
 
