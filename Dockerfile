@@ -17,6 +17,9 @@ RUN apt-get update \
 RUN mkdir /home/wannadb
 WORKDIR /home/wannadb
 
+# update Pip
+RUN pip install --upgrade pip
+
 # install torch
 RUN pip install --use-pep517 torch==1.10.0
 
