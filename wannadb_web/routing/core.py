@@ -31,9 +31,8 @@ import logging.config
 import pickle
 from typing import Optional
 
-from celery.result import AsyncResult
 from flask import Blueprint, make_response, request
-
+from celery.result import AsyncResult
 from wannadb.data.data import Attribute
 from wannadb.statistics import Statistics
 from wannadb_web.Redis.RedisCache import RedisCache
