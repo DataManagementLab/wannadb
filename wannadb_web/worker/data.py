@@ -205,6 +205,10 @@ class _Feedback(Emitable):
 		return json.loads(self.msg)
 	
 	def emit(self, status: dict[str, Any]):
+		print("Status: " + str(status))
+		for key, value in status.items():
+			if isinstance(value, Attribute):
+				status[key] = value.toJSON()
 		self.redis.set(self.type, json.dumps(status))
 
 

@@ -247,9 +247,11 @@ class Pipeline(BaseConfigurableElement):
         logger.info("Execute the pipeline.")
         tick: float = time.time()
         status_callback("Running the pipeline...", -1)
+        
 
-        for ix, pipeline_element in enumerate(self._pipeline_elements):
-            pipeline_element(document_base, interaction_callback, status_callback, statistics[f"pipeline-element-{ix}"])
+        for i, pipeline_element in enumerate(self._pipeline_elements):
+            print(f"Running pipeline element {pipeline_element}...")
+            pipeline_element(document_base, interaction_callback, status_callback, statistics[f"pipeline-element-{str(i)}"])
 
         status_callback("Running the pipeline...", 1)
         tack: float = time.time()
