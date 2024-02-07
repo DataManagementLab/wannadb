@@ -38,8 +38,10 @@ from wannadb.statistics import Statistics
 from wannadb_web.Redis.RedisCache import RedisCache
 from wannadb_web.util import tokenDecode
 from wannadb_web.worker.data import Signals
+
 from wannadb_web.worker.tasks import CreateDocumentBase, BaseTask, DocumentBaseAddAttributes, DocumentBaseInteractiveTablePopulation, DocumentBaseLoad, \
 	DocumentBaseUpdateAttributes, DocumentBaseGetOrderedNuggets
+
 
 core_routes = Blueprint('core_routes', __name__, url_prefix='/core')
 
@@ -90,6 +92,7 @@ def create_document_base():
 
 @core_routes.route('/document_base/load', methods=['POST'])
 def load_document_base():
+
 	"""
     Endpoint for loading a document base.
 
@@ -184,6 +187,7 @@ def document_base_attribute_add():
 
 	attributes_strings = attributes_string.split(",")
 
+
 	attributes = []
 	for att in attributes_string:
 		attributes.append(Attribute(att))
@@ -197,7 +201,6 @@ def document_base_attribute_add():
 												  base_name, organisation_id))
 
 	return make_response({'task_id': task.id}, 202)
-
 
 @core_routes.route('/document_base/attributes/update', methods=['POST'])
 def document_base_attribute_update():
@@ -322,3 +325,4 @@ def sort_nuggets():
 	task = DocumentBaseGetOrderedNuggets().apply_async(args=(user_id, base_name, organisation_id, document_id))
 	
 	return make_response({'task_id': task.id}, 202)
+

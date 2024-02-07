@@ -144,6 +144,7 @@ def getDocument_by_name(document_name: str, organisation_id: int, user_id: int) 
 	"""
 
 	select_query = sql.SQL("""SELECT id,content,content_byte
+
 							 FROM documents d
 							 JOIN membership m ON d.organisationid = m.organisationid
 							 WHERE d.name = (%s) AND m.userid = (%s) AND m.organisationid = (%s)
@@ -211,8 +212,10 @@ def getDocumentsForOrganization(organisation_id: int):
 	return doc_array
 
 def getDocumentBaseForOrganization(organisation_id: int):
+
 	select_query = sql.SQL("""SELECT id, name,content,content_byte
 						 FROM documents
+
 						 WHERE organisationid = (%s)
 						 """)
 	result = execute_query(select_query, (organisation_id,))

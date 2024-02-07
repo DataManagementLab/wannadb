@@ -54,6 +54,7 @@ def document_base_to_json(document_base: DocumentBase):
 		'msg': {"attributes ": [attribute.name for attribute in document_base.attributes],
 		        "nuggets": [nugget_to_json(nugget) for nugget in document_base.nuggets]
 		        }
+
 	}
 
 
@@ -76,6 +77,7 @@ class Signals:
 	def to_json(self) -> dict[str, str]:
 		return {"user_id": self.__user_id,
 				self.feedback.type: self.feedback.to_json(),
+            
 		        self.error.type: self.error.to_json(),
 		        self.status.type: self.status.to_json(),
 		        self.finished.type: self.finished.to_json(),
@@ -83,7 +85,7 @@ class Signals:
 		        self.statistics.type: self.statistics.to_json(),
 		        self.feedback_request_to_ui.type: self.feedback_request_to_ui.to_json(),
 		        self.cache_db_to_ui.type: self.cache_db_to_ui.to_json()}
-	
+
 	def reset(self):
 		RedisCache(self.__user_id).delete_user_space()
 

@@ -53,6 +53,7 @@ services:
       - wannadb
       - redis
 
+
   postgres:
     image: postgres
     container_name: postgres-container

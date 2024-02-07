@@ -110,6 +110,7 @@ class CreateDocumentBase(BaseTask):
 		"""
 		init api
 		"""
+		## todo hier muss self.request.id durchgeleitet werden und in signals(request_id) gespeichert werden
 		api = WannaDB_WebAPI(user_id, base_name, organisation_id)
 		
 		"""
@@ -301,7 +302,6 @@ class DocumentBaseInteractiveTablePopulation(BaseTask):
 			self.update(State.SUCCESS)
 			return self
 
-
 class DocumentBaseGetOrderedNuggets(BaseTask):
 	name = "DocumentBaseGetOrderedNuggets"
 	
@@ -383,3 +383,4 @@ def match_feedback(nugget: Union[str, InformationNugget], document: Document,
 			"nugget": nugget,
 			"not-a-match": None
 		}
+

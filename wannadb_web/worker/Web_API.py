@@ -104,6 +104,7 @@ class WannaDB_WebAPI:
 			raise TypeError("Document base must be of type DocumentBase!")
 		self._document_base = value
 		self.signals.document_base_to_ui.emit(value)
+		return
 
 	def get_ordert_nuggets(self, document_id: int):
 		document = getDocument(document_id, self.user_id)
@@ -231,6 +232,13 @@ class WannaDB_WebAPI:
 			self.signals.error.emit(Exception("Document ID not set!"))
 			return
 		try:
+			print("BASE")
+			print(self.document_base)
+			print("ID")
+			print(self.document_id)
+			print("ATT")
+			print(self.document_base.attributes)
+   
 			status = updateDocumentContent(self.document_id, self.document_base.to_bson())
 			if status is False:
 				logger.error(f"Document base could not be saved to BSON! Document {self.document_id} does not exist!")
