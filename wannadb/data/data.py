@@ -152,6 +152,12 @@ class Attribute:
 
     def __eq__(self, other) -> bool:
         return isinstance(other, Attribute) and self._name == other._name and self._signals == other._signals
+    
+    def toJSON(self):
+        print("toJSON")
+        return {
+            "name": self._name
+        }
 
     @property
     def name(self) -> str:

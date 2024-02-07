@@ -38,7 +38,7 @@ from wannadb.statistics import Statistics
 from wannadb_web.Redis.RedisCache import RedisCache
 from wannadb_web.util import tokenDecode
 from wannadb_web.worker.data import Signals
-from wannadb_web.worker.tasks import CreateDocumentBase, BaseTask, DocumentBaseAddAttributes, DocumentBaseLoad, \
+from wannadb_web.worker.tasks import CreateDocumentBase, BaseTask, DocumentBaseAddAttributes, DocumentBaseInteractiveTablePopulation, DocumentBaseLoad, \
 	DocumentBaseUpdateAttributes, DocumentBaseGetOrderedNuggets
 
 core_routes = Blueprint('core_routes', __name__, url_prefix='/core')
@@ -117,6 +117,39 @@ def load_document_base():
 	user_id = _token.id
 
 	task = DocumentBaseLoad().apply_async(args=(user_id, base_name, organisation_id))
+
+	return make_response({'task_id': task.id}, 202)
+
+@core_routes.route('/document_base/interactive', methods=['POST'])
+def interactive_document_base():
+	"""
+    Endpoint for interactive document population
+
+	This endpoint is used to load a document base from a name and an organisation id.
+
+    Example Form Payload:
+    {
+		"authorization": "your_authorization_token"
+        "organisationId": "your_organisation_id",
+        "baseName": "your_document_base_name",
+    }
+    """
+	form = request.form
+	authorization = form.get("authorization")
+	organisation_id: Optional[int] = form.get("organisationId")
+	base_name = form.get("baseName")
+ 
+	if (organisation_id is None or base_name is None
+			or authorization is None):
+		return make_response({"error": "missing parameters"}, 400)
+	_token = tokenDecode(authorization)
+
+	if _token is False:
+		return make_response({"error": "invalid token"}, 401)
+
+	user_id = _token.id
+
+	task = DocumentBaseInteractiveTablePopulation().apply_async(args=(user_id, base_name, organisation_id))
 
 	return make_response({'task_id': task.id}, 202)
 
@@ -252,7 +285,7 @@ def task_update(task_id: str):
 
 ## todo: renaming of the endpoint
 
-@core_routes.route('/fix_button', methods=['POST'])
+@core_routes.route('/document_base/order/nugget', methods=['POST'])
 def sort_nuggets():
 	"""
     Endpoint for creating a document base.

@@ -446,7 +446,7 @@ class WannaDB_WebAPI:
 			)
 
 			matching_phase(self.document_base, self.interaction_callback, self.status_callback,
-						   self.signals.statistics.msg())
+						   Statistics(False))
 			self.signals.document_base_to_ui.emit(self.document_base)
 			self.signals.finished.emit(1)
 		except Exception as e:
