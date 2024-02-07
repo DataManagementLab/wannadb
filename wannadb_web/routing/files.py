@@ -1,6 +1,8 @@
 from flask import Blueprint, request, make_response
 
-from wannadb_web.postgres.queries import deleteDocumentContent, getDocument, getDocumentBaseForOrganization, getDocumentsForOrganization, updateDocumentContent
+from wannadb_web.postgres.queries import deleteDocumentContent, getDocument, getDocumentsForOrganization, \
+	updateDocumentContent, getDocumentBaseForOrganization
+
 from wannadb_web.util import tokenDecode
 from wannadb_web.postgres.transactions import addDocument
 

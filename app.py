@@ -3,7 +3,7 @@ import os
 
 from flask import Flask, make_response, render_template_string
 from flask_cors import CORS
-from flask_debugtoolbar import DebugToolbarExtension
+#from flask_debugtoolbar import DebugToolbarExtension
 from wannadb_web.routing.core import core_routes
 from wannadb_web.routing.dev import dev_routes
 from wannadb_web.routing.user import user_management
@@ -28,7 +28,7 @@ app.config.from_mapping(
 app.config['DEBUG'] = True
 # Register the Extensions
 CORS(app)
-toolbar = DebugToolbarExtension(app)
+#toolbar = DebugToolbarExtension(app)
 
 
 

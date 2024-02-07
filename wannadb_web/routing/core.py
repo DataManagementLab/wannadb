@@ -31,15 +31,17 @@ import logging.config
 import pickle
 from typing import Optional
 
-from celery.result import AsyncResult
 from flask import Blueprint, make_response, request
-
+from celery.result import AsyncResult
 from wannadb.data.data import Attribute
 from wannadb.statistics import Statistics
 from wannadb_web.Redis.RedisCache import RedisCache
 from wannadb_web.util import tokenDecode
 from wannadb_web.worker.data import Signals
-from wannadb_web.worker.tasks import CreateDocumentBase, BaseTask, DocumentBaseAddAttributes, DocumentBaseLoad, DocumentBaseUpdateAttributes
+
+from wannadb_web.worker.tasks import CreateDocumentBase, BaseTask, DocumentBaseAddAttributes, DocumentBaseInteractiveTablePopulation, DocumentBaseLoad, \
+	DocumentBaseUpdateAttributes, DocumentBaseGetOrderedNuggets
+
 
 core_routes = Blueprint('core_routes', __name__, url_prefix='/core')
 
@@ -90,6 +92,7 @@ def create_document_base():
 
 @core_routes.route('/document_base/load', methods=['POST'])
 def load_document_base():
+
 	"""
     Endpoint for loading a document base.
 
@@ -117,6 +120,39 @@ def load_document_base():
 	user_id = _token.id
 
 	task = DocumentBaseLoad().apply_async(args=(user_id, base_name, organisation_id))
+
+	return make_response({'task_id': task.id}, 202)
+
+@core_routes.route('/document_base/interactive', methods=['POST'])
+def interactive_document_base():
+	"""
+    Endpoint for interactive document population
+
+	This endpoint is used to load a document base from a name and an organisation id.
+
+    Example Form Payload:
+    {
+		"authorization": "your_authorization_token"
+        "organisationId": "your_organisation_id",
+        "baseName": "your_document_base_name",
+    }
+    """
+	form = request.form
+	authorization = form.get("authorization")
+	organisation_id: Optional[int] = form.get("organisationId")
+	base_name = form.get("baseName")
+ 
+	if (organisation_id is None or base_name is None
+			or authorization is None):
+		return make_response({"error": "missing parameters"}, 400)
+	_token = tokenDecode(authorization)
+
+	if _token is False:
+		return make_response({"error": "invalid token"}, 401)
+
+	user_id = _token.id
+
+	task = DocumentBaseInteractiveTablePopulation().apply_async(args=(user_id, base_name, organisation_id))
 
 	return make_response({'task_id': task.id}, 202)
 
@@ -149,7 +185,8 @@ def document_base_attribute_add():
 	if _token is False:
 		return make_response({"error": "invalid token"}, 401)
 
-	attributes_strings = attributes_strings.split(",")
+	attributes_strings = attributes_string.split(",")
+
 
 	attributes = []
 	for att in attributes_string:
@@ -247,3 +284,45 @@ def task_update(task_id: str):
 	## {	------------------	}
 
 	signals.feedback_request_from_ui.emit(request.json.get("feedback"))
+
+
+## todo: renaming of the endpoint
+
+@core_routes.route('/document_base/order/nugget', methods=['POST'])
+def sort_nuggets():
+	"""
+    Endpoint for creating a document base.
+
+	This endpoint is used to create a document base from a list of document ids and a list of attributes.
+
+	Example Header:
+	{
+		"Authorization": "your_authorization_token"
+	}
+
+    Example JSON Payload:
+    {
+        "organisationId": "your_organisation_id",
+        "baseName": "your_document_base_name",
+        "document_id": "1",   (important: only one document id)
+        "attributes": "plane,car,bike"
+    }
+    """
+	form = request.form
+	authorization = form.get("authorization")
+	organisation_id: Optional[int] = form.get("organisationId")
+	base_name = form.get("baseName")
+	document_id = form.get("document_ids")
+	if organisation_id is None or base_name is None or document_id is None or authorization is None:
+		return make_response({"error": "missing parameters"}, 400)
+	_token = tokenDecode(authorization)
+	
+	if _token is False:
+		return make_response({"error": "invalid token"}, 401)
+	
+	user_id = _token.id
+	
+	task = DocumentBaseGetOrderedNuggets().apply_async(args=(user_id, base_name, organisation_id, document_id))
+	
+	return make_response({'task_id': task.id}, 202)
+
