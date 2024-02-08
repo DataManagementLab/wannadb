@@ -186,13 +186,14 @@ def getDocument(document_id: int, user_id: int):
 		return None
 
 def getDocumentByNameAndContent(doc_name: str, doc_content: str, user_id: int):
-	select_query = sql.SQL("""SELECT name,content,content_byte 
-							 FROM documents 
-							 JOIN membership m ON documents.organisationid = m.organisationid
-							 WHERE name = (%s) AND content = (%s) AND m.userid = (%s)
+	select_query = sql.SQL("""	SELECT name,content,content_byte 
+							 	FROM documents 
+							 	JOIN membership m ON documents.organisationid = m.organisationid
+							 	WHERE name = (%s) AND m.userid = (%s)
 							 """)
+        						#AND content LIKE %(%s)%
 
-	result = execute_query(select_query, (doc_name, doc_content, user_id,))
+	result = execute_query(select_query, (doc_name, user_id, ))
 	if len(result) > 0:
 		for document in result:
 			name = document[0]

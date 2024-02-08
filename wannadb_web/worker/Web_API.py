@@ -132,7 +132,8 @@ class WannaDB_WebAPI:
 		self.signals.status.emit("get_ordered_nuggets_by_doc_name")
 		for document in self.document_base.documents:
 			if document.name == document_name:
-				self.signals.ordert_nuggets.emit(list(sorted(document.nuggets, key=lambda x: x[CachedDistanceSignal])))
+				document_obj = Document(document_name, document_content)
+				self.signals.ordert_nuggets.emit(list(sorted(document_obj.nuggets, key=lambda x: x[CachedDistanceSignal])))
 				return
 		logger.error(f"Document \"{document_name}\" not found in document base!")
 		self.signals.error.emit(Exception(f"Document \"{document_name}\" not found in document base!"))
