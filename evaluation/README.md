@@ -8,7 +8,7 @@ The strategy is based on the evaluation setup of ASET. To examine the potential 
 
 ![](flowchart.png) 
 
-This process is repeated for each extractor, where the simulated user gives a varying number of feedbacks $n \in {10, 20, 30}$, for each of which twenty total runs are repeated and the results are averaged across all random runs.
+This process can be repeated for each extractor, where the simulated user gives a varying number of feedbacks $n \in \{10, 20, 30\}$, for each of which 20 total runs are repeated and the results are averaged across all random runs.
 
 ### Running the evaluation
 
@@ -23,4 +23,4 @@ The results will be stored under `evaluation/results/dataset_name/`, where a fol
 
 ### Evaluating the results
 
-To create the plots of F1 scores per attribute and extractor and corresponding inference times, run the script `plot_results.py`. Prior to execution, you'll need to set `DATASET` to the dataset you want to evaluate the extractors on, and insert all extractors you want to include into the `ORDER` list and adjust the `PRETTY_LABELS` accordingly.
+To create the plots of F1 scores per attribute and extractor and corresponding inference times, run the script `plot_results.py`. Prior to execution, you'll need to set `DATASET` to the dataset you want to evaluate the extractors on, and insert all extractors you want to include into the `ORDER` list and adjust the `PRETTY_LABELS` accordingly. If you already have computed results available, `experiment_3.py` does not need to be run again, simply place the results into the `evaluation/results` folder similar to as described above. 
