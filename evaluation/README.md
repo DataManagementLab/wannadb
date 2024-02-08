@@ -8,14 +8,14 @@ The strategy is based on the evaluation setup of ASET. To examine the potential 
 
 ![](flowchart.png) 
 
-This process can be repeated for each extractor, where the simulated user gives a varying number of feedbacks $n \in \{10, 20, 30\}$, for each of which 20 total runs are repeated and the results are averaged across all random runs.
+This process can be repeated for each extractor, where the simulated user gives a varying number of feedbacks $n \in [10, 20, 30]$, for each of which 20 total runs are repeated and the results are averaged across all random runs.
 
 ### Running the evaluation
 
 In order to run the evaluation, one needs to follow these steps:
 
 1. Place the aviation and / or nobel annotation .json files into `evaluation/datasets/aviation/documents` and `evaluation/datasets/nobel/documents`, respectively.
-2. If you have the document base already preprocessed, place them into `cache`. Otherwise, the experiment itself will run the preprocessing.
+2. If you have the document base already preprocessed, place them into `cache`. Otherwise, the experiment itself will run the preprocessing, for which you will need to place the raw documents into `evaluation\datasets\dataset_name\raw-documents`.
 3. Set the `USED_EXTRACTOR` variable in `experiment_3.py` to the extractor you want to evaluate, and the `dataset_str` to the dataset you want to evaluate on. Note that if you want to use the `FAISS` extractor, you need to pass the document base to the extractor as parameter once upon creation.
 4. Run the experiment script `experiment_3.py`
 
