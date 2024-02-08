@@ -207,11 +207,11 @@ class ExactCustomMatchExtractor(BaseCustomMatchExtractor):
         return new_nuggets
 
 
-class CustomSimilaritySpanExtractor(BaseCustomMatchExtractor):
+class SpacySimilarityExtractor(BaseCustomMatchExtractor):
     """
         This extractor aims to identify similar patterns among tokens that share similar semantic meanings.
     """
-    identifier: str = "CustomHighlightExtractor"
+    identifier: str = "SpacySimilarityExtractor"
 
     def __init__(self) -> None:
         """

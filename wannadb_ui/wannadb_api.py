@@ -11,9 +11,7 @@ from bson import InvalidBSON
 from wannadb.configuration import Pipeline
 from wannadb.data.data import Attribute, Document, DocumentBase
 from wannadb.interaction import EmptyInteractionCallback, InteractionCallback
-from wannadb.matching.custom_match_extraction import ExactCustomMatchExtractor, FaissSemanticSimilarityExtractor,\
-    NgramCustomMatchExtractor, QuestionAnsweringCustomMatchExtractor, ParallelWrapper, \
-    WordNetSimilarityCustomMatchExtractor
+from wannadb.matching.custom_match_extraction import FaissSemanticSimilarityExtractor
 from wannadb.matching.distance import SignalsMeanDistance
 from wannadb.matching.matching import RankingBasedMatcher
 from wannadb.preprocessing.embedding import BERTContextSentenceEmbedder, RelativePositionEmbedder, \
