@@ -247,3 +247,47 @@ def task_update(task_id: str):
 	## {	------------------	}
 
 	signals.feedback_request_from_ui.emit(request.json.get("feedback"))
+
+
+## todo: renaming of the endpoint
+
+@core_routes.route('/document_base/order/nugget', methods=['POST'])
+def sort_nuggets():
+	"""
+    Endpoint for creating a document base.
+
+	This endpoint is used to create a document base from a list of document ids and a list of attributes.
+
+	Example Header:
+	{
+	}
+
+    Example Form Payload:
+    {
+		"authorization": "your_authorization_token"
+        "organisationId": "your_organisation_id",
+        "baseName": "your_document_base_name",
+        "documentName": "your_document_name",
+        "documentContent": "your_document_content",
+    }
+    """
+	form = request.form
+	authorization = form.get("authorization")
+	organisation_id: Optional[int] = form.get("organisationId")
+	base_name = form.get("baseName")
+	document_name = form.get("documentName")
+	document_content = form.get("documentContent")
+	if organisation_id is None or base_name is None or document_name is None or document_content is None or authorization is None:
+		return make_response({"error": "missing parameters"}, 400)
+
+	_token = tokenDecode(authorization)
+	
+	if _token is False:
+		return make_response({"error": "invalid token"}, 401)
+	
+	user_id = _token.id
+	
+	task = DocumentBaseGetOrderedNuggets().apply_async(args=(user_id, base_name, organisation_id, document_name, document_content))
+	
+	return make_response({'task_id': task.id}, 202)
+
