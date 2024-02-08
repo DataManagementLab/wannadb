@@ -23,7 +23,7 @@ from wannadb.preprocessing.other_processing import ContextSentenceCacher
 from wannadb.statistics import Statistics
 from wannadb.status import StatusCallback
 from wannadb_web.SQLite.Cache_DB import SQLiteCacheDBWrapper
-from wannadb_web.postgres.queries import getDocument_by_name, updateDocumentContent, getDocument
+from wannadb_web.postgres.queries import getDocument_by_name, getDocumentByNameAndContent, updateDocumentContent, getDocument
 from wannadb_web.postgres.transactions import addDocument
 from wannadb_web.worker.data import Signals
 
@@ -115,6 +115,21 @@ class WannaDB_WebAPI:
 		document_name = document[0]
 		logger.debug("get_ordert_nuggets")
 		self.signals.status.emit("get_ordert_nuggets")
+		for document in self.document_base.documents:
+			if document.name == document_name:
+				self.signals.ordert_nuggets.emit(list(sorted(document.nuggets, key=lambda x: x[CachedDistanceSignal])))
+				return
+		logger.error(f"Document \"{document_name}\" not found in document base!")
+		self.signals.error.emit(Exception(f"Document \"{document_name}\" not found in document base!"))
+	
+	def get_ordered_nuggets_by_doc_name(self, document_name: str, document_content: str):
+		document = getDocumentByNameAndContent(document_name, document_content, self.user_id)
+		if document is None:
+			logger.error(f"Document {document_name} not found!")
+			self.signals.error.emit(Exception(f"Document {document_name} not found!"))
+			return
+		logger.debug("get_ordered_nuggets_by_doc_name")
+		self.signals.status.emit("get_ordered_nuggets_by_doc_name")
 		for document in self.document_base.documents:
 			if document.name == document_name:
 				self.signals.ordert_nuggets.emit(list(sorted(document.nuggets, key=lambda x: x[CachedDistanceSignal])))

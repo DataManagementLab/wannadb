@@ -305,21 +305,23 @@ class DocumentBaseInteractiveTablePopulation(BaseTask):
 class DocumentBaseGetOrderedNuggets(BaseTask):
 	name = "DocumentBaseGetOrderedNuggets"
 	
-	def run(self, user_id: int, base_name: str, organisation_id: int, document_id: int):
+	#def run(self, user_id: int, base_name: str, organisation_id: int, document_id: int):
+	def run(self, user_id: int, base_name: str, organisation_id: int, document_name: str, document_content: str):
 		self._signals = Signals(str(self.request.id))
 		self._redis_client = RedisCache(str(self.request.id))
 		self.load()
 		
 		api = WannaDB_WebAPI(user_id, base_name, organisation_id)
 		api.load_document_base_from_bson()
-		api.get_ordert_nuggets(document_id)
+		#api.get_ordert_nuggets(document_id)
+		api.get_ordered_nuggets_by_doc_name(document_name, document_content)
 		# no need to update the document base
 		self.update(State.SUCCESS)
 		return self
 
 
 class DocumentBaseConfirmNugget(BaseTask):
-	name = "DocumentBaseGetOrderedNuggets"
+	name = "DocumentBaseConfirmNugget"
 	
 	def run(self, user_id: int, base_name: str, organisation_id: int,
 	        document_id_for_nugget_x: int, nugget: Union[str, InformationNugget],

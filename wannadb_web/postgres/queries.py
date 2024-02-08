@@ -185,6 +185,26 @@ def getDocument(document_id: int, user_id: int):
 	else:
 		return None
 
+def getDocumentByNameAndContent(doc_name: str, doc_content: str, user_id: int):
+	select_query = sql.SQL("""SELECT name,content,content_byte 
+							 FROM documents 
+							 JOIN membership m ON documents.organisationid = m.organisationid
+							 WHERE name = (%s) AND content = (%s) AND m.userid = (%s)
+							 """)
+
+	result = execute_query(select_query, (doc_name, doc_content, user_id,))
+	if len(result) > 0:
+		for document in result:
+			name = document[0]
+			if document[1]:
+				content = document[1]
+				return str(name), str(content)
+			elif document[2]:
+				content = document[2]
+				return str(name), bytes(content)
+	else:
+		return None
+
 
 def getDocumentsForOrganization(organisation_id: int):
 	select_query = sql.SQL("""SELECT id, name,content,content_byte 
