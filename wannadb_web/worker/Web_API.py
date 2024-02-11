@@ -57,6 +57,8 @@ class WannaDB_WebAPI:
 			while (time.time() - start_time) < 300:
 				msg = self.signals.match_feedback.msg
 				if msg is not None:
+					print("MSG " + msg)
+					logger.info("MSG " + msg)
 					return msg
 				time.sleep(2)
 			raise TimeoutError("no match_feedback in time provided")
