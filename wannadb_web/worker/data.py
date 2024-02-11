@@ -1,7 +1,7 @@
 import abc
 import json
 from abc import abstractmethod
-from typing import Any
+from typing import Any, Union
 
 from wannadb.data.data import DocumentBase, InformationNugget, Document, Attribute
 from wannadb.data.signals import BaseSignal
@@ -73,11 +73,11 @@ class Signals:
 		self.cache_db_to_ui = _Dump("cache_db_to_ui", user_id)
 		self.ordert_nuggets = _Nuggets("ordert_nuggets", user_id)
 		self.match_feedback = _MatchFeedback("match_feedback", user_id)
-	
+
 	def to_json(self) -> dict[str, str]:
 		return {"user_id": self.__user_id,
 				self.feedback.type: self.feedback.to_json(),
-            
+
 		        self.error.type: self.error.to_json(),
 		        self.status.type: self.status.to_json(),
 		        self.finished.type: self.finished.to_json(),
@@ -91,120 +91,123 @@ class Signals:
 
 
 class Emitable(abc.ABC):
-	
+
 	def __init__(self, emitable_type: str, user_id: str):
 		self.type = emitable_type
 		self.redis = RedisCache(user_id)
-	
+
 	@property
 	def msg(self):
 		msg = self.redis.get(self.type)
 		if msg is None:
 			return None
 		return msg
-	
+
 	@abstractmethod
 	def to_json(self):
 		raise NotImplementedError
-	
+
 	@abstractmethod
 	def emit(self, status: Any):
 		raise NotImplementedError
 
 
 class _MatchFeedback(Emitable):
-	
+
 	@property
 	def msg(self):
 		msg = self.redis.get(self.type)
 		if isinstance(msg, str) and msg.startswith("{"):
 			m: dict[str, Any] = json.loads(msg)
 			return m
-	
+
 	def to_json(self):
 		if self.msg is None:
 			return {}
-		return json.loads(self.msg)
-	
-	def emit(self, status: dict[str, Any]):
+		return self.msg
+
+	def emit(self, status: Union[dict[str, Any], None]):
+		if status is None:
+			self.redis.delete(self.type)
+			return
 		self.redis.set(self.type, json.dumps(status))
 
 
 class _State(Emitable):
-	
+
 	def to_json(self):
 		if self.msg is None:
 			return ""
 		return self.msg.decode("utf-8")
-	
+
 	def emit(self, status: str):
 		self.redis.set(self.type, status)
 
 
 class _Signal(Emitable):
-	
+
 	def to_json(self):
 		return str(self.msg)
-	
+
 	def emit(self, status: float):
 		self.redis.set(self.type, str(status))
 
 
 class _Error(Emitable):
-	
+
 	def to_json(self):
 		if self.msg is None:
 			return ""
 		return self.msg.decode("utf-8")
-	
+
 	def emit(self, exception: BaseException):
 		self.redis.set(self.type, str(exception))
 
 
 class _Nuggets(Emitable):
-	
+
 	def to_json(self):
 		if self.msg is None:
 			return {}
 		if not isinstance(self.msg, str):
 			raise TypeError("_Nugget msg must be of type str")
 		return self.msg
-	
+
 	def emit(self, status: list[InformationNugget]):
 		self.redis.set(self.type, json.dumps(nuggets_to_json(status)))
 
 
 class _DocumentBase(Emitable):
-	
+
 	def to_json(self):
 		if self.msg is None:
 			return {}
 		return json.loads(self.msg)
-	
+
 	def emit(self, status: DocumentBase):
 		self.redis.set(self.type, json.dumps(document_base_to_json(status)))
 
 
 class _Statistics(Emitable):
-	
+
 	@property
 	def msg(self):
 		return "not implemented"
-	
+
 	def to_json(self):
 		return Statistics(False).to_serializable()
-	
+
 	def emit(self, statistic: Statistics):
 		pass
 
 
 class _Feedback(Emitable):
-	
+
 	def to_json(self):
 		if self.msg is None:
 			return {}
 		return json.loads(self.msg)
-	
+
 	def emit(self, status: dict[str, Any]):
 		print("Status: " + str(status))
 		for key, value in status.items():
@@ -214,9 +217,9 @@ class _Feedback(Emitable):
 
 
 class _Dump(Emitable):
-	
+
 	def to_json(self):
 		return self.msg
-	
+
 	def emit(self, status):
 		self.redis.set(self.type, json.dumps(status))
