@@ -165,7 +165,7 @@ class _MatchFeedback(Emitable):
 			return {}
 		return self.msg.to_json()
 
-	def emit(self, status: Union[CustomMatchFeedback, NuggetMatchFeedback, None]):
+	def emit(self, status: Union[CustomMatchFeedback, NuggetMatchFeedback, NoMatchFeedback, None]):
 		if status is None:
 			self.redis.delete(self.type)
 			return
