@@ -117,10 +117,9 @@ class _MatchFeedback(Emitable):
 	@property
 	def msg(self):
 		msg = self.redis.get(self.type)
-		if msg is None:
-			return None
-		m: dict[str, Any] = json.loads(msg)
-		return m
+		if isinstance(msg, str) and msg.startswith("{"):
+			m: dict[str, Any] = json.loads(msg)
+			return m
 	
 	def to_json(self):
 		if self.msg is None:
