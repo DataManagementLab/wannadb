@@ -26,7 +26,7 @@ from wannadb_web.SQLite.Cache_DB import SQLiteCacheDBWrapper
 from wannadb_web.postgres.queries import getDocument_by_name, getDocumentByNameAndContent, updateDocumentContent, \
 	getDocument
 from wannadb_web.postgres.transactions import addDocument
-from wannadb_web.worker.data import Signals
+from wannadb_web.worker.data import Signals, CustomMatchFeedback, NuggetMatchFeedback, NoMatchFeedback
 
 logger = logging.getLogger(__name__)
 
@@ -60,8 +60,15 @@ class WannaDB_WebAPI:
 				if msg is not None:
 					self.signals.status.emit("Feedback received from UI")
 					self.signals.match_feedback.emit(None)
-					return msg
-				time.sleep(2)
+					if isinstance(msg, CustomMatchFeedback):
+						return {"message": "custom-match", "document": msg.document, "start": msg.start}
+					elif isinstance(msg, NuggetMatchFeedback):
+						return {"message": "is-match", "nugget": msg.nugget, "not_a_match": msg.not_a_match}
+					elif isinstance(msg, NoMatchFeedback):
+						return {"message": "no-match-in-document", "nugget": msg.nugget, "not_a_match": msg.not_a_match}
+					else:
+						raise TypeError("Unknown match_feedback type!")
+				time.sleep(1)
 			raise TimeoutError("no match_feedback in time provided")
 
 		self.interaction_callback = InteractionCallback(interaction_callback_fn)
