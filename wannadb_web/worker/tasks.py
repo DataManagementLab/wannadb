@@ -344,19 +344,12 @@ class DocumentBaseConfirmNugget(BaseTask):
 		self._redis_client = RedisCache(str(self.request.id))
 		self.load()
 		
-		api = WannaDB_WebAPI(user_id, base_name, organisation_id)
-		api.load_document_base_from_bson()
-		
-		#document_name, document_text = getDocuments([document_id_for_nugget_x], user_id)[0]
-		
 		document = Document(document_name, document_text)
 		
 		self._signals.match_feedback.emit(match_feedback(nugget, document, start_index, end_index))
 		# no need to update the document base the doc will be saved in the interactive call
-		if api.signals.error.msg is None:
-			api.update_document_base_to_bson()
-			self.update(State.SUCCESS)
-			return self
+		self.update(State.SUCCESS)
+		return self
 
 
 def nugget_exist(nugget: str, document: Document, start_index: int, end_index: int):
