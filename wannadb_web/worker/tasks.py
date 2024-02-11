@@ -322,10 +322,7 @@ class DocumentBaseGetOrderedNuggets(BaseTask):
 
 class DocumentBaseConfirmNugget(BaseTask):
 	name = "DocumentBaseConfirmNugget"
-	
-	#def run(self, user_id: int, base_name: str, organisation_id: int,
-	#        document_id_for_nugget_x: int, nugget: Union[str, InformationNugget],
-	#        start_index: int, end_index: int, interactive_call_task_id: str):
+
 	def run(self, user_id: int, base_name: str, organisation_id: int,
 	        document_name: str, document_text: str, nugget: Union[str, InformationNugget],
 	        start_index: int, end_index: int, interactive_call_task_id: str):
@@ -341,7 +338,7 @@ class DocumentBaseConfirmNugget(BaseTask):
 		:param interactive_call_task_id: the same task id that's used for interactive call
 		"""
 		self._signals = Signals(interactive_call_task_id)
-		self._redis_client = RedisCache(str(self.request.id))
+		self._redis_client = RedisCache(str(user_id))
 		self.load()
 		
 		document = Document(document_name, document_text)
@@ -360,7 +357,7 @@ def nugget_exist(nugget: str, document: Document, start_index: int, end_index: i
 
 
 def match_feedback(nugget: Union[str, InformationNugget], document: Document,
-                   start_index: int = None, end_index: int = None):
+                   start_index: Optional[int] = None, end_index: Optional[int] = None):
 	logger.debug("match_feedback")
 	if isinstance(nugget, str):
 		if document is None:
