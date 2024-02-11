@@ -59,6 +59,7 @@ class WannaDB_WebAPI:
 				msg = self.signals.match_feedback.msg
 				if msg is not None:
 					self.signals.status.emit("Feedback received from UI")
+					self.signals.match_feedback.emit(None)
 					return msg
 				time.sleep(2)
 			raise TimeoutError("no match_feedback in time provided")
