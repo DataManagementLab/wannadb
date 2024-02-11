@@ -323,14 +323,18 @@ class DocumentBaseGetOrderedNuggets(BaseTask):
 class DocumentBaseConfirmNugget(BaseTask):
 	name = "DocumentBaseConfirmNugget"
 	
+	#def run(self, user_id: int, base_name: str, organisation_id: int,
+	#        document_id_for_nugget_x: int, nugget: Union[str, InformationNugget],
+	#        start_index: int, end_index: int, interactive_call_task_id: str):
 	def run(self, user_id: int, base_name: str, organisation_id: int,
-	        document_id_for_nugget_x: int, nugget: Union[str, InformationNugget],
+	        document_name: str, document_text: str, nugget: Union[str, InformationNugget],
 	        start_index: int, end_index: int, interactive_call_task_id: str):
 		"""
 		:param user_id: user id
 		:param base_name: name of base document
 		:param organisation_id: organisation id of the document base
-		:param document_id_for_nugget_x: the document id for the document that gets a new nugget
+		:param document_name: name of the document
+		:param document_text: text of the document
 		:param nugget: the Nugget that gets confirmed
 		:param start_index: start of the nugget in the document
 		:param end_index: end of the nugget in the document
@@ -343,7 +347,7 @@ class DocumentBaseConfirmNugget(BaseTask):
 		api = WannaDB_WebAPI(user_id, base_name, organisation_id)
 		api.load_document_base_from_bson()
 		
-		document_name, document_text = getDocuments([document_id_for_nugget_x], user_id)[0]
+		#document_name, document_text = getDocuments([document_id_for_nugget_x], user_id)[0]
 		
 		document = Document(document_name, document_text)
 		
