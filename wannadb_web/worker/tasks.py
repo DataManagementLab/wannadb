@@ -350,10 +350,14 @@ class DocumentBaseConfirmNugget(BaseTask):
 
 
 def nugget_exist(nugget: str, document: Document, start_index: int, end_index: int):
-	if document.text.rfind(nugget, start_index, end_index) >= 0:
-		return True
-	else:
+	try:
+		if document.text[start_index:end_index] == nugget:
+			return True
+	except IndexError:
+		logger.error("Nugget does not exist in the given Text")
 		raise Exception("Nugget does not exist in the given Text")
+	logger.error("Nugget does not exist in the given Text")
+	raise Exception("Nugget does not exist in the given Text")
 
 
 def match_feedback(nugget: Union[str, InformationNugget], document: Document,
