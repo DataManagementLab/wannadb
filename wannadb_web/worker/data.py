@@ -1,6 +1,7 @@
 import abc
 import json
 from abc import abstractmethod
+from dataclasses import dataclass
 from typing import Any, Union
 
 from wannadb.data.data import DocumentBase, InformationNugget, Document, Attribute
@@ -20,7 +21,7 @@ def nugget_to_json(nugget: InformationNugget):
 	return {
 		"text": nugget.text,
 		"signals": [{"name": name, "signal": signal_to_json(signal)} for name, signal in
-		            nugget.signals.items()],
+					nugget.signals.items()],
 		"document": {"name": nugget.document.name, "text": nugget.document.text},
 		"end_char": str(nugget.end_char),
 		"start_char": str(nugget.start_char)}
@@ -38,7 +39,7 @@ def document_to_json(document: Document):
 		"text": document.text,
 		"attribute_mappings": "not implemented yet",
 		"signals": [{"name": name, "signal": signal_to_json(signal)} for name, signal in
-		            document.signals.items()],
+					document.signals.items()],
 		"nuggets": [nugget_to_json(nugget) for nugget in document.nuggets]
 	}
 
@@ -52,8 +53,8 @@ def attribute_to_json(attribute: Attribute):
 def document_base_to_json(document_base: DocumentBase):
 	return {
 		'msg': {"attributes ": [attribute.name for attribute in document_base.attributes],
-		        "nuggets": [nugget_to_json(nugget) for nugget in document_base.nuggets]
-		        }
+				"nuggets": [nugget_to_json(nugget) for nugget in document_base.nuggets]
+				}
 
 	}
 
@@ -77,14 +78,13 @@ class Signals:
 	def to_json(self) -> dict[str, str]:
 		return {"user_id": self.__user_id,
 				self.feedback.type: self.feedback.to_json(),
-
-		        self.error.type: self.error.to_json(),
-		        self.status.type: self.status.to_json(),
-		        self.finished.type: self.finished.to_json(),
-		        self.document_base_to_ui.type: self.document_base_to_ui.to_json(),
-		        self.statistics.type: self.statistics.to_json(),
-		        self.feedback_request_to_ui.type: self.feedback_request_to_ui.to_json(),
-		        self.cache_db_to_ui.type: self.cache_db_to_ui.to_json()}
+				self.error.type: self.error.to_json(),
+				self.status.type: self.status.to_json(),
+				self.finished.type: self.finished.to_json(),
+				self.document_base_to_ui.type: self.document_base_to_ui.to_json(),
+				self.statistics.type: self.statistics.to_json(),
+				self.feedback_request_to_ui.type: self.feedback_request_to_ui.to_json(),
+				self.cache_db_to_ui.type: self.cache_db_to_ui.to_json()}
 
 	def reset(self):
 		RedisCache(self.__user_id).delete_user_space()
@@ -112,25 +112,74 @@ class Emitable(abc.ABC):
 		raise NotImplementedError
 
 
+@dataclass
+class CustomMatchFeedback:
+	message = "custom-match"
+	document: Document
+	start: int
+	end: int
+
+	def to_json(self):
+		return {"message": self.message, "document": document_to_json(self.document), "start": self.start,
+				"end": self.end}
+
+
+@dataclass
+class NuggetMatchFeedback:
+	message = "is-match"
+	nugget: InformationNugget
+	not_a_match: None
+
+	def to_json(self):
+		return {"message": self.message, "nugget": nugget_to_json(self.nugget), "not_a_match": self.not_a_match}
+
+
+@dataclass
+class NoMatchFeedback:
+	message = "no-match-in-document"
+	nugget: InformationNugget
+	not_a_match: InformationNugget
+
+	def to_json(self):
+		return {"message": self.message, "nugget": nugget_to_json(self.nugget),
+				"not_a_match": nugget_to_json(self.not_a_match)}
+
+
 class _MatchFeedback(Emitable):
 
 	@property
-	def msg(self):
+	def msg(self) -> Union[CustomMatchFeedback, NuggetMatchFeedback, NoMatchFeedback, None]:
 		msg = self.redis.get(self.type)
 		if isinstance(msg, str) and msg.startswith("{"):
-			m: dict[str, Any] = json.loads(msg)
-			return m
+			m = json.loads(msg)
+			if "message" in m and m["message"] == "custom-match":
+				return CustomMatchFeedback(m["document"], m["start"], m["end"])
+			elif "message" in m and m["message"] == "is-match":
+				return NuggetMatchFeedback(m["nugget"], None)
+			elif "message" in m and m["message"] == "no-match-in-document":
+				return NoMatchFeedback(m["nugget"], m["not_a_match"])
+		return None
 
 	def to_json(self):
 		if self.msg is None:
 			return {}
-		return self.msg
+		return self.msg.to_json()
 
-	def emit(self, status: Union[dict[str, Any], None]):
+	def emit(self, status: Union[CustomMatchFeedback, NuggetMatchFeedback, None]):
 		if status is None:
 			self.redis.delete(self.type)
 			return
-		self.redis.set(self.type, json.dumps(status))
+		if isinstance(status, CustomMatchFeedback):
+			self.redis.set(self.type, json.dumps(
+				{"message": status.message, "document": document_to_json(status.document), "start": status.start,
+				 "end": status.end}))
+		elif isinstance(status, NuggetMatchFeedback):
+			self.redis.set(self.type, json.dumps({"message": status.message, "nugget": nugget_to_json(status.nugget)}))
+		elif isinstance(status, NoMatchFeedback):
+			self.redis.set(self.type, json.dumps(
+				{"message": status.message, "nugget": nugget_to_json(status.nugget),
+				 "not_a_match": nugget_to_json(status.not_a_match)}))
+		raise TypeError("status must be of type CustomMatchFeedback or NuggetMatchFeedback or NoMatchFeedback or None")
 
 
 class _State(Emitable):
