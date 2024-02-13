@@ -279,7 +279,8 @@ class _Nuggets(Emitable):
 		msg = self.redis.get(self.type)
 		if isinstance(msg,bytes):
 			return pickle.loads(msg)
-		raise TypeError("msg is not bytes")
+		else:
+			raise TypeError("msg is not bytes")
 
 
 	def to_json(self):
@@ -288,7 +289,11 @@ class _Nuggets(Emitable):
 		return convert_to_nuggets(self.msg).to_json()
 
 	def emit(self, status: list[InformationNugget]):
-		self.redis.set(self.type, pickle.dumps(status))
+		b:bytes = pickle.dumps(status)
+		if isinstance(b,bytes):
+			self.redis.set(self.type, b)
+		else:
+			raise TypeError("b is not bytes")
 
 
 class _DocumentBaseToUi(Emitable):
