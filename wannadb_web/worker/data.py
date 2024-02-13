@@ -3,7 +3,7 @@ import json
 import pickle
 from abc import abstractmethod, ABC
 from dataclasses import dataclass
-from typing import Any, Union
+from typing import Any, Union, Optional
 
 from wannadb.data.data import DocumentBase, InformationNugget, Document, Attribute
 from wannadb.data.signals import BaseSignal
@@ -275,8 +275,10 @@ class _Error(Emitable):
 class _Nuggets(Emitable):
 
 	@property
-	def msg(self) -> list[InformationNugget]:
+	def msg(self) -> Optional[list[InformationNugget]]:
 		msg = self.redis.get(self.type)
+		if msg is None:
+			return None
 		if isinstance(msg,bytes):
 			return pickle.loads(msg)
 		else:
@@ -299,8 +301,10 @@ class _Nuggets(Emitable):
 class _DocumentBaseToUi(Emitable):
 
 	@property
-	def msg(self) -> DocumentBase:
+	def msg(self) -> Optional[DocumentBase]:
 		msg = self.redis.get(self.type)
+		if msg is None:
+			return None
 		if isinstance(msg,bytes):
 			return pickle.loads(msg)
 		else:
