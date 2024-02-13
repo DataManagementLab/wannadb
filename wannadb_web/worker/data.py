@@ -108,7 +108,7 @@ class _DocumentBase:
 		return {
 			"attributes": [attribute.name for attribute in self.attributes],
 			"nuggets": [convert_to_nugget(nugget).to_json() for nugget in self.nuggets],
-			"documents": [document for document in self.documents]
+			"documents": [convert_to_document(document).to_json() for document in self.documents]
 		}
 
 def convert_to_document_base(document_base: DocumentBase):
