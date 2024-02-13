@@ -1,6 +1,7 @@
 import abc
 import json
-from abc import abstractmethod
+import pickle
+from abc import abstractmethod, ABC
 from dataclasses import dataclass
 from typing import Any, Union
 
@@ -9,54 +10,109 @@ from wannadb.data.signals import BaseSignal
 from wannadb.statistics import Statistics
 from wannadb_web.Redis.RedisCache import RedisCache
 
+@dataclass
+class _BaseSignal:
+	identifier:str
+	signal="not serializable"
 
-def signal_to_json(signal: BaseSignal):
-	return {
-		"name": signal.identifier,
-		"signal": "not serializable"
+	def to_json(self):
+		return {
+			"identifier": self.identifier,
+			"signal":self.signal
+		}
+
+def convert_signal(signal: BaseSignal) -> _BaseSignal:
+	return _BaseSignal(signal.identifier)
+
+@dataclass
+class _InformationNugget:
+	text:str
+	signals:dict[str,BaseSignal]
+	document:Document
+	end_char:int
+	start_char:int
+
+	def to_json(self):
+		return {
+		"text": self.text,
+		"signals": [{"name": name, "signal": convert_signal(signal).to_json()} for name, signal in
+					self.signals.items()],
+		"document": {"name": self.document.name, "text": self.document.text},
+		"end_char": str(self.end_char),
+		"start_char": str(self.start_char)}
+
+
+
+def convert_to_nugget(nugget: InformationNugget):
+	return _InformationNugget(nugget.text,nugget.signals,nugget.document,nugget.end_char,nugget.start_char)
+
+
+@dataclass
+class _InformationNuggets:
+	nuggets: list[InformationNugget]
+
+	def to_json(self):
+		return {
+		str(i): convert_to_nugget(nugget).to_json() for i, nugget in enumerate(self.nuggets)
 	}
 
-
-def nugget_to_json(nugget: InformationNugget):
-	return {
-		"text": nugget.text,
-		"signals": [{"name": name, "signal": signal_to_json(signal)} for name, signal in
-					nugget.signals.items()],
-		"document": {"name": nugget.document.name, "text": nugget.document.text},
-		"end_char": str(nugget.end_char),
-		"start_char": str(nugget.start_char)}
+def convert_to_nuggets(nuggets: list[InformationNugget]):
+	return _InformationNuggets(nuggets)
 
 
-def nuggets_to_json(nuggets: list[InformationNugget]):
-	return {
-		str(i): nugget_to_json(nugget) for i, nugget in enumerate(nuggets)
-	}
+@dataclass
+class _Document:
+	name:str
+	text:str
+	attribute_mappings = "not implemented yet"
+	signals:dict[str,BaseSignal]
+	nuggets:list[InformationNugget]
 
-
-def document_to_json(document: Document):
-	return {
-		"name": document.name,
-		"text": document.text,
+	def to_json(self):
+		return {
+		"name": self.name,
+		"text": self.text,
 		"attribute_mappings": "not implemented yet",
-		"signals": [{"name": name, "signal": signal_to_json(signal)} for name, signal in
-					document.signals.items()],
-		"nuggets": [nugget_to_json(nugget) for nugget in document.nuggets]
+		"signals": [{"name": name, "signal": convert_signal(signal)} for name, signal in
+					self.signals.items()],
+		"nuggets": [convert_to_nugget(nugget).to_json() for nugget in self.nuggets]
 	}
 
 
-def attribute_to_json(attribute: Attribute):
-	return {
-		"name": attribute.name
-	}
+def convert_to_document(document: Document):
+	return _Document(document.name,document.text,document.signals,document.nuggets)
 
 
-def document_base_to_json(document_base: DocumentBase):
-	return {
-		'msg': {"attributes ": [attribute.name for attribute in document_base.attributes],
-				"nuggets": [nugget_to_json(nugget) for nugget in document_base.nuggets]
-				}
+@dataclass
+class _Attribute:
+	name:str
+	signals = "not_implemented"
 
-	}
+	def to_json(self):
+		return {
+			"name": self.name,
+			"signals": self.signals
+		}
+
+def convert_to_attribute(attribute: Attribute):
+	return _Attribute(attribute.name)
+
+
+@dataclass
+class _DocumentBase:
+	attributes:list[Attribute]
+	nuggets:list[InformationNugget]
+	documents:list[Document]
+
+	def to_json(self):
+		return {
+			"attributes": [attribute.name for attribute in self.attributes],
+			"nuggets": [convert_to_nugget(nugget).to_json() for nugget in self.nuggets],
+			"documents": [document for document in self.documents]
+		}
+
+def convert_to_document_base(document_base: DocumentBase):
+	return _DocumentBase(document_base.attributes,document_base.nuggets,document_base.documents)
 
 
 class Signals:
@@ -67,7 +123,7 @@ class Signals:
 		self.status = _State("status", user_id)
 		self.finished = _Signal("finished", user_id)
 		self.error = _Error("error", user_id)
-		self.document_base_to_ui = _DocumentBase("document_base_to_ui", user_id)
+		self.document_base_to_ui = _DocumentBaseToUi("document_base_to_ui", user_id)
 		self.statistics = _Statistics("statistics_to_ui", user_id)
 		self.feedback_request_to_ui = _Feedback("feedback_request_to_ui", user_id)
 		self.feedback_request_from_ui = _Feedback("feedback_request_from_ui", user_id)
@@ -122,7 +178,7 @@ class CustomMatchFeedback:
 	end: int
 
 	def to_json(self):
-		return {"message": self.message, "document": document_to_json(self.document), "start": self.start,
+		return {"message": self.message, "document": convert_to_document(self.document).to_json(), "start": self.start,
 				"end": self.end}
 
 
@@ -133,7 +189,7 @@ class NuggetMatchFeedback:
 	not_a_match: None
 
 	def to_json(self):
-		return {"message": self.message, "nugget": nugget_to_json(self.nugget), "not_a_match": self.not_a_match}
+		return {"message": self.message, "nugget": convert_to_nugget(self.nugget).to_json(), "not_a_match": self.not_a_match}
 
 
 @dataclass
@@ -143,8 +199,8 @@ class NoMatchFeedback:
 	not_a_match: InformationNugget
 
 	def to_json(self):
-		return {"message": self.message, "nugget": nugget_to_json(self.nugget),
-				"not_a_match": nugget_to_json(self.not_a_match)}
+		return {"message": self.message, "nugget": convert_to_nugget(self.nugget).to_json(),
+				"not_a_match": convert_to_nugget(self.not_a_match).to_json()}
 
 
 class _MatchFeedback(Emitable):
@@ -173,14 +229,14 @@ class _MatchFeedback(Emitable):
 			return
 		if isinstance(status, CustomMatchFeedback):
 			self.redis.set(self.type, json.dumps(
-				{"message": status.message, "document": document_to_json(status.document), "start": status.start,
+				{"message": status.message, "document": convert_to_document(status.document).to_json(), "start": status.start,
 				 "end": status.end}))
 		elif isinstance(status, NuggetMatchFeedback):
-			self.redis.set(self.type, json.dumps({"message": status.message, "nugget": nugget_to_json(status.nugget)}))
+			self.redis.set(self.type, json.dumps({"message": status.message, "nugget": convert_to_nugget(status.nugget).to_json()}))
 		elif isinstance(status, NoMatchFeedback):
 			self.redis.set(self.type, json.dumps(
-				{"message": status.message, "nugget": nugget_to_json(status.nugget),
-				 "not_a_match": nugget_to_json(status.not_a_match)}))
+				{"message": status.message, "nugget": convert_to_nugget(status.nugget).to_json(),
+				 "not_a_match": convert_to_nugget(status.not_a_match).to_json()}))
 		else:
 			raise TypeError("status must be of type CustomMatchFeedback or NuggetMatchFeedback or NoMatchFeedback or None")
 
@@ -218,26 +274,39 @@ class _Error(Emitable):
 
 class _Nuggets(Emitable):
 
+	@property
+	def msg(self) -> list[InformationNugget]:
+		msg = self.redis.get(self.type)
+		if isinstance(msg,bytes):
+			return pickle.loads(msg)
+		raise TypeError("msg is not bytes")
+
+
 	def to_json(self):
 		if self.msg is None:
 			return {}
-		if not isinstance(self.msg, str):
-			raise TypeError("_Nugget msg must be of type str")
-		return self.msg
+		return convert_to_nuggets(self.msg).to_json()
 
 	def emit(self, status: list[InformationNugget]):
-		self.redis.set(self.type, json.dumps(nuggets_to_json(status)))
+		self.redis.set(self.type, pickle.dumps(status))
 
 
-class _DocumentBase(Emitable):
+class _DocumentBaseToUi(Emitable):
+
+	@property
+	def msg(self) -> DocumentBase:
+		msg = self.redis.get(self.type)
+		if isinstance(msg,bytes):
+			return pickle.loads(msg)
+		raise TypeError("msg is not bytes")
 
 	def to_json(self):
 		if self.msg is None:
 			return {}
-		return json.loads(self.msg)
+		return convert_to_document_base(self.msg).to_json()
 
 	def emit(self, status: DocumentBase):
-		self.redis.set(self.type, json.dumps(document_base_to_json(status)))
+		self.redis.set(self.type, pickle.dumps(status))
 
 
 class _Statistics(Emitable):
