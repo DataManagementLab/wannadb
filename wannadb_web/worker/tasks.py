@@ -353,7 +353,10 @@ class DocumentBaseConfirmNugget(BaseTask):
 
 
 def nugget_exist(nugget: str, document: Document, start_index: int, end_index: int):
+	print("start: ", start_index, "end: ", end_index)
 	try:
+		print("doc "+document.text[start_index:end_index])
+		print("nug "+nugget)
 		if document.text[start_index:end_index] == nugget:
 			return True
 	except IndexError:
@@ -373,8 +376,8 @@ def match_feedback(nugget: Union[str, InformationNugget], document: Document,
 		if start_index is None or end_index is None:
 			logger.error("Start-index or end-index are missing to find the custom nugget")
 			raise Exception("Start-index or end-index are missing to find the custom nugget")
-		elif nugget_exist(nugget, document, start_index, end_index):
-			return CustomMatchFeedback(document, start_index, end_index)
+		# TODO workarround because nugget_exist does not work
+		return CustomMatchFeedback(document, start_index, end_index)
 	if isinstance(nugget, InformationNugget):
 		return NuggetMatchFeedback(nugget, None)
 	raise Exception("Invalid nugget type")
