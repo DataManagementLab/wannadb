@@ -298,7 +298,8 @@ class _DocumentBaseToUi(Emitable):
 		msg = self.redis.get(self.type)
 		if isinstance(msg,bytes):
 			return pickle.loads(msg)
-		raise TypeError("msg is not bytes")
+		else:
+			raise TypeError("msg is not bytes")
 
 	def to_json(self):
 		if self.msg is None:
