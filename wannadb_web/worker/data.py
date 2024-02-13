@@ -4,11 +4,14 @@ import pickle
 from abc import abstractmethod, ABC
 from dataclasses import dataclass
 from typing import Any, Union, Optional
+import logging
 
 from wannadb.data.data import DocumentBase, InformationNugget, Document, Attribute
 from wannadb.data.signals import BaseSignal
 from wannadb.statistics import Statistics
 from wannadb_web.Redis.RedisCache import RedisCache
+
+logger: logging.Logger = logging.getLogger(__name__)
 
 @dataclass
 class _BaseSignal:
@@ -291,6 +294,7 @@ class _Nuggets(Emitable):
 		return convert_to_nuggets(self.msg).to_json()
 
 	def emit(self, status: list[InformationNugget]):
+		logger.info("emitting Nuggets")
 		b:bytes = pickle.dumps(status)
 		if isinstance(b,bytes):
 			self.redis.set(self.type, b)
