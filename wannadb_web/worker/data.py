@@ -179,7 +179,8 @@ class _MatchFeedback(Emitable):
 			self.redis.set(self.type, json.dumps(
 				{"message": status.message, "nugget": nugget_to_json(status.nugget),
 				 "not_a_match": nugget_to_json(status.not_a_match)}))
-		raise TypeError("status must be of type CustomMatchFeedback or NuggetMatchFeedback or NoMatchFeedback or None")
+		else:
+			raise TypeError("status must be of type CustomMatchFeedback or NuggetMatchFeedback or NoMatchFeedback or None")
 
 
 class _State(Emitable):
