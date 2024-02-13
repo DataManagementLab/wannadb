@@ -52,11 +52,13 @@ class WannaDB_WebAPI:
 
 		def interaction_callback_fn(pipeline_element_identifier, feedback_request):
 
+			feedback_request["identifier"] = pipeline_element_identifier
+
 			start_time = time.time()
 			while (time.time() - start_time) < 300:
 				msg = self.signals.match_feedback.msg
 
-				feedback_request["identifier"] = pipeline_element_identifier
+
 				self.signals.feedback_request_to_ui.emit(feedback_request)
 
 				if msg is not None:
