@@ -33,7 +33,7 @@ from typing import Optional
 
 from flask import Blueprint, make_response, request
 from celery.result import AsyncResult
-from wannadb.data.data import Attribute
+from wannadb.data.data import Attribute, Document, InformationNugget
 from wannadb.statistics import Statistics
 from wannadb_web.Redis.RedisCache import RedisCache
 from wannadb_web.util import tokenDecode
@@ -332,10 +332,10 @@ def sort_nuggets():
 	
 	return make_response({'task_id': task.id}, 202)
 
-@core_routes.route('/document_base/confirm/nugget', methods=['POST'])
-def confirm_nugget():
+@core_routes.route('/document_base/confirm/nugget/custom', methods=['POST'])
+def confirm_nugget_custom():
 	"""
-    Endpoint to confirm a nugget.
+    Endpoint to confirm a custom nugget.
 
     Example Form Payload:
     {
@@ -390,6 +390,75 @@ def confirm_nugget():
                                                         document_name, 
                                                         document_content, 
                                                         nugget_text,
+                                                        start_index,
+                                                        end_index,
+                                                        i_task_id
+                                                    ))
+	
+	return make_response({'task_id': task.id}, 202)
+
+@core_routes.route('/document_base/confirm/nugget/match', methods=['POST'])
+def confirm_nugget_match():
+	"""
+    Endpoint to confirm a match nugget.
+
+    Example Form Payload:
+    {
+		"authorization": "your_authorization_token"
+        "organisationId": "your_organisation_id",
+        "baseName": "your_document_base_name",
+        "documentName": "your_document_name",
+        "documentContent": "your_document_content",
+        "nuggetText": "nugget_as_text",
+        "startIndex": "start_index_of_nugget",
+        "endIndex": "end_index_of_nugget",
+        "interactiveCallTaskId": "interactive_call_task_id"
+    }
+    """
+	form = request.form
+ 
+	authorization = form.get("authorization")
+	organisation_id: Optional[int] = form.get("organisationId")
+	base_name = form.get("baseName")
+ 
+	document_name = form.get("documentName")
+	document_content = form.get("documentContent")
+	nugget_text = form.get("nuggetText")
+	start_index: Optional[int]  = form.get("startIndex")
+	end_index: Optional[int]  = form.get("endIndex")
+	
+	i_task_id = form.get("interactiveCallTaskId")
+
+	if (organisation_id is None 
+     	or base_name is None 
+      	or document_name is None 
+       	or document_content is None 
+        or authorization is None 
+        or nugget_text is None 
+        or start_index is None 
+        or end_index is None 
+        or i_task_id is None):
+     
+		return make_response({"error": "missing parameters"}, 400)
+
+	_token = tokenDecode(authorization)
+	
+	if _token is False:
+		return make_response({"error": "invalid token"}, 401)
+	
+	user_id = _token.id
+ 
+	document = Document(document_name, document_content)
+ 
+	nugget = InformationNugget(document, start_index, end_index)
+	
+	task = DocumentBaseConfirmNugget().apply_async(args=(
+     													user_id, 
+                                                      	base_name, 
+                                                       	organisation_id, 
+                                                        document_name, 
+                                                        document_content, 
+                                                        nugget,
                                                         start_index,
                                                         end_index,
                                                         i_task_id
