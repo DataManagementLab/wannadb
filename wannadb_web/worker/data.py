@@ -84,7 +84,9 @@ class Signals:
 				self.document_base_to_ui.type: self.document_base_to_ui.to_json(),
 				self.statistics.type: self.statistics.to_json(),
 				self.feedback_request_to_ui.type: self.feedback_request_to_ui.to_json(),
-				self.cache_db_to_ui.type: self.cache_db_to_ui.to_json()}
+				self.cache_db_to_ui.type: self.cache_db_to_ui.to_json(),
+				self.ordert_nuggets.type: self.ordert_nuggets.to_json()
+				}
 
 	def reset(self):
 		RedisCache(self.__user_id).delete_user_space()
