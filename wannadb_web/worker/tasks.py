@@ -109,7 +109,6 @@ class CreateDocumentBase(BaseTask):
 		"""
 		init api
 		"""
-		## todo hier muss self.request.id durchgeleitet werden und in signals(request_id) gespeichert werden
 		api = WannaDB_WebAPI(user_id, base_name, organisation_id)
 
 		"""
@@ -291,8 +290,8 @@ class DocumentBaseInteractiveTablePopulation(BaseTask):
 	name = "DocumentBaseInteractiveTablePopulation"
 
 	def run(self, user_id: int, base_name: str, organisation_id: int):
-		self._signals = Signals(str(self.request.id))
-		self._redis_client = RedisCache(str(self.request.id))
+		self._signals = Signals(str(user_id))
+		self._redis_client = RedisCache(str(user_id))
 		self.load()
 
 		api = WannaDB_WebAPI(user_id, base_name, organisation_id)
@@ -308,8 +307,8 @@ class DocumentBaseGetOrderedNuggets(BaseTask):
 	name = "DocumentBaseGetOrderedNuggets"
 
 	def run(self, user_id: int, base_name: str, organisation_id: int, document_name: str, document_content: str):
-		self._signals = Signals(str(self.request.id))
-		self._redis_client = RedisCache(str(self.request.id))
+		self._signals = Signals(str(user_id))
+		self._redis_client = RedisCache(str(user_id))
 		self.load()
 
 		api = WannaDB_WebAPI(user_id, base_name, organisation_id)
@@ -338,7 +337,7 @@ class DocumentBaseConfirmNugget(BaseTask):
 		:param end_index: end of the nugget in the document (optional) if start and end is None the nugget is not in the document
 		:param interactive_call_task_id: the same task id that's used for interactive call
 		"""
-		self._signals = Signals(interactive_call_task_id)
+		self._signals = Signals(str(user_id))
 		self._redis_client = RedisCache(str(user_id))
 		self.load()
 
