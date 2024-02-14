@@ -123,11 +123,21 @@ class CreateDocumentBase(BaseTask):
 			raise Exception("Invalid statistics")
 
 		docs = getDocuments(document_ids, user_id)
+		if docs[0] is tuple[None,None]:
+			raise Exception(f"user with user id:{user_id} has no document with the document_ids: {document_ids}")
+
 		self.update(State.PENDING)
 		documents: list[Document] = []
 		if docs:
 			for doc in docs:
-				documents.append(Document(doc[0], doc[1]))
+				name = doc[0]
+				text = doc[1]
+				if name is None:
+					raise Exception("Document Name is none")
+				if text is None:
+					raise Exception("Document text is none")
+				documents.append(Document(name, text))
+
 		else:
 			self.update(State.ERROR)
 			raise Exception("No documents found")
