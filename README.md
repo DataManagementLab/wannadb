@@ -1,25 +1,30 @@
-# Start the docker
+# Start the Web-Backend docker build
 
-beim ersten mal
+to build/start the production
+
+```
+docker compose -f "docker-compose-prod.yaml" build
+docker compose -f "docker-compose-prod.yaml" up
+```
+
+for developers use
 
 ```
 docker compose build
-```
-
-zum weiter arbeiten
-
-```
 docker compose up
 ```
 
-danach sollte das backend gestartet sein
+the flask and other services start automaticly.
+for more information here....
 
-ihr könnt mit `code` den container attachen und dann im docker arbeiten
+you can use `code` to attach the container and then work in docker
 
-git functioniert erst wenn ihr gh installiert und gh auth macht
-anschließend könnt ihr wie gewohn arbeiten
+git only works when you install gh and make gh auth
+then you can work as usual
 
-ein docker rebuild ist nur nötig wenn sich dependencies geändert haben
+a docker rebuild is only necessary if dependencies have changed
+
+
 
 # WannaDB: Ad-hoc SQL Queries over Text Collections
 
