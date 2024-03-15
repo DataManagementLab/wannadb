@@ -1,0 +1,21 @@
+name: Create New Stable Version (Manual)
+
+on:
+    workflow_dispatch:
+
+jobs:
+    create_pull_request:
+        runs-on: ubuntu-latest
+
+        steps:
+            - name: Checkout repository
+              uses: actions/checkout@v2
+
+            - name: Create Pull Request
+              uses: peter-evans/create-pull-request@v3
+              with:
+                  token: ${{ secrets.GITHUB_TOKEN }}
+                  branch: stable
+                  base: main
+                  title: Automated New Stable Version
+                  body: This pull request was automatically created by the workflow and contains the latest stable version of the repository.

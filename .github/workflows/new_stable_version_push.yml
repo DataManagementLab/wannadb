@@ -1,17 +1,23 @@
-name: Create New Stable Version
+name: Create New Stable Version (Push)
 
 on:
-    workflow_dispatch:
+    push:
+        branches:
+            - main
 
 jobs:
     create_pull_request:
         runs-on: ubuntu-latest
-
         steps:
             - name: Checkout repository
               uses: actions/checkout@v2
 
+            - name: Check commit message for [stable]
+              id: check_commit_message
+              run: echo ::set-output name=contains_stable::$(if grep -q "\[stable\]" <<< "$(git log --format=%B -n 1)"; then echo true; else echo false; fi)
+
             - name: Create Pull Request
+              if: steps.check_commit_message.outputs.contains_stable == 'true'
               uses: peter-evans/create-pull-request@v3
               with:
                   token: ${{ secrets.GITHUB_TOKEN }}
