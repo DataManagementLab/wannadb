@@ -65,6 +65,7 @@ http://localhost:8000/login
         "username": "username",
         "password": "password"
     }
+    ```
 -   401: User login **failed**:
     ```json
     {
@@ -167,7 +168,7 @@ http://localhost:8000/getOrganisationName/<_id>
 -   URL
     ```json
     {
-        _id: "organisation_id"
+        "_id": "organisation_id"
     }
     ```
 -   Body
@@ -183,6 +184,7 @@ http://localhost:8000/getOrganisationName/<_id>
     {
         "organisation_name": [string]
     }
+    ```
 -   404: Organization not found.
 -   409: Error retrieving organization name.
 
@@ -199,6 +201,7 @@ http://localhost:8000/getOrganisationNames
     {
         "authorization": "---authorization---jwt---"
     }
+    ```
 -   401: No authorization provided.
 -   400: Invalid authorization token.
 -   200: Retrieved user's organization names successfully.
@@ -235,7 +238,7 @@ http://localhost:8000/addUserToOrganisation
 -   200: User added to the organization successfully.
     ```json
     {
-        "organisation_id": number
+        "organisation_id": "number"
     }
     ```
 -   409: Error adding user to organization.
@@ -335,7 +338,6 @@ http://localhost:8000/data/upload/file
     {
         "document_ids": ["number"|"string"]
     }
-    
     ```
 
 ---
