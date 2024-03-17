@@ -153,7 +153,7 @@ http://localhost:8000/getOrganisations
 -   200: Retrieved user's organizations successfully.
     ```json
     {
-        "organisation_ids": [number]
+        "organisation_ids": ["number"]
     }
     ```
 -   404: User is not in any organization.
@@ -182,7 +182,7 @@ http://localhost:8000/getOrganisationName/<_id>
 -   200: Retrieved organization name successfully.
     ```json
     {
-        "organisation_name": [string]
+        "organisation_name": ["string"]
     }
     ```
 -   404: Organization not found.
@@ -207,7 +207,7 @@ http://localhost:8000/getOrganisationNames
 -   200: Retrieved user's organization names successfully.
     ```json
     {
-        "organisations": [number]
+        "organisations": ["number"]
     }
     ```
 -   404: User is not in any organization.
@@ -266,7 +266,7 @@ http://localhost:8000/getOrganisationMembers/<_id>
 -   200: Retrieved organization members successfully.
     ```json
     {
-        "members": [string]
+        "members": ["string"]
     }
     ```
 -   404: Organization not found.
@@ -336,7 +336,7 @@ http://localhost:8000/data/upload/file
 -   207: Multiple files uploaded, some with errors.
     ```json
     {
-        "document_ids": ["number"|"string"]
+        "document_ids": ["number|string"]
     }
     ```
 
@@ -351,7 +351,7 @@ http://localhost:8000/data/organization/get/files/<_id>
 -   URL
     ```json
     {
-        _id: "organisation_id"
+        "_id": "organisation_id"
     }
     ```
 -   Header
@@ -364,7 +364,7 @@ http://localhost:8000/data/organization/get/files/<_id>
 -   200: Retrieved organization files successfully.
     ```json
     {
-        documents: "id"
+        "documents": "id"
     }
     ```
 
@@ -379,7 +379,7 @@ http://localhost:8000/data/organization/get/documentbase/<_id>
 -   URL
     ```json
     {
-        _id: "organisation_id"
+        "_id": "organisation_id"
     }
     ```
 -   Header
@@ -392,7 +392,7 @@ http://localhost:8000/data/organization/get/documentbase/<_id>
 -   200: Retrieved document base successfully.
     ```json
     {
-        document_base: "document_base"
+        "document_base": "document_base"
     }
     ```
 
