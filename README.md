@@ -15,7 +15,9 @@ docker compose up
 ```
 
 the flask and other services start automaticly.
-for more information here....
+for more information click [here](https://github.com/lw86ruwo/wannadbBackend/blob/main/WEBSERVER_STRUCTURE.md)
+
+so see all the routes and the structure of the webserver click [here](https://github.com/lw86ruwo/wannadbBackend/blob/main/ROUTES.md)  
 
 you can use `code` to attach the container and then work in docker
 
