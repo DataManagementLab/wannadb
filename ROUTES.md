@@ -4,45 +4,40 @@ The Flask app is running by default on port 8000. Here we assume that the app is
 
 ---
 
--   [HelloWorld](#helloworld)
--   [Register](#register)
--   [Login](#login)
--   [Upload Files](#upload-files)
--   [Create Tables (Development)](#create-tables)
+
+-   [User Routes](#User-Routes)
+-   [File Routes](#File-Routes)
+-   [Core Routes](#Core-routes)
+
 
 ---
+## User Routes
 
-## HelloWorld
+-   [Register a new user](#register-a-new-user)
+-  [Login as a user](#login-as-a-user)
+-  [Delete a user](#delete-a-user)
+- [Create an organization](#create-an-organization)
+- [Leave an organization](#leave-an-organization)
+- [Get organizations for a user](#get-organizations-for-a-user)
+- [Get organization name by ID](#get-organization-name-by-id)
+- [Get organization names for a user](#get-organization-names-for-a-user)
+- [Add a user to an organization](#add-a-user-to-an-organization)
+- [Get members of an organization](#get-members-of-an-organization)
+- [Get user name suggestions](#get-user-name-suggestions)
 
-**GET**
-
-```
-http://localhost:8000/
-```
-
----
-
-## Register
-
-**POST**
-
-Register a new user.
+### Register a new user.
 
 ```
 http://localhost:8000/register
 ```
 
-### Body
-
-```json
-{
-    "username": "username",
-    "password": "password"
-}
-```
-
-### Response
-
+-   Body
+    ```json
+    {
+        "username": "username",
+        "password": "password"
+    }
+    ```
 -   422 : User register **failed**:
     ```json
     {
@@ -59,27 +54,17 @@ http://localhost:8000/register
 
 ---
 
-## Login
-
-**POST**
-
-Login as user
+### Login as a user.
 
 ```
 http://localhost:8000/login
 ```
-
-### Body
-
-```json
-{
-    "username": "username",
-    "password": "password"
-}
-```
-
-### Response
-
+-   Body
+    ```json
+    {
+        "username": "username",
+        "password": "password"
+    }
 -   401: User login **failed**:
     ```json
     {
@@ -96,204 +81,592 @@ http://localhost:8000/login
 
 ---
 
-## Organisation
-
-**POST**
-
-creatOrganisation
+### Delete a user.
 
 ```
-http://localhost:8000/creatOrganisation
+http://localhost:8000/deleteUser/
 ```
-
-### Body
-
-```json
-{
-    "authorization": "---",
-    "organisationName": "---"
-}
-```
-
-### Response
-
--   409: duplication **Conflict**:
+-   Body
     ```json
     {
-        "error": "name already exists."
+        "username": "username",
+        "password": "password"
     }
     ```
--   200: **success**:
-    ```json
-    {
-        "organisation_id": "---"
-    }
-    ```
+-   401: No authorization provided.
+-   400: Invalid authorization token.
+-   401: User not authorized.
+-   401: Wrong Password.
+-   204: User deleted successfully.
+-   409: User deletion failed.
 
-**GET**
+---
 
-getOrganisationMembers
-
+### Create an organization.
 ```
-http://localhost:8000/getOrganisationMembers/<id>
+http://localhost:8000/createOrganisation
 ```
-
-### Header
-
-```json
-{
-    "authorization": "---"
-}
-```
-
-### Response
-
--   404: Organisation **not found**:
+-   Body
     ```json
     {
-        "error": "Organisation not found."
+        "organisationName": "organisation_name"
     }
     ```
--   401: User **not authorized**:
-    ```json
-    {
-        "error": "User not authorized."
-    }
-    ```
--   200: **success**:
-    ```json
-    {
-        "members": ["username1", "username2", "username3"]
-    }
-    ```
+-   401: No authorization provided.
+-   400: Invalid authorization token.
+-   200: Organization created successfully.
+-   409: Organization creation failed.
 
-**POST**
+---
 
-leaveOrganisation
-
-_Leave a organisation and delete the organisation if the user is the last member._
+### Leave an organization.
 
 ```
 http://localhost:8000/leaveOrganisation
 ```
+-   Body
+    ```json
+    {
+        "organisationId": "organisation_id"
+    }
+    ```
+-   401: No authorization provided.
+-   400: Invalid authorization token.
+-   200: User left the organization successfully.
+-   500: Error leaving organization.
 
-### Body
+---
 
-```json
-{
-    "authorization": "---",
-    "organisationId": "---"
-}
+### Get organizations for a user.
+```
+http://localhost:8000/getOrganisations
+```
+-   Body
+    ```json
+    {
+        "authorization": "---authorization---jwt---"
+    }
+    ```
+-   401: No authorization provided.
+-   400: Invalid authorization token.
+-   200: Retrieved user's organizations successfully.
+    ```json
+    {
+        "organisation_ids": [number]
+    }
+-   404: User is not in any organization.
+-   409: Error retrieving organizations.
+
+---
+
+### Get organization name by ID.
+```
+http://localhost:8000/getOrganisationName/<_id>
+```
+-   URL
+    ```json
+    {
+        _id: "organisation_id"
+    }
+-   Body
+    ```json
+    {
+        "authorization": "---authorization---jwt---"
+    }
+    ```
+-   401: No authorization provided.
+-   400: Invalid authorization token.
+-   200: Retrieved organization name successfully.
+    ```json
+    {
+        "organisation_name": [string]
+    }
+-   404: Organization not found.
+-   409: Error retrieving organization name.
+
+---
+
+### Get organization names for a user.
+
+```
+http://localhost:8000/getOrganisationNames
 ```
 
-### Response
-
--   500: **error**:
+-   Header
     ```json
     {
-        "status": false,
-        "msg": "error message"
+        "authorization": "---authorization---jwt---"
     }
-    ```
--   200: **success**:
+-   401: No authorization provided.
+-   400: Invalid authorization token.
+-   200: Retrieved user's organization names successfully.
     ```json
     {
-        "status": true
+        "organisations": [number]
     }
-    ```
+-   404: User is not in any organization.
+-   409: Error retrieving organization names.
 
-**POST**
+---
 
-addUserToOrganisation
+### Add a user to an organization.
 
 ```
 http://localhost:8000/addUserToOrganisation
 ```
-
-### Body
-
-```json
-{
-    "authorization": "---",
-    "organisationName": "---",
-    "newUser": "---"
-}
-```
-
-### Response
-
--   409: duplication **Conflict**: (temp)
+-   Header
     ```json
     {
-        "error": "error message"
+        "authorization": "---authorization---jwt---"
+    }
+-   Body
+    ```json
+    {
+        "organisationId": "organisation_id",
+        "newUser": "new_user"
     }
     ```
--   200: **success**:
+-   401: No authorization provided.
+-   400: Invalid authorization token.
+-   200: User added to the organization successfully.
     ```json
     {
-        "organisation_id": "---"
+        "organisation_id": number
+    }
+    ```
+-   409: Error adding user to organization.
+
+---
+
+### Get members of an organization.
+```
+http://localhost:8000/getOrganisationMembers/<_id>
+```
+-   URL
+    ```json
+    {
+        _id: "organisation_id"
+    }
+    ```
+-   Header
+    ```json
+    {
+        "authorization": "---authorization---jwt---"
+    }
+    ```
+-   401: No authorization provided.
+-   400: Invalid authorization token.
+-   200: Retrieved organization members successfully.
+    ```json
+    {
+        "members": [string]
+    }
+    ```
+-   404: Organization not found.
+-   409: Error retrieving organization members.
+
+---
+
+### Get user name suggestions.
+```
+http://localhost:8000/get/user/suggestion/<_prefix>
+```
+
+-   URL
+    ```json
+    {
+        _prefix: "organisation_id"
+    }
+    ```
+-   401: No authorization provided.
+-   400: Invalid authorization token.
+-   200: Retrieved username suggestions successfully.
+    ```json
+    {
+        "usernames": [string]
+    }
+    ```
+
+---
+## File Routes
+
+-   [Upload File](#upload-file)
+-   [Get Files](#get-files)
+-   [Get document base for an organization](#get-document-base-for-an-organization)
+-   [Update file content](#update-file-content)
+-   [Delete a file](#delete-a-file)
+-   [Get a file](#get-a-file)
+---
+
+### Upload File
+
+```
+http://localhost:8000/data/upload/file
+```
+
+-   Form
+    -   `file`: The file to upload.
+    -   `organisationId`: ID of the organization.
+-   Header
+    ```json
+    {
+        "authorization": "---authorization---jwt---"
+    }
+    ```
+-   401: No authorization provided.
+-   200: File uploaded successfully.
+    ```json
+    {
+        "document_ids": [number]
+    }
+    ```
+-   400: Invalid file type.
+    ```json
+    {
+        "document_ids": [string]
+    }
+    ```
+-   207: Multiple files uploaded, some with errors.
+    ```json
+    {
+        "document_ids": [number|string]
+    }
+    
+    ```
+
+---
+
+### Get Files
+
+```
+http://localhost:8000/data/organization/get/files/<_id>
+```
+
+-   URL
+    ```json
+    {
+        _id: "organisation_id"
+    }
+-   Header
+    ```json
+    {
+        "authorization": "---authorization---jwt---"
+    }
+    ```
+-   401: No authorization provided.
+-   200: Retrieved organization files successfully.
+    ```json
+    {
+        documents: "id"
     }
     ```
 
 ---
 
-## Upload Files
-
-**POST**
-
-Upload files.
+### Get document base for an organization.
 
 ```
-http://localhost:8000/data/upload
+http://localhost:8000/data/organization/get/documentbase/<_id>
 ```
 
-### Body
-
--   `file` (form-data): Files to upload
--   `authorization` (form-data): User authorization token
--   `organisationId` (form-data): Organization ID
-
-### Response
-
--   400: Upload **failed**:
+-   URL
+    ```json
+    {
+        _id: "organisation_id"
+    }
+-   Header
+    ```json
+    {
+        "authorization": "---authorization---jwt---"
+    }
     ```
-    Returns a list of document file types.
+-   401: No authorization provided.
+-   200: Retrieved document base successfully.
+    ```json
+    {
+        document_base: "document_base"
+    }
     ```
--   207: Upload **partial success**:
-    ```
-    Returns a list of document file types and documentIds.
-    ```
--   201: Upload **success**:
-    ```
-    Returns a list of documentIds.
-    ```
-
-## Get Dokument
-
-**POST**
-
-get file.
-
-```
-http://localhost:8000/dev/getDocument/<_id>
-```
-
-### Body
-
--   None
-
-### Response
-
--   String of File Content
 
 ---
 
-## create-tables
-
-**POST**
-
-Create tables (Development).
+### Update file content.
 
 ```
-http://localhost:8000/create-tables
+http://localhost:8000/data/update/file/content
 ```
+
+-   Header
+    ```json
+    {
+        "authorization": "---authorization---jwt---"
+    }
+    ```
+-   Body
+    ```json
+    {
+        "documentId": "document_id",
+        "newContent": "new_content"
+    }
+    ```
+-   401: No authorization provided.
+-   200: File content updated successfully.
+    ```json
+    {
+        "status": bool
+    }
+    ```
+
+---
+
+### Delete a file.
+
+```
+http://localhost:8000/data/file/delete
+```
+
+-   Header
+    ```json
+    {
+        "authorization": "---authorization---jwt---"
+    }
+    ```
+-   Body
+    ```json
+    {
+        "documentId": "document_id"
+    }
+    ```
+-   401: No authorization provided.
+-   200: File deleted successfully.
+    ```json
+    {
+        "status": bool
+    }
+    ```
+
+---
+
+### Get a file.
+
+```
+http://localhost:8000/data/get/file/<_id>
+```
+
+
+-   URL
+    ```json
+    {
+        _id: "document_id"
+    }
+-   Header
+    ```json
+    {
+        "authorization": "---authorization---jwt---"
+    }
+    ```
+-   401: No authorization provided.
+-   200: Retrieved file successfully.
+    ```json
+    {
+        document_ids: [list, string, bytes]
+    }
+    ```
+-   404: File not found.
+    ```json
+    {
+        document_ids: []
+    }
+    ```
+-   206: Partial content retrieved.
+    ```json
+    {
+        document_ids: [list, string, bytes]
+    }
+    ```
+
+--
+
+## Core Routes
+
+This module defines Flask routes for the 'core' functionality of the Wannadb UI.
+
+- [Create a document base](#create-a-document-base)
+- [Load a document base](#load-a-document-base)
+- [Interactive document population](#interactive-document-population)
+- [Add attributes to a document base](#add-attributes-to-a-document-base)
+- [Update the attributes of a document base](#update-the-attributes-of-a-document-base)
+- [Sort nuggets](#sort-nuggets)
+- [Confirm a custom nugget](#confirm-a-custom-nugget)
+- [Confirm a match nugget](#confirm-a-match-nugget)
+- [Get document base for an organization](#get-document-base-for-an-organization)
+ 
+
+---
+
+### Create a document base
+
+```
+http://localhost:8000/core/create_document_base
+```
+
+-   Form
+    -   `authorization`: Your authorization token.
+    -   `organisationId`: Your organization ID.
+    -   `baseName`: Your document base name.
+    -   `document_ids`: Comma-separated list of document IDs.
+    -   `attributes`: Comma-separated list of attributes.
+-   401: No authorization provided.
+-   200: Document base created successfully.
+    ```json
+    {"task_id": "task_id"}
+    ```
+
+---
+
+### Load a document base.
+
+```
+http://localhost:8000/core/document_base/load
+```
+
+
+-   Form
+    -   `authorization`: Your authorization token.
+    -   `organisationId`: Your organization ID.
+    -   `baseName`: Your document base name.
+-   401: No authorization provided.
+-   200: Document base loaded successfully.
+    ```json
+    {"task_id": "task_id"}
+    ```
+
+---
+
+### Interactive document population.
+
+
+```
+http://localhost:8000/core/document_base/interactive
+```
+
+-   Form
+    -   `authorization`: Your authorization token.
+    -   `organisationId`: Your organization ID.
+    -   `baseName`: Your document base name.
+-   401: No authorization provided.
+-   200: Document base populated interactively.
+    ```json
+    {"task_id": "task_id"}
+    ```
+
+---
+
+### Add attributes to a document base.
+
+```
+http://localhost:8000/core/document_base/attributes/add
+```
+
+
+-   Form
+    -   `authorization`: Your authorization token.
+    -   `organisationId`: Your organization ID.
+    -   `baseName`: Your document base name.
+    -   `attributes`: Comma-separated list of attributes.
+-   401: No authorization provided.
+-   200: Attributes added to document base successfully.
+    ```json
+    {"task_id": "task_id"}
+    ```
+
+---
+
+### Update the attributes of a document base.
+
+```
+http://localhost:8000/core/document_base/attributes/update
+```
+
+
+-   Form
+    -   `authorization`: Your authorization token.
+    -   `organisationId`: Your organization ID.
+    -   `baseName`: Your document base name.
+    -   `attributes`: Comma-separated list of attributes.
+-   401: No authorization provided.
+-   200: Attributes updated successfully.
+    ```json
+    {"task_id": "task_id"}
+    ```
+
+---
+
+### Sort nuggets.
+
+```
+http://localhost:8000/core/document_base/order/nugget
+```
+
+-   Form
+    -   `authorization`: Your authorization token.
+    -   `organisationId`: Your organization ID.
+    -   `baseName`: Your document base name.
+    -   `documentName`: Your document name.
+    -   `documentContent`: Your document content.
+-   401: No authorization provided.
+-   200: Nuggets sorted successfully.
+    ```json
+    {"task_id": "task_id"}
+    ```
+
+---
+
+### Confirm a custom nugget.
+
+```
+http://localhost:8000/core/document_base/confirm/nugget/custom
+```
+
+-   Form
+    -   `authorization`: Your authorization token.
+    -   `organisationId`: Your organization ID.
+    -   `baseName`: Your document base name.
+    -   `documentName`: Your document name.
+    -   `documentContent`: Your document content.
+    -   `nuggetText`: Nugget as text.
+    -   `startIndex`: Start index of the nugget.
+    -   `endIndex`: End index of the nugget.
+    -   `interactiveCallTaskId`: Interactive call task ID.
+-   401: No authorization provided.
+-   200: Nugget confirmed successfully.
+    ```json
+    {"task_id": "task_id"}
+    ```
+
+---
+
+### Confirm a match nugget.
+
+```
+http://localhost:8000/core/document_base/confirm/nugget/match
+```
+
+-   Form
+    -   `authorization`: Your authorization token.
+    -   `organisationId`: Your organization ID.
+    -   `baseName`: Your document base name.
+    -   `documentName`: Your document name.
+    -   `documentContent`: Your document content.
+    -   `nuggetText`: Nugget as text.
+    -   `startIndex`: Start index of the nugget.
+    -   `endIndex`: End index of the nugget.
+    -   `interactiveCallTaskId`: Interactive call task ID.
+-   401: No authorization provided.
+-   200: Nugget confirmed successfully.
+    ```json
+    {"task_id": "task_id"}
+    ```
+
+
+
