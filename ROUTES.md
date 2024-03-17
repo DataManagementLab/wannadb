@@ -154,6 +154,7 @@ http://localhost:8000/getOrganisations
     {
         "organisation_ids": [number]
     }
+    ```
 -   404: User is not in any organization.
 -   409: Error retrieving organizations.
 
@@ -168,6 +169,7 @@ http://localhost:8000/getOrganisationName/<_id>
     {
         _id: "organisation_id"
     }
+    ```
 -   Body
     ```json
     {
@@ -204,6 +206,7 @@ http://localhost:8000/getOrganisationNames
     {
         "organisations": [number]
     }
+    ```
 -   404: User is not in any organization.
 -   409: Error retrieving organization names.
 
@@ -219,6 +222,7 @@ http://localhost:8000/addUserToOrganisation
     {
         "authorization": "---authorization---jwt---"
     }
+    ```
 -   Body
     ```json
     {
@@ -245,7 +249,7 @@ http://localhost:8000/getOrganisationMembers/<_id>
 -   URL
     ```json
     {
-        _id: "organisation_id"
+        "_id": "organisation_id"
     }
     ```
 -   Header
@@ -275,7 +279,7 @@ http://localhost:8000/get/user/suggestion/<_prefix>
 -   URL
     ```json
     {
-        _prefix: "organisation_id"
+        "_prefix": "organisation_id"
     }
     ```
 -   401: No authorization provided.
@@ -283,7 +287,7 @@ http://localhost:8000/get/user/suggestion/<_prefix>
 -   200: Retrieved username suggestions successfully.
     ```json
     {
-        "usernames": [string]
+        "usernames": ["string"]
     }
     ```
 
@@ -317,19 +321,19 @@ http://localhost:8000/data/upload/file
 -   200: File uploaded successfully.
     ```json
     {
-        "document_ids": [number]
+        "document_ids": ["number"]
     }
     ```
 -   400: Invalid file type.
     ```json
     {
-        "document_ids": [string]
+        "document_ids": ["string"]
     }
     ```
 -   207: Multiple files uploaded, some with errors.
     ```json
     {
-        "document_ids": [number|string]
+        "document_ids": ["number"|"string"]
     }
     
     ```
@@ -347,6 +351,7 @@ http://localhost:8000/data/organization/get/files/<_id>
     {
         _id: "organisation_id"
     }
+    ```
 -   Header
     ```json
     {
@@ -374,6 +379,7 @@ http://localhost:8000/data/organization/get/documentbase/<_id>
     {
         _id: "organisation_id"
     }
+    ```
 -   Header
     ```json
     {
@@ -413,7 +419,7 @@ http://localhost:8000/data/update/file/content
 -   200: File content updated successfully.
     ```json
     {
-        "status": bool
+        "status": "bool"
     }
     ```
 
@@ -441,7 +447,7 @@ http://localhost:8000/data/file/delete
 -   200: File deleted successfully.
     ```json
     {
-        "status": bool
+        "status": "bool"
     }
     ```
 
@@ -457,8 +463,9 @@ http://localhost:8000/data/get/file/<_id>
 -   URL
     ```json
     {
-        _id: "document_id"
+        "_id": "document_id"
     }
+    ```
 -   Header
     ```json
     {
@@ -469,19 +476,19 @@ http://localhost:8000/data/get/file/<_id>
 -   200: Retrieved file successfully.
     ```json
     {
-        document_ids: [list, string, bytes]
+        "document_ids": ["list", "string", "bytes"]
     }
     ```
 -   404: File not found.
     ```json
     {
-        document_ids: []
+        "document_ids": []
     }
     ```
 -   206: Partial content retrieved.
     ```json
     {
-        document_ids: [list, string, bytes]
+        "document_ids": ["list", "string", "bytes"]
     }
     ```
 
@@ -532,9 +539,9 @@ http://localhost:8000/core/document_base/load
 
 
 -   Form
-    -   `authorization`: Your authorization token.
-    -   `organisationId`: Your organization ID.
-    -   `baseName`: Your document base name.
+-   `authorization`: Your authorization token.
+-   `organisationId`: Your organization ID.
+-   `baseName`: Your document base name.
 -   401: No authorization provided.
 -   200: Document base loaded successfully.
     ```json
