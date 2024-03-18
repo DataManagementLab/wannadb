@@ -1,33 +1,3 @@
-# Start the Web-Backend docker build
-
-to build/start the production
-
-```
-docker compose -f "docker-compose-prod.yaml" build
-docker compose -f "docker-compose-prod.yaml" up
-```
-
-for developers use
-
-```
-docker compose build
-docker compose up
-```
-
-the flask and other services start automaticly.
-for more information click [here](https://github.com/lw86ruwo/wannadbBackend/blob/main/WEBSERVER_STRUCTURE.md)
-
-so see all the routes and the structure of the webserver click [here](https://github.com/lw86ruwo/wannadbBackend/blob/main/ROUTES.md)  
-
-you can use `code` to attach the container and then work in docker
-
-git only works when you install gh and make gh auth
-then you can work as usual
-
-a docker rebuild is only necessary if dependencies have changed
-
-
-
 # WannaDB: Ad-hoc SQL Queries over Text Collections
 
 ![Document collection and corresponding table.](header_image.svg)
@@ -203,3 +173,33 @@ The `Statistics` object allows you to easily record information during runtime. 
 ### Architecture: GUI
 
 The GUI implementation can be found in the `wannadb_ui` package. `wannadb_api.py` provides an asynchronous API for the `wannadb` library using PyQt's slots and signals mechanism. `main_window.py`, `document_base.py`, and `interactive_window.py` contain different parts of the user interface, and `common.py` contains base classes for some recurring user interface elements.
+
+---
+
+# Start the Web-Backend docker build
+
+to build/start the production
+
+```
+docker compose -f "docker-compose-prod.yaml" build
+docker compose -f "docker-compose-prod.yaml" up
+```
+
+for developers use
+
+```
+docker compose build
+docker compose up
+```
+
+the flask and other services start automaticly.
+for more information click [here](https://github.com/lw86ruwo/wannadbBackend/blob/main/WEBSERVER_STRUCTURE.md)
+
+so see all the routes and the structure of the webserver click [here](https://github.com/lw86ruwo/wannadbBackend/blob/main/ROUTES.md)  
+
+you can use `code` to attach the container and then work in docker
+
+git only works when you install gh and make gh auth
+then you can work as usual
+
+a docker rebuild is only necessary if dependencies have changed
