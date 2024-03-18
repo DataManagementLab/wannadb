@@ -1,0 +1,83 @@
+version: "3.6"
+services:
+  wannadb:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: prod
+    restart: always
+    tty: true
+    ports:
+      - "8000:8000"
+    env_file:
+      - wannadb_web/.env/.dev
+    depends_on:
+      - postgres
+      - redis
+    networks:
+      - mynetwork
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: worker
+    tty: true
+    command: ["celery", "-A", "celery_app", "worker", "-l", "info"]
+    env_file:
+      - wannadb_web/.env/.dev
+    volumes:
+      - ./:/home/wannadb
+    networks:
+      - mynetwork
+    depends_on:
+      - wannadb
+      - redis
+
+  flower:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: worker
+    tty: true
+    command: ['celery', '-A', 'celery_app', 'flower']
+    env_file:
+      - wannadb_web/.env/.dev
+    volumes:
+      - ./:/home/wannadb
+    networks:
+      - mynetwork
+    ports:
+      - "5555:5555"
+    depends_on:
+      - wannadb
+      - redis
+
+
+  postgres:
+    image: postgres
+    container_name: postgres-container
+    environment:
+      POSTGRES_PASSWORD: 0
+      POSTGRES_DB: userManagement
+    networks:
+      - mynetwork
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+  redis:
+    image: redis:alpine
+    container_name: redis-container
+    ports:
+      - "6379:6379"
+    networks:
+      - mynetwork
+
+networks:
+  mynetwork:
+    driver: bridge
+
+volumes:
+  pgdata:

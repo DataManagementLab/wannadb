@@ -4,3 +4,7 @@
 /.pytest_cache/
 
 /models/
+
+postgres/__pycache__
+flask_app/__pycache__
+1_:memory:
