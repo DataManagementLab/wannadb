@@ -280,6 +280,13 @@ class TypeSignal(BaseStringSignal):
 
 
 @register_signal
+class ExtractorNameSignal(BaseStringSignal):
+    """Type identifier of the nugget's value type."""
+    identifier: str = "ExtractorNameSignal"
+    do_serialize: bool = True
+
+
+@register_signal
 class LabelSignal(BaseFloatSignal):
     """Label of the nugget as determined by the extractors."""
     identifier: str = "LabelSignal"
