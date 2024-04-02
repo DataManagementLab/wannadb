@@ -58,18 +58,6 @@ class BaseEmbedder(BasePipelineElement, abc.ABC):
             status_callback: BaseStatusCallback,
             statistics: Statistics
     ) -> None:
-        # compute embeddings for the nuggets
-        nuggets: List[InformationNugget] = document_base.nuggets
-        logger.info(f"Embed {len(nuggets)} nuggets with {self.identifier}.")
-        tick: float = time.time()
-        status_callback(f"Embedding nuggets with {self.identifier}...", -1)
-        statistics["nuggets"]["num_nuggets"] = len(nuggets)
-        self._embed_nuggets(nuggets, interaction_callback, status_callback, statistics["nuggets"])
-        status_callback(f"Embedding nuggets with {self.identifier}...", 1)
-        tack: float = time.time()
-        logger.info(f"Embedded {len(nuggets)} nuggets with {self.identifier} in {tack - tick} seconds.")
-        statistics["nuggets"]["runtime"] = tack - tick
-
         # compute embeddings for the attributes
         attributes: List[Attribute] = document_base.attributes
         logger.info(f"Embed {len(attributes)} attributes with {self.identifier}.")
@@ -81,6 +69,34 @@ class BaseEmbedder(BasePipelineElement, abc.ABC):
         tack: float = time.time()
         logger.info(f"Embedded {len(attributes)} attributes with {self.identifier} in {tack - tick} seconds.")
         statistics["attributes"]["runtime"] = tack - tick
+
+        # compute embeddings for the nuggets
+        nuggets: List[InformationNugget] = document_base.nuggets
+
+        # Check if there is already an embedding for this signal
+        # (assuming that each embedder will always generate exactly one signal)
+        if self.generated_signal_identifiers["nuggets"][0] in nuggets[0].signals.keys():
+            # Try to determine if the dimensions are correct (should match those of the embedding of the attributes)
+            if len(self.generated_signal_identifiers["attributes"]) > 0:
+                if attributes[0].signals[self.generated_signal_identifiers["attributes"][0]].value.shape == nuggets[0].signals[self.generated_signal_identifiers["attributes"][0]].value.shape:
+                    logger.info(f"No need to embedd nuggets again with {self.identifier}, existing embeddings with correct dimensions found.")
+                    return
+                logger.info(f"Dimension missmatch, recomputing embeddings for {self.generated_signal_identifiers['nuggets'][0]} with {self.identifier}.")
+            else:
+                # Cannot check dimensions, but assuming they are correct do to lack of other evidence
+                logger.info(f"Found existing embeddings for {self.generated_signal_identifiers['nuggets'][0]}, assuming they were created with {self.identifier} (even though dimension check is not possible.")
+                return
+
+        # If no existing embeddings are found, or dimensions are not matching continue with embedding
+        logger.info(f"Embed {len(nuggets)} nuggets with {self.identifier}.")
+        tick: float = time.time()
+        status_callback(f"Embedding nuggets with {self.identifier}...", -1)
+        statistics["nuggets"]["num_nuggets"] = len(nuggets)
+        self._embed_nuggets(nuggets, interaction_callback, status_callback, statistics["nuggets"])
+        status_callback(f"Embedding nuggets with {self.identifier}...", 1)
+        tack: float = time.time()
+        logger.info(f"Embedded {len(nuggets)} nuggets with {self.identifier} in {tack - tick} seconds.")
+        statistics["nuggets"]["runtime"] = tack - tick
 
     def _embed_nuggets(
             self,
