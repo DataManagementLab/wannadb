@@ -154,6 +154,12 @@ class RankingBasedMatcher(BaseMatcher):
             tak: float = time.time()
             logger.info(f"Computed initial distances and initialized documents in {tak - tik} seconds.")
 
+            def _sort_remaining_documents():
+                remaining_documents.sort(
+                    key=lambda x: x.nuggets[x[CurrentMatchIndexSignal]][CachedDistanceSignal],
+                    reverse=True
+                )
+
             # iterative user interactions
             logger.info("Execute interactive matching.")
             tik: float = time.time()
@@ -161,11 +167,7 @@ class RankingBasedMatcher(BaseMatcher):
             continue_matching: bool = True
             while continue_matching and num_feedback < self._max_num_feedback and remaining_documents != []:
                 # sort remaining documents by distance
-                remaining_documents = list(sorted(
-                    remaining_documents,
-                    key=lambda x: x.nuggets[x[CurrentMatchIndexSignal]][CachedDistanceSignal],
-                    reverse=True
-                ))
+                _sort_remaining_documents()
 
                 if self._sampling_mode == "MOST_UNCERTAIN":
                     selected_documents: List[Document] = remaining_documents[:self._len_ranked_list]
@@ -330,6 +332,7 @@ class RankingBasedMatcher(BaseMatcher):
 
                     # Find more nuggets that are similar to this match
                     t_minus_custom_extraction = time.time()
+                    _sort_remaining_documents()
                     additional_nuggets: List[Tuple[Document, int, int]] = self._find_additional_nuggets(confirmed_nugget, remaining_documents)
                     t_custom_extraction = time.time() - t_minus_custom_extraction
 
