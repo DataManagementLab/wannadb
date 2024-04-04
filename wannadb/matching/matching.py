@@ -64,6 +64,8 @@ class RankingBasedMatcher(BaseMatcher):
             adjust_threshold: bool,
             nugget_pipeline: Pipeline,
             find_additional_nuggets: BaseCustomMatchExtractor,
+            num_bad_docs: int = 5,
+            num_recent_docs: int = 5,
     ) -> None:
         """
         Initialize the RankingBasedMatcher.
@@ -77,6 +79,8 @@ class RankingBasedMatcher(BaseMatcher):
         :param adjust_threshold: whether to adjust the maximum distance threshold based on the user feedback
         :param nugget_pipeline: pipeline that is used to process newly-generated nuggets
         :param find_additional_nuggets: optional function to add nuggets similar to a manually added and matched nugget
+        :param num_bad_docs: number of randomly selected documents without promising nuggets to be shown to the user
+        :param num_recent_docs: number of documents that recently got interesting additional extractions to be shown to the user
         """
         super(RankingBasedMatcher, self).__init__()
         self._distance: BaseDistance = distance
@@ -89,6 +93,8 @@ class RankingBasedMatcher(BaseMatcher):
         self._adjust_threshold: bool = adjust_threshold
         self._nugget_pipeline: Pipeline = nugget_pipeline
         self._find_additional_nuggets = find_additional_nuggets
+        self.num_bad_docs = num_bad_docs
+        self.num_recent_docs = num_recent_docs
 
         # add signals required by the distance function to the signals required by the matcher
         self._add_required_signal_identifiers(self._distance.required_signal_identifiers)
@@ -129,6 +135,7 @@ class RankingBasedMatcher(BaseMatcher):
                 continue
 
             remaining_documents: List[Document] = []
+            docs_with_added_nuggets: set[Document] = set()
 
             # compute initial distances as distances to label
             logger.info("Compute initial distances and initialize documents.")
@@ -209,10 +216,29 @@ class RankingBasedMatcher(BaseMatcher):
                         lower_right = min(len(remaining_documents),
                                           lower_right + (self._len_ranked_list // 2 - higher_num))
 
-                    selected_documents: List[Document] = remaining_documents[higher_left:lower_right]
+                    selected_documents: List[Document] = []
 
                     num_nuggets_above: int = higher_left
                     num_nuggets_below: int = len(remaining_documents) - lower_right
+                    selected_docs_with_added_nuggets = set()
+
+                    # Add additional documents (most uncertain)...
+                    if self.num_bad_docs > 0 and num_nuggets_above > 0:
+                        k = min(self.num_bad_docs, num_nuggets_above)
+                        selected_documents.extend(random.choices(remaining_documents[:num_nuggets_above], k=k))
+                        num_nuggets_above -= k
+                    # ...  and those that recently got interesting additional extractions to the list
+                    if self.num_recent_docs > 0 and len(docs_with_added_nuggets) > 0:
+                        k = min(self.num_recent_docs, len(docs_with_added_nuggets))
+                        selected_docs_with_added_nuggets = random.choices(list(docs_with_added_nuggets), k=k)
+                        selected_documents.extend(selected_docs_with_added_nuggets)
+                    selected_docs_with_added_nuggets = set(selected_docs_with_added_nuggets)
+
+                    # Now fill the list with documents at threshold
+                    selected_documents.extend(doc for doc in remaining_documents[higher_left:lower_right] if doc not in selected_docs_with_added_nuggets)
+
+                    # Sort to unify the order across the different three sources
+                    selected_documents.sort(key=lambda x: x.nuggets[x[CurrentMatchIndexSignal]][CachedDistanceSignal], reverse=True)
                 else:
                     logger.error(f"Unknown sampling mode '{self._sampling_mode}'!")
                     assert False, f"Unknown sampling mode '{self._sampling_mode}'!"
@@ -358,6 +384,7 @@ class RankingBasedMatcher(BaseMatcher):
                     for additional_nugget in additional_nuggets:
                         additional_nugget[LabelSignal] = attribute.name
                         additional_nugget.document.nuggets.append(additional_nugget)
+                        docs_with_added_nuggets.add(additional_nugget.document)
                     run_nugget_pipeline(additional_nuggets)
 
                     # TODO: maybe there is a better way than to compute distances based on currently confirmed nugget?
@@ -377,7 +404,10 @@ class RankingBasedMatcher(BaseMatcher):
                 elif feedback_result["message"] == "is-match":
                     statistics[attribute.name]["num_confirmed_match"] += 1
                     feedback_result["nugget"].document.attribute_mappings[attribute.name] = [feedback_result["nugget"]]
-                    remaining_documents.remove(feedback_result["nugget"].document)
+                    doc = feedback_result["nugget"].document
+                    remaining_documents.remove(doc)
+                    if doc in docs_with_added_nuggets:
+                        docs_with_added_nuggets.remove(doc)
 
                     # update the distances for the other documents
                     for document in remaining_documents:
