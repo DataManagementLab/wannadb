@@ -82,6 +82,11 @@ class InformationNugget:
         return self._document.text[self._start_char:self._end_char]
 
     @property
+    def serializable(self) -> (str, str, int, int):
+        """Serializable representation of the nugget."""
+        return self.text, self._document.name, self._start_char, self._end_char
+
+    @property
     def signals(self) -> Dict[str, BaseSignal]:
         """Signals associated with the nugget."""
         return self._signals

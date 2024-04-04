@@ -66,6 +66,7 @@ class RankingBasedMatcher(BaseMatcher):
             find_additional_nuggets: BaseCustomMatchExtractor,
             num_bad_docs: int = 5,
             num_recent_docs: int = 5,
+            store_best_guesses: bool = False,
     ) -> None:
         """
         Initialize the RankingBasedMatcher.
@@ -81,6 +82,7 @@ class RankingBasedMatcher(BaseMatcher):
         :param find_additional_nuggets: optional function to add nuggets similar to a manually added and matched nugget
         :param num_bad_docs: number of randomly selected documents without promising nuggets to be shown to the user
         :param num_recent_docs: number of documents that recently got interesting additional extractions to be shown to the user
+        :param store_best_guesses: whether to store the best guesses for each feedback round
         """
         super(RankingBasedMatcher, self).__init__()
         self._distance: BaseDistance = distance
@@ -95,6 +97,7 @@ class RankingBasedMatcher(BaseMatcher):
         self._find_additional_nuggets = find_additional_nuggets
         self.num_bad_docs = num_bad_docs
         self.num_recent_docs = num_recent_docs
+        self.store_best_guesses = store_best_guesses
 
         # add signals required by the distance function to the signals required by the matcher
         self._add_required_signal_identifiers(self._distance.required_signal_identifiers)
@@ -129,6 +132,8 @@ class RankingBasedMatcher(BaseMatcher):
             self._max_distance = self._default_max_distance
             statistics[attribute.name]["max_distances"] = [self._max_distance]
             statistics[attribute.name]["feedback_durations"] = []
+            if self.store_best_guesses:
+                statistics[attribute.name]["best_guesses"] = []
 
             if any((attribute.name in document.attribute_mappings.keys() for document in document_base.documents)):
                 logger.info(f"Attribute '{attribute.name}' has already been matched before.")
@@ -460,6 +465,21 @@ class RankingBasedMatcher(BaseMatcher):
                         else:
                             logger.info("CONFIRMED NUGGET NOT IN RANKED LIST: Did not change the maximum distance "
                                         "since the confirmed nugget was not in the ranked list.")
+                if self.store_best_guesses:
+                    best_guesses = []
+                    for document in document_base.documents:
+                        if attribute.name in document.attribute_mappings:
+                            if len(document.attribute_mappings[attribute.name]) > 0:
+                                best_guesses.append(document.attribute_mappings[attribute.name][0].serializable)
+                            else:
+                                best_guesses.append(None)
+                        else:
+                            current_guess: InformationNugget = document.nuggets[document[CurrentMatchIndexSignal]]
+                            if current_guess[CachedDistanceSignal] < self._max_distance:
+                                best_guesses.append(current_guess.serializable)
+                            else:
+                                best_guesses.append(None)
+                    statistics[attribute.name]["best_guesses"].append((num_feedback, best_guesses))
 
             tak: float = time.time()
             logger.info(f"Executed interactive matching in {tak - tik} seconds.")
