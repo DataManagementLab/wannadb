@@ -1,7 +1,7 @@
 import functools
 import logging
 import time
-from typing import Any, Dict, List, Optional, Type, Union
+from typing import Any, Dict, List, Optional, Type, Union, Tuple
 
 import bson
 
@@ -278,6 +278,22 @@ class Document:
     def signals(self) -> Dict[str, BaseSignal]:
         """Signals associated with the document."""
         return self._signals
+
+    @property
+    def sentences(self) -> List[str]:
+        """Sentences of the document."""
+        # Build sentence list by splitting the text based on start chars in self.signals['SentenceStartCharsSignal']
+        sentences = []
+        for start_char, end_char in zip(self['SentenceStartCharsSignal'][:-1], self['SentenceStartCharsSignal'][1:]):
+            sentences.append(self.text[start_char:end_char])
+        sentences.append(self.text[self['SentenceStartCharsSignal'][-1]:])
+        return sentences
+
+    def sentence(self, idx: int) -> tuple[int, int, str]:
+        """Sentence of the document at the given index."""
+        start_char = self['SentenceStartCharsSignal'][idx]
+        end_char = self['SentenceStartCharsSignal'][idx + 1] if idx + 1 < len(self['SentenceStartCharsSignal']) else len(self.text)
+        return start_char, end_char, self.text[start_char:end_char]
 
     def __getitem__(self, item: Union[str, Type[BaseSignal]]) -> Any:
         """
