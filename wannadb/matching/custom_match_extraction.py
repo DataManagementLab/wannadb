@@ -15,12 +15,15 @@ import nltk
 import re
 import spacy
 import time
+import string
+from typing import Any, Dict, List, Optional, Set
 from itertools import repeat
-from nltk import ngrams
+from nltk import ngrams, word_tokenize
 from nltk.corpus import wordnet
 from spacy.tokenizer import Tokenizer
 from typing import List, Tuple
 from transformers import pipeline
+from sklearn.metrics.pairwise import cosine_similarity
 from wannadb import resources
 from wannadb.data.data import InformationNugget, Document
 
@@ -614,5 +617,107 @@ class FaissSemanticSimilarityExtractor(BaseCustomMatchExtractor):
                 doc_start_idx = doc.text.find(potential_match)
                 doc_end_idx = doc_start_idx + len(potential_match)
                 matches.append((doc, doc_start_idx, doc_end_idx))
+
+        return matches
+
+
+class FaissSentenceSimilarityExtractor(BaseCustomMatchExtractor):
+    """
+        Semantic similarity extraction using a two stage approach (first sentence, then phrase level) and speed up by FAISS
+    """
+
+    identifier: str = "FaissSentenceSimilarityExtractor"
+
+    def __init__(self, num_similar_sentences, num_phrases_per_sentence) -> None:
+        """
+        :param num_similar_sentences: The number of similar sentences to extract
+        :param num_phrases_per_sentence: The number of phrases to extract per found similar sentence
+        """
+        # Store params
+        self.num_similar_sentences = num_similar_sentences
+        self.num_phrases_per_sentence = num_phrases_per_sentence
+
+        # The distance function, currently: cosine similarity
+        self.distance = cosine_similarity
+
+        # Get the embedding model resource from the resource manager
+        self.embedding_model_name = "SBERTBertLargeNliMeanTokensResource"
+        resources.MANAGER.load(self.embedding_model_name)
+
+    def __call__(
+            self, nugget: InformationNugget, documents: List[Document]
+    ) -> List[Tuple[Document, int, int]]:
+        """
+
+
+            :param nugget: The InformationNugget that should be matched against
+            :param documents: The set of documents to extract matches from
+            :return: Returns a List of Tuples of matching nuggets, where the first entry denotes the corresponding
+            document of the nugget, the second and third entry denote the start and end indices of the match.
+        """
+
+        # List of new matches
+        matches = []
+
+        logger.info(
+            f"Running online extraction with '{self.identifier}' on {len(documents)} documents.")
+
+        # Generate flat list of all embeddings of the docs
+        flat_token_list = np.array([emb for doc in documents for emb in doc['DocumentSentenceEmbeddingSignal']])
+        # Generate a list of numeric ids for the embeddings together with a lookup to map back to the original document id and sentence index
+        id_lookup = [(doc_index, sentence_index) for doc_index, doc in enumerate(documents) for sentence_index in range(len(doc['DocumentSentenceEmbeddingSignal']))]
+        ids = np.array([i for i in range(len(id_lookup))])
+
+        # Create a Faiss index mapping given the sentence embeddings
+        faiss_index = faiss.IndexIDMap(faiss.IndexFlatIP(flat_token_list[0].shape[-1]))
+        faiss_index.add_with_ids(flat_token_list, ids)
+
+        sentence = nugget.signals['CachedContextSentenceSignal'].value['text']
+        phrase = nugget.text
+
+        query_vector = resources.MANAGER[self.embedding_model_name].encode([sentence], show_progress_bar=False)
+        # Find the k most similar sentence embeddings
+        top_k_indices = faiss_index.search(query_vector, self.num_similar_sentences)
+        logger.info(f"Found {len(top_k_indices)} similar sentences. Now searching for nuggets inside.")
+
+        # Get the textual representation of these sentences
+        similar_sentences = []
+        for id in top_k_indices[1][0]:
+            doc_index, sentence_index = id_lookup[id]
+            doc = documents[doc_index]
+            s, e, t = doc.sentence(sentence_index)
+            similar_sentences.append((doc_index, t, s, e))
+
+        # Second stage, find the most similar phrases in these sentences
+        phrase_embedding = resources.MANAGER[self.embedding_model_name].encode([phrase], show_progress_bar=False)
+        n = len(nltk.word_tokenize(phrase))
+        logger.info(f"Looking for {n}-grams")
+
+        # Tokenize each sentence into words
+        tokens = [nltk.word_tokenize(sentence[1]) for sentence in similar_sentences]
+        # Generate n-grams from tokens
+        phrases_list = [[" ".join(ngram) for ngram in nltk.ngrams(token, n)] for token in tokens]
+
+        # Compute the cosine similarity
+        for sentence, phrases in zip(similar_sentences, phrases_list):
+            doc = documents[sentence[0]]
+            # Compute the cosine similarity between the given phrase and the phrases in the list
+            phrases_embeddings = resources.MANAGER[self.embedding_model_name].encode(phrases, show_progress_bar=False)
+            similarities = cosine_similarity(phrase_embedding, phrases_embeddings)
+
+            # Find the indices that would sort the similarities array
+            sorted_indices = np.argsort(similarities)
+
+            # Select the last n indices
+            top_n_indices = sorted_indices[0][-self.num_phrases_per_sentence:]
+
+            # Create a match for each phrase in top n indices
+            for top_phrase_index in top_n_indices:
+                phrase = phrases[top_phrase_index]
+                start_char = sentence[1].find(phrase)
+                end_char = start_char + len(phrase)
+                # Transform sentence-based start and end chars to document-based ones
+                # and append to matches
+                matches.append((doc, start_char + sentence[2], end_char + sentence[2]))
 
         return matches
