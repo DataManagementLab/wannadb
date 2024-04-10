@@ -82,9 +82,16 @@ class InformationNugget:
         return self._document.text[self._start_char:self._end_char]
 
     @property
+    def extractor_name(self) -> str:
+        """Name of the extractor that created the nugget."""
+        if 'ExtractorNameSignal' not in self._signals.keys():
+            return "<UNK>"
+        return self._signals['ExtractorNameSignal'].value
+
+    @property
     def serializable(self) -> (str, str, int, int):
         """Serializable representation of the nugget."""
-        return self.text, self._document.name, self._start_char, self._end_char
+        return self.text, self._document.name, self._start_char, self._end_char, self.extractor_name
 
     @property
     def signals(self) -> Dict[str, BaseSignal]:

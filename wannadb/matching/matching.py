@@ -9,7 +9,7 @@ import numpy as np
 from wannadb.configuration import BasePipelineElement, register_configurable_element, Pipeline
 from wannadb.data.data import Document, DocumentBase, InformationNugget
 from wannadb.data.signals import CachedContextSentenceSignal, CachedDistanceSignal, \
-    SentenceStartCharsSignal, CurrentMatchIndexSignal, LabelSignal
+    SentenceStartCharsSignal, CurrentMatchIndexSignal, LabelSignal, ExtractorNameSignal
 from wannadb.interaction import BaseInteractionCallback
 from wannadb.matching.custom_match_extraction import BaseCustomMatchExtractor
 from wannadb.matching.distance import BaseDistance
@@ -332,6 +332,7 @@ class RankingBasedMatcher(BaseMatcher):
                     statistics[attribute.name]["num_confirmed_match"] += 1
 
                     confirmed_nugget = InformationNugget(feedback_result["document"], feedback_result["start"], feedback_result["end"])
+                    confirmed_nugget[ExtractorNameSignal] = "<CUSTOM_SELECTION>"
                     confirmed_nugget[LabelSignal] = attribute.name
 
                     run_nugget_pipeline([confirmed_nugget])
@@ -388,6 +389,7 @@ class RankingBasedMatcher(BaseMatcher):
                     additional_nuggets = list(map(lambda i: InformationNugget(*i), additional_nuggets))
                     for additional_nugget in additional_nuggets:
                         additional_nugget[LabelSignal] = attribute.name
+                        additional_nugget[ExtractorNameSignal] = str(self._find_additional_nuggets)
                         additional_nugget.document.nuggets.append(additional_nugget)
                         docs_with_added_nuggets.add(additional_nugget.document)
                     run_nugget_pipeline(additional_nuggets)
