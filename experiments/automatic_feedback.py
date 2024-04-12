@@ -146,9 +146,14 @@ class AutomaticCustomMatchesRandomRankingBasedMatchingFeedback(BaseInteractionCa
         # randomly select a nugget to give feedback on
         nugget = random.choice(nuggets)
         document = None
+        doc_name = nugget.document.name.split("\\")[-1]
+        # if the doc name ends with json, remove it
+        if "." in doc_name:
+            doc_name = doc_name.split(".")[0]
         for doc in self._documents:
-            if doc["id"] == nugget.document.name.split("\\")[-1][:-4]:
+            if doc["id"] == doc_name:
                 document = doc
+                break
 
         # check whether nugget matches attribute
         for mention in document["mentions"][attribute_name]:

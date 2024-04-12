@@ -32,9 +32,14 @@ from experiments.automatic_feedback import AutomaticCustomMatchesRandomRankingBa
 class ExperimentRunner:
     def __init__(self, document_base: DocumentBase, ground_truth_docs: List[Dict[str, Any]],
                  user_attribute_name2attribute_name: Dict[str, str] = None, preprocessing_pipeline: Pipeline = None,
-                 matching_pipeline: Pipeline = None, resource_manager: ResourceManager = None, statistics=None, logger=None):
+                 matching_pipeline: Pipeline = None, resource_manager: ResourceManager = None, statistics=None, logger=None, tmp_dir="."):
         self.document_base = document_base
         self.ground_truth_docs = ground_truth_docs
+
+        self.tmp_dir = tmp_dir
+        # Store document base in file to allow restoring a clean state for each run
+        with(open(os.path.join(self.tmp_dir, "tmp_exp_document_base.bson"), "wb")) as file:
+            file.write(document_base.to_bson())
 
         if user_attribute_name2attribute_name is None:
             # Generate default mapping (if not otherwise specified)
@@ -163,13 +168,17 @@ class ExperimentRunner:
         if feedback_oracle is None:
             feedback_oracle = AutomaticCustomMatchesRandomRankingBasedMatchingFeedback
 
-        # Set new attributes
-        if raw_attributes is not None:
-            self.document_base._attributes = [Attribute(a) for a in raw_attributes]
-
         run_times = []
         for run, random_seed in enumerate(self.random_seeds[:num_runs]):
             self.logger.info(f"Executing run {run + 1}/{num_runs}.")
+
+            # Load the document base from file to reset the state
+            with(open(os.path.join(self.tmp_dir, "tmp_exp_document_base.bson"), "rb")) as file:
+                self.document_base = DocumentBase.from_bson(file.read())
+
+            # Set new attributes
+            if raw_attributes is not None:
+                self.document_base._attributes = [Attribute(a) for a in raw_attributes]
 
             # Reset existing matches
             for document in self.document_base.documents:
@@ -206,7 +215,8 @@ class ExperimentRunner:
     def evaluate(self):
         self.logger.info(f"Evaluating results for last experiment ({self.last_num_runs} runs)")
         interaction_results = {}
-        for attr in raw_attributes:
+        for attribute in self.document_base._attributes:
+            attr = attribute.name
             for run in range(self.last_num_runs):
                 interaction_results[attr] = []
                 best_guesses_for_attr = self.statistics["matching"]["runs"][str(run)]["pipeline-element-4"][attr][
@@ -219,7 +229,7 @@ class ExperimentRunner:
                     results["num_should_be_empty_is_empty"] = 0
                     results["num_should_be_empty_is_full"] = 0
                     results["correct_nugget_sources"] = Counter()
-                    for bg, doc in zip(best_guesses, document_base.documents):
+                    for bg, doc in zip(best_guesses, self.document_base.documents):
                         if len(doc.attribute_mappings[attr]) > 0:
                             if bg is not None:
                                 bg_text, bg_doc_name, bg_start, bg_end, bg_source = bg
