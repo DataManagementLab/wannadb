@@ -220,6 +220,42 @@ class ExactCustomMatchExtractor(BaseCustomMatchExtractor):
         return new_nuggets
 
 
+class VarianceExtractor(BaseCustomMatchExtractor):
+    """
+        Extractor based on finding exact matches of the currently annotated custom span.
+    """
+
+    identifier: str = "VarianceExtractor"
+
+    def __call__(
+            self, nugget: InformationNugget, documents: List[Document]
+    ) -> List[Tuple[Document, int, int]]:
+        """
+            Extracts nuggets from the documents that exactly match the text of the provided nugget.
+
+            :param nugget: The InformationNugget that should be matched against
+            :param documents: The set of documents to extract matches from, or a single document
+            :return: Returns a List of Tuples of matching nuggets, where the first entry denotes the corresponding
+            document of the nugget, the second and third entry denote the start and end indices of the match.
+        """
+        # Potential preprocessing
+        documents = self.preprocess_documents(documents)
+
+        nuggets = []
+        # get basic information about the confirmed nugget
+        sentence = nugget.signals['CachedContextSentenceSignal'].value['text']
+        phrase = nugget.text
+        phrase_pattern = r"\s".join([fr"\w*{word}\w*" for word in word_tokenize(phrase)])
+        pattern = re.compile(fr"{phrase_pattern}", re.IGNORECASE)
+
+        for document in documents:
+            text: str = document.text
+            for match in pattern.finditer(text):
+                nuggets.append((document, match.start(), match.end()))
+
+        return nuggets
+
+
 class SpacySimilarityExtractor(BaseCustomMatchExtractor):
     """
         This extractor aims to identify similar patterns among tokens that share similar semantic meanings.
@@ -409,7 +445,7 @@ class QuestionAnsweringCustomMatchExtractor(BaseCustomMatchExtractor):
 
             # Create input for QA model
             model_input = {
-                'question': f'What word in this text is most similar to {nugget.text}?',
+                'question': f'What phrase in this text is most similar to {nugget.text}?',
                 'context': document.text
             }
 
