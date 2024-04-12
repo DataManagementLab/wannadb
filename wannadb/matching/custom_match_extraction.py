@@ -58,6 +58,16 @@ class BaseCustomMatchExtractor(abc.ABC):
         """
         return self.identifier
 
+    def to_config(self) -> Dict[str, Any]:
+        """
+        Obtain a JSON-serializable representation of the extractor.
+
+        :return: JSON-serializable representation of the extractor
+        """
+        return {
+            "identifier": self.identifier,
+        }
+
     @staticmethod
     def preprocess_documents(documents: List[Document]) -> List[Document]:
         """
@@ -361,6 +371,18 @@ class QuestionAnsweringCustomMatchExtractor(BaseCustomMatchExtractor):
         # Set threshold for the score by which a match is classified as valid
         self.threshold = threshold
 
+    def to_config(self) -> Dict[str, Any]:
+        """
+        Obtain a JSON-serializable representation of the extractor.
+
+        :return: JSON-serializable representation of the extractor
+        """
+        return {
+            "identifier": self.identifier,
+            "threshold": self.threshold,
+            "model": "deepset/roberta-base-squad2",
+        }
+
     def __call__(
             self, nugget: InformationNugget, documents: List[Document]
     ) -> List[Tuple[Document, int, int]]:
@@ -643,6 +665,19 @@ class FaissSentenceSimilarityExtractor(BaseCustomMatchExtractor):
         # Get the embedding model resource from the resource manager
         self.embedding_model_name = "SBERTBertLargeNliMeanTokensResource"
         resources.MANAGER.load(self.embedding_model_name)
+
+    def to_config(self) -> Dict[str, Any]:
+        """
+        Obtain a JSON-serializable representation of the extractor.
+
+        :return: JSON-serializable representation of the extractor
+        """
+        return {
+            "identifier": self.identifier,
+            "num_similar_sentences": self.num_similar_sentences,
+            "num_phrases_per_sentence": self.num_phrases_per_sentence,
+            "embedding_model_name": self.embedding_model_name,
+        }
 
     def __call__(
             self, nugget: InformationNugget, documents: List[Document]
