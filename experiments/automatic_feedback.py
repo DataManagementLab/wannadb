@@ -1,8 +1,12 @@
 import random
 from typing import Dict, Any, List
+import logging
 
 from wannadb.interaction import BaseInteractionCallback
-from experiments.util import consider_overlap_as_match
+from util import consider_overlap_as_match, get_document_by_name
+
+logger: logging.Logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
 
 
 class AutomaticRandomRankingBasedMatchingFeedback(BaseInteractionCallback):
@@ -49,7 +53,7 @@ class AutomaticRandomRankingBasedMatchingFeedback(BaseInteractionCallback):
                 if consider_overlap_as_match(mention["start_char"], mention["end_char"],
                                              nug.start_char, nug.end_char):
                     # there is a matching nugget in nugget's document
-                    print(
+                    logger.debug(
                         f"{data['max-distance']:.2f} {attribute_name}: '{nugget.text}' ==> RETURN OTHER MATCHING NUGGET '{nug.text}'")
                     return {
                         "message": "is-match",
@@ -58,7 +62,7 @@ class AutomaticRandomRankingBasedMatchingFeedback(BaseInteractionCallback):
                     }
 
         # there is no matching nugget in nugget's document
-        print(f"{data['max-distance']:.2f} {attribute_name}: '{nugget.text}' ==> NO MATCH IN DOCUMENT")
+        logger.debug(f"{data['max-distance']:.2f} {attribute_name}: '{nugget.text}' ==> NO MATCH IN DOCUMENT")
         return {
             "message": "no-match-in-document",
             "nugget": nugget,
@@ -101,7 +105,7 @@ class AutomaticFixFirstRankingBasedMatchingFeedback(BaseInteractionCallback):
                         if consider_overlap_as_match(men["start_char"], men["end_char"],
                                                      nug.start_char, nug.end_char):
                             # there is a matching nugget in nugget's document
-                            print(
+                            logger.debug(
                                 f"{data['max-distance']:.2f} {attribute_name}: '{nugget.text}' ==> RETURN OTHER MATCHING NUGGET '{nug.text}'")
                             return {
                                 "message": "is-match",
@@ -110,7 +114,7 @@ class AutomaticFixFirstRankingBasedMatchingFeedback(BaseInteractionCallback):
                             }
 
                 # there is no matching nugget in nugget's document
-                print(f"{data['max-distance']:.2f} {attribute_name}: '{nugget.text}' ==> NO MATCH IN DOCUMENT")
+                logger.debug(f"{data['max-distance']:.2f} {attribute_name}: '{nugget.text}' ==> NO MATCH IN DOCUMENT")
                 return {
                     "message": "no-match-in-document",
                     "nugget": nugget,
@@ -118,7 +122,7 @@ class AutomaticFixFirstRankingBasedMatchingFeedback(BaseInteractionCallback):
                 }
 
         # all nuggets are matches
-        print(f"{data['max-distance']:.2f} {attribute_name}: '{nuggets[0].text}' ==> IS MATCH")
+        logger.debug(f"{data['max-distance']:.2f} {attribute_name}: '{nuggets[0].text}' ==> IS MATCH")
         return {
             "message": "is-match",
             "nugget": nuggets[0],
@@ -139,28 +143,23 @@ class AutomaticCustomMatchesRandomRankingBasedMatchingFeedback(BaseInteractionCa
                     "do-attribute": True
                 }
         nuggets = data["nuggets"]
+        logger.debug(f"Nuggets: {', '.join(f'{n.document.name}: {n.text}' for n in data['nuggets'])}")
         attribute = data["attribute"]
 
         attribute_name = self._user_attribute_name2dataset_attribute_name[attribute.name]
 
         # randomly select a nugget to give feedback on
         nugget = random.choice(nuggets)
-        document = None
-        doc_name = nugget.document.name.split("\\")[-1]
-        # if the doc name ends with json, remove it
-        if "." in doc_name:
-            doc_name = doc_name.split(".")[0]
-        for doc in self._documents:
-            if doc["id"] == doc_name:
-                document = doc
-                break
+        document = get_document_by_name(self._documents, nugget.document.name)
+        if document is None:
+            logger.warning(f"Document {nugget.document.name} not found in documents.")
 
         # check whether nugget matches attribute
         for mention in document["mentions"][attribute_name]:
             if consider_overlap_as_match(mention["start_char"], mention["end_char"],
                                          nugget.start_char, nugget.end_char):
                 # the nugget matches the attribute
-                #print(f"{data['max-distance']:.2f} {attribute_name}: '{nugget.text}' ==> IS MATCH")
+                logger.debug(f"{data['max-distance']:.2f} {attribute_name}: '{nugget.text}' ==> IS MATCH")
                 return {
                     "message": "is-match",
                     "nugget": nugget,
@@ -173,7 +172,7 @@ class AutomaticCustomMatchesRandomRankingBasedMatchingFeedback(BaseInteractionCa
                 if consider_overlap_as_match(mention["start_char"], mention["end_char"],
                                              nug.start_char, nug.end_char):
                     # there is a matching nugget in nugget's document
-                    #print(f"{data['max-distance']:.2f} {attribute_name}: '{nugget.text}' ==> RETURN OTHER MATCHING NUGGET '{nug.text}'")
+                    logger.debug(f"{data['max-distance']:.2f} {attribute_name}: '{nugget.text}' ==> RETURN OTHER MATCHING NUGGET '{nug.text}'")
                     return {
                         "message": "is-match",
                         "nugget": nug,
@@ -188,7 +187,7 @@ class AutomaticCustomMatchesRandomRankingBasedMatchingFeedback(BaseInteractionCa
             start_char = document["mentions"][attribute_name][0]["start_char"]
             end_char = document["mentions"][attribute_name][0]["end_char"]
             text = nugget.document.text[start_char:end_char]
-            #print(f"{data['max-distance']:.2f} {attribute_name}: '{nugget.text}' ==> RETURN CUSTOM MATCH '{text}'")
+            logger.debug(f"{data['max-distance']:.2f} {attribute_name}: '{nugget.text}' ==> RETURN CUSTOM MATCH '{text}'")
             return {
                 "message": "custom-match",
                 "document": nugget.document,
@@ -197,7 +196,7 @@ class AutomaticCustomMatchesRandomRankingBasedMatchingFeedback(BaseInteractionCa
             }
 
         # the value is not mentioned in the document
-        #print(f"{data['max-distance']:.2f} {attribute_name}: '{nugget.text}' ==> NO MATCH IN DOCUMENT")
+        logger.debug(f"{data['max-distance']:.2f} {attribute_name}: '{nugget.text}' ==> NO MATCH IN DOCUMENT")
         return {
             "message": "no-match-in-document",
             "nugget": nugget,

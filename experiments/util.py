@@ -90,3 +90,14 @@ def calculate_f1_scores(results: Statistics):
         results["true_positive_rate"] = 1
     else:
         results["true_positive_rate"] = results["num_should_be_filled_is_correct"] / (results["num_should_be_filled_is_correct"] + results["num_should_be_filled_is_incorrect"] + results["num_should_be_filled_is_empty"])
+
+
+def get_document_by_name(documents, doc_name):
+    doc_name = doc_name.split("\\")[-1]
+    # if the doc name ends with json, remove it
+    if "." in doc_name:
+        doc_name = doc_name.split(".")[0]
+    for doc in documents:
+        if doc["id"] == doc_name:
+            return doc
+    return None

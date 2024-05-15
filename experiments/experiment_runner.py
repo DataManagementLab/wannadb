@@ -25,21 +25,19 @@ from wannadb.statistics import Statistics
 from wannadb.status import EmptyStatusCallback
 from wannadb.interaction import BaseInteractionCallback
 
-from experiments.util import consider_overlap_as_match, calculate_f1_scores
-from experiments.automatic_feedback import AutomaticCustomMatchesRandomRankingBasedMatchingFeedback
+from util import consider_overlap_as_match, calculate_f1_scores, get_document_by_name
+from automatic_feedback import AutomaticCustomMatchesRandomRankingBasedMatchingFeedback
 
 
 class ExperimentRunner:
     def __init__(self, document_base: DocumentBase, ground_truth_docs: List[Dict[str, Any]],
                  user_attribute_name2attribute_name: Dict[str, str] = None, preprocessing_pipeline: Pipeline = None,
-                 matching_pipeline: Pipeline = None, resource_manager: ResourceManager = None, statistics=None, logger=None, tmp_dir="."):
-        self.document_base = document_base
+                 matching_pipeline_settings: Dict = None, resource_manager: ResourceManager = None, statistics=None, logger=None, tmp_dir="."):
         self.ground_truth_docs = ground_truth_docs
 
         self.tmp_dir = tmp_dir
-        # Store document base in file to allow restoring a clean state for each run
-        with(open(os.path.join(self.tmp_dir, "tmp_exp_document_base.bson"), "wb")) as file:
-            file.write(document_base.to_bson())
+        # Store serialized version of doc base to restore a clean state for each run
+        self.document_base_original_state = document_base.to_bson()
 
         if user_attribute_name2attribute_name is None:
             # Generate default mapping (if not otherwise specified)
@@ -63,10 +61,7 @@ class ExperimentRunner:
             ])
         self.preprocessing_pipeline = preprocessing_pipeline
 
-        if matching_pipeline is None:
-            # Default matching pipeline
-            matching_pipeline = self.generate_standard_matching_pipeline()
-        self.matching_pipeline = matching_pipeline
+        self.matching_pipeline_settings = matching_pipeline_settings
 
         if resource_manager is None:
             resource_manager = ResourceManager()
@@ -173,8 +168,9 @@ class ExperimentRunner:
             self.logger.info(f"Executing run {run + 1}/{num_runs}.")
 
             # Load the document base from file to reset the state
-            with(open(os.path.join(self.tmp_dir, "tmp_exp_document_base.bson"), "rb")) as file:
-                self.document_base = DocumentBase.from_bson(file.read())
+            self.document_base = DocumentBase.from_bson(self.document_base_original_state)
+
+            matching_pipeline = self.generate_standard_matching_pipeline(self.matching_pipeline_settings)
 
             # Set new attributes
             if raw_attributes is not None:
@@ -187,7 +183,7 @@ class ExperimentRunner:
                     document._attribute_mappings[attribute] = []
                     self.statistics["matching"]["results"]["considered_as_match"][attribute.name] = set()
 
-            self.statistics["matching"]["config"] = self.matching_pipeline.to_config()
+            self.statistics["matching"]["config"] = matching_pipeline.to_config()
 
             # set the random seed
             random.seed(random_seed)
@@ -197,7 +193,7 @@ class ExperimentRunner:
             t0 = time.time()
 
             # Run the actual matching (including automatic feedback)
-            self.matching_pipeline(
+            matching_pipeline(
                 document_base=self.document_base,
                 interaction_callback=feedback_oracle(
                     self.ground_truth_docs,
@@ -215,6 +211,7 @@ class ExperimentRunner:
     def evaluate(self):
         self.logger.info(f"Evaluating results for last experiment ({self.last_num_runs} runs)")
         interaction_results = {}
+        f1_scores = []
         for attribute in self.document_base._attributes:
             attr = attribute.name
             for run in range(self.last_num_runs):
@@ -229,16 +226,16 @@ class ExperimentRunner:
                     results["num_should_be_empty_is_empty"] = 0
                     results["num_should_be_empty_is_full"] = 0
                     results["correct_nugget_sources"] = Counter()
-                    for bg, doc in zip(best_guesses, self.document_base.documents):
-                        if len(doc.attribute_mappings[attr]) > 0:
+                    for doc_name, bg in best_guesses:
+                        doc = get_document_by_name(self.ground_truth_docs, doc_name)
+                        if attr in doc["mentions"] and len(doc["mentions"][attr]) > 0:
                             if bg is not None:
                                 bg_text, bg_doc_name, bg_start, bg_end, bg_source = bg
-                                assert doc.name == bg_doc_name
-                                if consider_overlap_as_match(bg_start, bg_end,
-                                                             doc.attribute_mappings[attr][0].start_char,
-                                                             doc.attribute_mappings[attr][0].end_char):
-                                    results["num_should_be_filled_is_correct"] += 1
-                                    results["correct_nugget_sources"][bg_source] += 1
+                                for mention in doc["mentions"][attr]:
+                                    if consider_overlap_as_match(bg_start, bg_end, mention["start_char"], mention["end_char"]):
+                                        results["num_should_be_filled_is_correct"] += 1
+                                        results["correct_nugget_sources"][bg_source] += 1
+                                        break
                                 else:
                                     results["num_should_be_filled_is_incorrect"] += 1
                             else:
@@ -261,6 +258,8 @@ class ExperimentRunner:
                     self.statistics["matching"]["runs"][str(run)]["results"][attr]["f1_scores"] for run in
                     range(self.last_num_runs)])]
             self.logger.info(f"Mean F1 scores for '{attr}': {mean_f1_scores}")
+            f1_scores.append(mean_f1_scores)
+        return f1_scores
 
     def store_results(self, path: str):
         """
