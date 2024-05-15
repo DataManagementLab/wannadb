@@ -94,7 +94,7 @@ class BaseEmbedder(BasePipelineElement, abc.ABC):
         if self.generated_signal_identifiers["nuggets"][0] in nuggets[0].signals.keys():
             # Try to determine if the dimensions are correct (should match those of the embedding of the attributes)
             if len(self.generated_signal_identifiers["attributes"]) > 0:
-                if attributes[0].signals[self.generated_signal_identifiers["attributes"][0]].value.shape == nuggets[0].signals[self.generated_signal_identifiers["attributes"][0]].value.shape:
+                if len(attributes) > 0 and attributes[0].signals[self.generated_signal_identifiers["attributes"][0]].value.shape == nuggets[0].signals[self.generated_signal_identifiers["attributes"][0]].value.shape:
                     logger.info(f"No need to embedd nuggets again with {self.identifier}, existing embeddings with correct dimensions found.")
                     return
                 logger.info(f"Dimension missmatch, recomputing embeddings for {self.generated_signal_identifiers['nuggets'][0]} with {self.identifier}.")
