@@ -15,10 +15,10 @@ import nltk
 import re
 import spacy
 import time
-import string
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Dict
 from itertools import repeat
 from nltk import ngrams, word_tokenize
+from nltk.tokenize.treebank import TreebankWordDetokenizer
 from nltk.corpus import wordnet
 from spacy.tokenizer import Tokenizer
 from typing import List, Tuple
@@ -702,6 +702,8 @@ class FaissSentenceSimilarityExtractor(BaseCustomMatchExtractor):
         self.embedding_model_name = "SBERTBertLargeNliMeanTokensResource"
         resources.MANAGER.load(self.embedding_model_name)
 
+        self.detokenizer = TreebankWordDetokenizer()
+
     def to_config(self) -> Dict[str, Any]:
         """
         Obtain a JSON-serializable representation of the extractor.
@@ -744,7 +746,8 @@ class FaissSentenceSimilarityExtractor(BaseCustomMatchExtractor):
         faiss_index.add_with_ids(flat_token_list, ids)
 
         sentence = nugget.signals['CachedContextSentenceSignal'].value['text']
-        phrase = nugget.text
+        # Take nugget text as phrase, but remove all .,!? and similar characters
+        phrase = nugget.text.replace('.', '').replace(',', '').replace('!', '').replace('?', '')
 
         query_vector = resources.MANAGER[self.embedding_model_name].encode([sentence], show_progress_bar=False)
         # Find the k most similar sentence embeddings
@@ -758,20 +761,26 @@ class FaissSentenceSimilarityExtractor(BaseCustomMatchExtractor):
             doc = documents[doc_index]
             s, e, t = doc.sentence(sentence_index)
             similar_sentences.append((doc_index, t, s, e))
+        if len(similar_sentences) == 0:
+            logger.warning(f"Found no similar sentences to {sentence} in the remaining documents.")
+            return []
 
         # Second stage, find the most similar phrases in these sentences
         phrase_embedding = resources.MANAGER[self.embedding_model_name].encode([phrase], show_progress_bar=False)
         n = len(nltk.word_tokenize(phrase))
         logger.info(f"Looking for {n}-grams")
 
-        # Tokenize each sentence into words
-        tokens = [nltk.word_tokenize(sentence[1]) for sentence in similar_sentences]
-        # Generate n-grams from tokens
-        phrases_list = [[" ".join(ngram) for ngram in nltk.ngrams(token, n)] for token in tokens]
-
         # Compute the cosine similarity
-        for sentence, phrases in zip(similar_sentences, phrases_list):
+        for sentence in similar_sentences:
             doc = documents[sentence[0]]
+            # Tokenize sentence into words
+            tokens = nltk.word_tokenize(sentence[1])
+            # Generate n-grams from tokens
+            phrases = [self.detokenizer.detokenize(ngram) for ngram in nltk.ngrams(tokens, min(n, len(tokens)))]
+            if len(tokens) == 0 or len(phrases) == 0:
+                logger.warning(f"Failed to build phrases from '{sentence[1]}' (tokens: {tokens}, phrases: {phrases}, n: {n})")
+                continue
+
             # Compute the cosine similarity between the given phrase and the phrases in the list
             phrases_embeddings = resources.MANAGER[self.embedding_model_name].encode(phrases, show_progress_bar=False)
             similarities = cosine_similarity(phrase_embedding, phrases_embeddings)
@@ -787,8 +796,71 @@ class FaissSentenceSimilarityExtractor(BaseCustomMatchExtractor):
                 phrase = phrases[top_phrase_index]
                 start_char = sentence[1].find(phrase)
                 end_char = start_char + len(phrase)
-                # Transform sentence-based start and end chars to document-based ones
-                # and append to matches
-                matches.append((doc, start_char + sentence[2], end_char + sentence[2]))
+                phrase_in_sentence = sentence[1][start_char:end_char]
+                phrase_in_text = doc.text[start_char + sentence[2]:end_char + sentence[2]]
+                if phrase != phrase_in_sentence or phrase != phrase_in_text:
+                    logger.warning(f"Extraction lookup failed ('{phrase}', in sentence '{phrase_in_sentence}', in text '{phrase_in_text}'). Original sentence was '{sentence[1]}'")
+                else:
+                    # Transform sentence-based start and end chars to document-based ones
+                    # and append to matches
+                    matches.append((doc, start_char + sentence[2], end_char + sentence[2]))
 
         return matches
+
+
+class VarianceSemanticExtractor(BaseCustomMatchExtractor):
+    """
+        Combination of Variance and Semantic Extractor
+    """
+
+    identifier: str = "VarianceSemanticExtractor"
+
+    def __init__(self, num_similar_sentences, num_phrases_per_sentence) -> None:
+        """
+        :param num_similar_sentences: The number of similar sentences to extract
+        :param num_phrases_per_sentence: The number of phrases to extract per found similar sentence
+        """
+        self.semantic_extractor = FaissSentenceSimilarityExtractor(num_similar_sentences, num_phrases_per_sentence)
+
+
+    def __call__(
+            self, nugget: InformationNugget, documents: List[Document]
+    ) -> List[Tuple[Document, int, int]]:
+        """
+            Extracts nuggets from the documents that exactly match the text of the provided nugget.
+
+            :param nugget: The InformationNugget that should be matched against
+            :param documents: The set of documents to extract matches from, or a single document
+            :return: Returns a List of Tuples of matching nuggets, where the first entry denotes the corresponding
+            document of the nugget, the second and third entry denote the start and end indices of the match.
+        """
+        # Potential preprocessing
+        documents = self.preprocess_documents(documents)
+
+        nuggets = []
+        # get basic information about the confirmed nugget
+        sentence = nugget.signals['CachedContextSentenceSignal'].value['text']
+        phrase = nugget.text
+        phrase_pattern = r"\s".join([fr"\w*{word}\w*" for word in word_tokenize(phrase)])
+        pattern = re.compile(fr"{phrase_pattern}", re.IGNORECASE)
+
+        docs_without_trivial_matches = set(documents)
+
+        for document in documents:
+            text: str = document.text
+            match = False
+            for match in pattern.finditer(text):
+                nuggets.append((document, match.start(), match.end()))
+                match = True
+            if match:
+                docs_without_trivial_matches.remove(document)
+
+        logger.info(f"Found {len(nuggets)} trivial matches.")
+        if len(docs_without_trivial_matches) > 0:
+            semantic_matches = self.semantic_extractor(nugget, list(docs_without_trivial_matches))
+            logger.info(f"Found {len(semantic_matches)} semantic matches.")
+            nuggets.extend(semantic_matches)
+        else:
+            logger.info("No need to search for semantic matches, trivial matches in all documents found")
+
+        return nuggets
