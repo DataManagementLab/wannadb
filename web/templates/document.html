@@ -1,0 +1,52 @@
+{% extends 'base.html' %}
+
+{% load fontawesome_6 %}
+
+{% block title %}{{ doc.title }}{% endblock %}
+
+{% block content %}
+    <ol class="breadcrumb mb-4">
+        <li class="breadcrumb-item"><a href="{% url 'index' %}">Box2Go</a></li>
+        <li class="breadcrumb-item"><a href="{% url 'collection' slug=doc.collection.slug %}">{{ doc.collection.name }}</a></li>
+        <li class="breadcrumb-item active">{{ doc.title }}</li>
+    </ol>
+    <h2>{{ doc.title}}</h2>
+    <hr class="mb-4">
+    <div class="border-primary border border-1 float-md-end p-2 ms-2 mb-2">
+    <h5 class="text-center">{{ doc.collection.name }}</h5>
+    <table class="table">
+        <tbody>
+        {% for row in doc.box %}
+            <tr>
+                <td><b>{{ row.box_attribute.name }}:</b></td>
+                <td {% if not row.manually_confirmed and row.confidence < 0.3 %}class="text-muted"{% endif %}>{{ row.value}}</td>
+                <td class="text-muted">{% if row.manually_confirmed %}
+                        {% fa6_icon "user-check" %}
+                    {% elif row.nugget %}
+                        <span class="{% if row.confidence >= 0.3 %}text-success{% endif %}">
+                            {% fa6_icon "signal" %} {% widthratio row.confidence 1 100 %} %
+                        </span>
+                    {% endif %}
+                    {% if row.votes > 0 %}
+                        <span class="text-success">{% fa6_icon "plus" %} {{ row.votes }}</span>
+                    {% elif row.votes < 0 %}
+                        <span class="text-warning">{% fa6_icon "triangle-exclamation" %} {{ row.votes }}</span>
+                    {% endif %}
+                </td>
+                <td>
+                    <a href="#" class="btn btn-outline-primary btn-sm">{% fa6_icon "right-to-bracket" "fas" %}</a>&nbsp;
+                    <a href="#" class="btn btn-outline-warning btn-sm">{% fa6_icon "pen" %}</a>
+                </td>
+            </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    <div class="d-grid">
+        <a href="#" class="btn btn-primary btn-sm">{% fa6_icon "plus" %} Add attribute</a>
+    </div>
+    </div>
+
+    <p style="line-height: 250%">
+        {{ text }}
+    </p>
+{% endblock %}

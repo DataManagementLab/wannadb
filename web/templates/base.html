@@ -1,0 +1,27 @@
+{% load django_bootstrap5 %}
+{% load static %}
+{% load fontawesome_6 %}
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>{% block title %}{% endblock %}</title>
+
+    {# Load CSS and JavaScript #}
+    {% bootstrap_css %}
+    {% bootstrap_javascript %}
+    {% fontawesome_6_static %}
+    <link rel="stylesheet" href="{% static 'bootstrap.css' %}">
+    <link rel="stylesheet" href="{% static 'main.css' %}">
+</head>
+<body>
+<div class="container">
+    {# Display django.contrib.messages as Bootstrap alerts #}
+{% bootstrap_messages %}
+<div class="mt-4">
+    {% block content %}{% endblock %}
+</div>
+</div>
+</body>
+</html>

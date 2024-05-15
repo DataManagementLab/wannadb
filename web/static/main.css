@@ -1,0 +1,17 @@
+.nugget {
+    position: relative;
+    display: inline-block;
+    color: #ffffff;
+    padding-left:3px;
+    padding-right:3px;
+}
+
+.nugget-label {
+    position: absolute;
+    top: -10px; /* Adjust as needed */
+    left: 0;
+    font-size: 0.6em; /* Adjust as needed */
+    line-height: 1.1;
+    padding:3px;
+    color: #ffffff;
+}

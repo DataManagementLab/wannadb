@@ -1,0 +1,19 @@
+{% extends 'base.html' %}
+
+{% block title %}Box2Go{% endblock %}
+
+{% block content %}
+    <h1>Box2Go</h1>
+
+    <!-- TODO Build search bar here -->
+
+    {% for collection in collections %}
+        <h2>
+            <a href="{% url 'collection' slug=collection.slug %}">
+                {{ collection.name }}
+            </a>
+        </h2>
+        # Box Attributes: {{ collection.boxattribute_set.count }} &middot;
+        # Docs: {{ collection.document_set.count }}
+    {% endfor %}
+{% endblock %}

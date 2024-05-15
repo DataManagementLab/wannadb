@@ -1,0 +1,19 @@
+{% extends 'base.html' %}
+
+{% block title %}Collection: {{ collection.name }}{% endblock %}
+
+{% block content %}
+    <ol class="breadcrumb mb-4">
+      <li class="breadcrumb-item"><a href="{% url 'index' %}">Box2Go</a></li>
+      <li class="breadcrumb-item active">{{ collection.name }}</li>
+    </ol>
+
+    <h2>Collection: {{ collection.name }}</h2>
+
+    <!-- TODO Display collapsed table here -->
+
+    {% for doc in collection.document_set.all %}
+        <h3><a href="{% url "document" slug=doc.slug %}">{{ doc.title }}</a></h3>
+        <p>{{ doc.text | truncatewords:20 }}</p>
+    {% endfor %}
+{% endblock %}
