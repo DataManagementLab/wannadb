@@ -2,15 +2,16 @@ import abc
 import logging
 import random
 import time
-from typing import Any, Dict, List, Callable, Tuple
+from typing import Any, Dict, List, Callable, Tuple, Counter
 
 import numpy as np
 
 from wannadb.configuration import BasePipelineElement, register_configurable_element, Pipeline
 from wannadb.data.data import Document, DocumentBase, InformationNugget
 from wannadb.data.signals import CachedContextSentenceSignal, CachedDistanceSignal, \
-    SentenceStartCharsSignal, CurrentMatchIndexSignal, LabelSignal
+    SentenceStartCharsSignal, CurrentMatchIndexSignal, LabelSignal, ExtractorNameSignal
 from wannadb.interaction import BaseInteractionCallback
+from wannadb.matching.custom_match_extraction import BaseCustomMatchExtractor
 from wannadb.matching.distance import BaseDistance
 from wannadb.statistics import Statistics
 from wannadb.status import BaseStatusCallback
@@ -62,7 +63,10 @@ class RankingBasedMatcher(BaseMatcher):
             sampling_mode: str,
             adjust_threshold: bool,
             nugget_pipeline: Pipeline,
-            find_additional_nuggets: Callable[[InformationNugget, List[Document]], List[Tuple[Document, int, int]]] = lambda nugget, documents: (),
+            find_additional_nuggets: BaseCustomMatchExtractor,
+            num_bad_docs: int = 5,
+            num_recent_docs: int = 5,
+            store_best_guesses: bool = False,
     ) -> None:
         """
         Initialize the RankingBasedMatcher.
@@ -76,6 +80,9 @@ class RankingBasedMatcher(BaseMatcher):
         :param adjust_threshold: whether to adjust the maximum distance threshold based on the user feedback
         :param nugget_pipeline: pipeline that is used to process newly-generated nuggets
         :param find_additional_nuggets: optional function to add nuggets similar to a manually added and matched nugget
+        :param num_bad_docs: number of randomly selected documents without promising nuggets to be shown to the user
+        :param num_recent_docs: number of documents that recently got interesting additional extractions to be shown to the user
+        :param store_best_guesses: whether to store the best guesses for each feedback round
         """
         super(RankingBasedMatcher, self).__init__()
         self._distance: BaseDistance = distance
@@ -88,6 +95,9 @@ class RankingBasedMatcher(BaseMatcher):
         self._adjust_threshold: bool = adjust_threshold
         self._nugget_pipeline: Pipeline = nugget_pipeline
         self._find_additional_nuggets = find_additional_nuggets
+        self.num_bad_docs = num_bad_docs
+        self.num_recent_docs = num_recent_docs
+        self.store_best_guesses = store_best_guesses
 
         # add signals required by the distance function to the signals required by the matcher
         self._add_required_signal_identifiers(self._distance.required_signal_identifiers)
@@ -119,15 +129,19 @@ class RankingBasedMatcher(BaseMatcher):
                 continue
 
             logger.info(f"Matching attribute '{attribute.name}'.")
+            start_matching: float = time.time()
             self._max_distance = self._default_max_distance
             statistics[attribute.name]["max_distances"] = [self._max_distance]
             statistics[attribute.name]["feedback_durations"] = []
+            if self.store_best_guesses:
+                statistics[attribute.name]["best_guesses"] = []
 
             if any((attribute.name in document.attribute_mappings.keys() for document in document_base.documents)):
                 logger.info(f"Attribute '{attribute.name}' has already been matched before.")
                 continue
 
             remaining_documents: List[Document] = []
+            docs_with_added_nuggets: Counter[Document] = Counter()
 
             # compute initial distances as distances to label
             logger.info("Compute initial distances and initialize documents.")
@@ -148,10 +162,17 @@ class RankingBasedMatcher(BaseMatcher):
                     statistics[attribute.name]["num_document_with_no_nuggets"] += 1
                 else:
                     document[CurrentMatchIndexSignal] = CurrentMatchIndexSignal(index)
-                    remaining_documents.append(document)
+                    remaining_documents.append(document) # TODO Change handling of remaining documents list to allow adding even docs without nuggets (as they might be found by generalization)
+            logger.info(f"{len(remaining_documents)} documents to fill.")
 
             tak: float = time.time()
             logger.info(f"Computed initial distances and initialized documents in {tak - tik} seconds.")
+
+            def _sort_remaining_documents():
+                remaining_documents.sort(
+                    key=lambda x: x.nuggets[x[CurrentMatchIndexSignal]][CachedDistanceSignal],
+                    reverse=True
+                )
 
             # iterative user interactions
             logger.info("Execute interactive matching.")
@@ -160,11 +181,7 @@ class RankingBasedMatcher(BaseMatcher):
             continue_matching: bool = True
             while continue_matching and num_feedback < self._max_num_feedback and remaining_documents != []:
                 # sort remaining documents by distance
-                remaining_documents = list(sorted(
-                    remaining_documents,
-                    key=lambda x: x.nuggets[x[CurrentMatchIndexSignal]][CachedDistanceSignal],
-                    reverse=True
-                ))
+                _sort_remaining_documents()
 
                 if self._sampling_mode == "MOST_UNCERTAIN":
                     selected_documents: List[Document] = remaining_documents[:self._len_ranked_list]
@@ -206,10 +223,31 @@ class RankingBasedMatcher(BaseMatcher):
                         lower_right = min(len(remaining_documents),
                                           lower_right + (self._len_ranked_list // 2 - higher_num))
 
-                    selected_documents: List[Document] = remaining_documents[higher_left:lower_right]
+                    selected_documents: List[Document] = []
 
                     num_nuggets_above: int = higher_left
                     num_nuggets_below: int = len(remaining_documents) - lower_right
+                    selected_docs_with_added_nuggets = set()
+
+                    # Add additional documents (most uncertain)...
+                    if self.num_bad_docs > 0 and num_nuggets_above > 0:
+                        k = min(self.num_bad_docs, num_nuggets_above)
+                        selected_documents.extend(random.choices(remaining_documents[:num_nuggets_above], k=k))
+                        num_nuggets_above -= k
+                    # ...  and those that recently got interesting additional extractions to the list
+                    if self.num_recent_docs > 0 and len(docs_with_added_nuggets) > 0:
+                        # Create a list up to double the size wanted and then sample from that instead of only taking the same most promising documents potentially over and over again
+                        selected_docs_with_added_nuggets = [d for d, _ in docs_with_added_nuggets.most_common(self.num_recent_docs * 2)] #random.choices(list(docs_with_added_nuggets), k=k)
+                        if len(selected_docs_with_added_nuggets) > self.num_recent_docs:
+                            selected_docs_with_added_nuggets = random.choices(selected_docs_with_added_nuggets, k=self.num_recent_docs)
+                        selected_documents.extend(selected_docs_with_added_nuggets)
+                    selected_docs_with_added_nuggets = set(selected_docs_with_added_nuggets)
+
+                    # Now fill the list with documents at threshold
+                    selected_documents.extend(doc for doc in remaining_documents[higher_left:lower_right] if doc not in selected_docs_with_added_nuggets)
+
+                    # Sort to unify the order across the different three sources
+                    selected_documents.sort(key=lambda x: x.nuggets[x[CurrentMatchIndexSignal]][CachedDistanceSignal], reverse=True)
                 else:
                     logger.error(f"Unknown sampling mode '{self._sampling_mode}'!")
                     assert False, f"Unknown sampling mode '{self._sampling_mode}'!"
@@ -244,8 +282,14 @@ class RankingBasedMatcher(BaseMatcher):
                     continue_matching = False
                 elif feedback_result["message"] == "no-match-in-document":
                     statistics[attribute.name]["num_no_match_in_document"] += 1
+                    d = feedback_result["nugget"].document
+                    if d in remaining_documents:
+                        remaining_documents.remove(d)
+                    else:
+                        logger.warning(f"Trying to remove document {feedback_result['nugget'].document} from remaining documents, but it was already removed before. {len(remaining_documents)} remaining documents: {', '.join(d.name for d in remaining_documents)}")
+                    if d in docs_with_added_nuggets:
+                        docs_with_added_nuggets.pop(d)
                     feedback_result["nugget"].document.attribute_mappings[attribute.name] = []
-                    remaining_documents.remove(feedback_result["nugget"].document)
 
                     if self._adjust_threshold:
                         # threshold adjustment: if the given nugget's cached distance is smaller than the threshold,
@@ -298,6 +342,8 @@ class RankingBasedMatcher(BaseMatcher):
                     statistics[attribute.name]["num_confirmed_match"] += 1
 
                     confirmed_nugget = InformationNugget(feedback_result["document"], feedback_result["start"], feedback_result["end"])
+                    logger.info(f"Custom match: '{confirmed_nugget}'")
+                    confirmed_nugget[ExtractorNameSignal] = "<CUSTOM_SELECTION>"
                     confirmed_nugget[LabelSignal] = attribute.name
 
                     run_nugget_pipeline([confirmed_nugget])
@@ -328,35 +374,69 @@ class RankingBasedMatcher(BaseMatcher):
                     distances_based_on_label = False
 
                     # Find more nuggets that are similar to this match
+                    t_minus_custom_extraction = time.time()
+                    _sort_remaining_documents()
                     additional_nuggets: List[Tuple[Document, int, int]] = self._find_additional_nuggets(confirmed_nugget, remaining_documents)
-                    statistics[attribute.name]["num_additional_nuggets"] += len(additional_nuggets)
-                    if len(additional_nuggets) == 0:
-                        continue
-                    # convert nugget description into InformationNugget
-                    additional_nuggets = list(map(lambda i: InformationNugget(*i), additional_nuggets))
-                    for additional_nugget in additional_nuggets:
-                        additional_nugget[LabelSignal] = attribute.name
-                        additional_nugget.document.nuggets.append(additional_nugget)
-                    run_nugget_pipeline(additional_nuggets)
+                    t_custom_extraction = time.time() - t_minus_custom_extraction
 
-                    # TODO: maybe there is a better way than to compute distances based on currently confirmed nugget?
-                    # calculate proper distances based on currently confirmed nugget
-                    new_distances: np.ndarray = self._distance.compute_distances(
-                        [confirmed_nugget],
-                        additional_nuggets,
-                        statistics["distance"]
-                    )[0]
-                    for nugget, new_distance in zip(additional_nuggets, new_distances):
-                        nugget[CachedDistanceSignal] = new_distance
-                    for nugget in additional_nuggets:
-                        current_guess: InformationNugget = nugget.document.nuggets[nugget.document[CurrentMatchIndexSignal]]
-                        if nugget[CachedDistanceSignal] < current_guess[CachedDistanceSignal]:
-                            nugget.document[CurrentMatchIndexSignal] = nugget.document.nuggets.index(nugget)
+                    # Perform time keeping and logging
+                    self._find_additional_nuggets.perform_time_keeping(
+                        feedback_result["document"],
+                        len(remaining_documents),
+                        t_custom_extraction,
+                        feedback_result["start"],
+                        feedback_result["end"]
+                    )
+                    logger.info(f"Execution of custom match extraction"
+                                f" with {str(self._find_additional_nuggets)}"
+                                f" took {t_custom_extraction} seconds"
+                                f" for {len(remaining_documents)} documents.")
+
+                    statistics[attribute.name]["num_additional_nuggets"] += len(additional_nuggets)
+                    if len(additional_nuggets) > 0:
+                        logger.info(f"Found {len(additional_nuggets)} additional nuggets.")
+                        # convert nugget description into InformationNugget
+                        additional_nuggets = list(map(lambda i: InformationNugget(*i), additional_nuggets))
+                        for additional_nugget in additional_nuggets:
+                            additional_nugget[LabelSignal] = attribute.name
+                            additional_nugget[ExtractorNameSignal] = str(self._find_additional_nuggets)
+                            additional_nugget.document.nuggets.append(additional_nugget)
+                        run_nugget_pipeline(additional_nuggets)
+
+                        # TODO: maybe there is a better way than to compute distances based on currently confirmed nugget?
+                        # calculate proper distances based on currently confirmed nugget
+                        new_distances: np.ndarray = self._distance.compute_distances(
+                            [confirmed_nugget],
+                            additional_nuggets,
+                            statistics["distance"]
+                        )[0]
+                        for nugget, new_distance in zip(additional_nuggets, new_distances):
+                            nugget[CachedDistanceSignal] = new_distance
+                        for nugget in additional_nuggets:
+                            current_guess: InformationNugget = nugget.document.nuggets[nugget.document[CurrentMatchIndexSignal]]
+                            # Calculate whether this new nugget is potentiall useful
+                            # (has a distance lower than the current best guess for its document)
+                            distance_difference = current_guess[CachedDistanceSignal] - nugget[CachedDistanceSignal]
+                            if distance_difference > 0:
+                                # Replace current guess with new nugget
+                                nugget.document[CurrentMatchIndexSignal] = nugget.document.nuggets.index(nugget)
+                                docs_with_added_nuggets[nugget.document] = distance_difference
+                                logger.info(f"Found nugget better than current best guess for document {nugget.document.name} with distance difference {distance_difference}.")
 
                 elif feedback_result["message"] == "is-match":
                     statistics[attribute.name]["num_confirmed_match"] += 1
                     feedback_result["nugget"].document.attribute_mappings[attribute.name] = [feedback_result["nugget"]]
-                    remaining_documents.remove(feedback_result["nugget"].document)
+                    doc = feedback_result["nugget"].document
+                    try:
+                        for d in remaining_documents:
+                            if d.name == doc.name:
+                                remaining_documents.remove(d)
+                                break
+                        #remaining_documents.remove(doc)
+                    except ValueError:
+                        logger.warning(f"Trying to remove document {doc.name} from remaining documents, but it was already removed before. {len(remaining_documents)} remaining documents: {', '.join(d.name for d in remaining_documents)}.")
+                    if doc in docs_with_added_nuggets:
+                        docs_with_added_nuggets.pop(doc)
 
                     # update the distances for the other documents
                     for document in remaining_documents:
@@ -410,6 +490,22 @@ class RankingBasedMatcher(BaseMatcher):
                             logger.info("CONFIRMED NUGGET NOT IN RANKED LIST: Did not change the maximum distance "
                                         "since the confirmed nugget was not in the ranked list.")
 
+                if self.store_best_guesses: # and (num_feedback == 0 or (num_feedback+1) % 5 == 0):
+                    best_guesses = []
+                    for document in document_base.documents:
+                        if attribute.name in document.attribute_mappings:
+                            if len(document.attribute_mappings[attribute.name]) > 0:
+                                best_guesses.append((document.name, document.attribute_mappings[attribute.name][0].serializable))
+                            else:
+                                best_guesses.append((document.name, None))
+                        else:
+                            current_guess: InformationNugget = document.nuggets[document[CurrentMatchIndexSignal]]
+                            if current_guess[CachedDistanceSignal] < self._max_distance:
+                                best_guesses.append((document.name, current_guess.serializable))
+                            else:
+                                best_guesses.append((document.name, None))
+                    statistics[attribute.name]["best_guesses"].append((num_feedback, best_guesses))
+
             tak: float = time.time()
             logger.info(f"Executed interactive matching in {tak - tik} seconds.")
 
@@ -429,6 +525,8 @@ class RankingBasedMatcher(BaseMatcher):
             tak: float = time.time()
             logger.info(f"Updated remaining documents in {tak - tik} seconds.")
 
+            statistics[attribute.name]["runtime"] = tak - start_matching
+
     def to_config(self) -> Dict[str, Any]:
         return {
             "identifier": self.identifier,
@@ -437,8 +535,11 @@ class RankingBasedMatcher(BaseMatcher):
             "len_ranked_list": self._len_ranked_list,
             "max_distance": self._max_distance,
             "num_random_docs": self._num_random_docs,
+            "num_bad_docs": self.num_bad_docs,
+            "num_recent_docs": self.num_recent_docs,
             "sampling_mode": self._sampling_mode,
             "adjust_threshold": self._adjust_threshold,
+            "extractor": self._find_additional_nuggets.to_config(),
             "nugget_pipeline": self._nugget_pipeline.to_config()
         }
 

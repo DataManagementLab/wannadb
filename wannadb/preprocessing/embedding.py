@@ -11,7 +11,8 @@ from wannadb import resources
 from wannadb.configuration import BasePipelineElement, register_configurable_element
 from wannadb.data.data import Attribute, DocumentBase, InformationNugget
 from wannadb.data.signals import ContextSentenceEmbeddingSignal, LabelEmbeddingSignal, RelativePositionSignal, \
-    TextEmbeddingSignal, UserProvidedExamplesSignal, NaturalLanguageLabelSignal, CachedContextSentenceSignal
+    TextEmbeddingSignal, UserProvidedExamplesSignal, NaturalLanguageLabelSignal, CachedContextSentenceSignal, \
+    SentenceStartCharsSignal, DocumentSentenceEmbeddingSignal
 from wannadb.interaction import BaseInteractionCallback
 from wannadb.statistics import Statistics
 from wannadb.status import BaseStatusCallback
@@ -58,8 +59,51 @@ class BaseEmbedder(BasePipelineElement, abc.ABC):
             status_callback: BaseStatusCallback,
             statistics: Statistics
     ) -> None:
+        # compute embeddings for the attributes
+        if len(self.generated_signal_identifiers["attributes"]) > 0:
+            attributes: List[Attribute] = document_base.attributes
+            logger.info(f"Embed {len(attributes)} attributes with {self.identifier}.")
+            tick: float = time.time()
+            status_callback(f"Embedding attributes with {self.identifier}...", -1)
+            statistics["attributes"]["num_attributes"] = len(attributes)
+            self._embed_attributes(attributes, interaction_callback, status_callback, statistics["attributes"])
+            status_callback(f"Embedding attributes with {self.identifier}...", 1)
+            tack: float = time.time()
+            logger.info(f"Embedded {len(attributes)} attributes with {self.identifier} in {tack - tick} seconds.")
+            statistics["attributes"]["runtime"] = tack - tick
+
+        # compute embeddings for the documents
+        if len(self.generated_signal_identifiers["documents"]) > 0:
+            logger.info(f"Embed {len(document_base.documents)} documents with {self.identifier}.")
+            tick: float = time.time()
+            status_callback(f"Embedding documents with {self.identifier}...", -1)
+            self._embed_documents(document_base, interaction_callback, status_callback, statistics["documents"])
+            status_callback(f"Embedding documents with {self.identifier}...", 1)
+            tack: float = time.time()
+            logger.info(f"Embedded {len(document_base.documents)} documents with {self.identifier} in {tack - tick} seconds.")
+            statistics["documents"]["runtime"] = tack - tick
+
         # compute embeddings for the nuggets
         nuggets: List[InformationNugget] = document_base.nuggets
+
+        if len(self.generated_signal_identifiers["nuggets"]) == 0 or len(nuggets) == 0:
+            return
+
+        # Check if there is already an embedding for this signal
+        # (assuming that each embedder will always generate exactly one signal)
+        if self.generated_signal_identifiers["nuggets"][0] in nuggets[0].signals.keys():
+            # Try to determine if the dimensions are correct (should match those of the embedding of the attributes)
+            if len(self.generated_signal_identifiers["attributes"]) > 0:
+                if len(attributes) > 0 and attributes[0].signals[self.generated_signal_identifiers["attributes"][0]].value.shape == nuggets[0].signals[self.generated_signal_identifiers["attributes"][0]].value.shape:
+                    logger.info(f"No need to embedd nuggets again with {self.identifier}, existing embeddings with correct dimensions found.")
+                    return
+                logger.info(f"Dimension missmatch, recomputing embeddings for {self.generated_signal_identifiers['nuggets'][0]} with {self.identifier}.")
+            else:
+                # Cannot check dimensions, but assuming they are correct do to lack of other evidence
+                logger.info(f"Found existing embeddings for {self.generated_signal_identifiers['nuggets'][0]}, assuming they were created with {self.identifier} (even though dimension check is not possible.")
+                return
+
+        # If no existing embeddings are found, or dimensions are not matching continue with embedding
         logger.info(f"Embed {len(nuggets)} nuggets with {self.identifier}.")
         tick: float = time.time()
         status_callback(f"Embedding nuggets with {self.identifier}...", -1)
@@ -69,18 +113,6 @@ class BaseEmbedder(BasePipelineElement, abc.ABC):
         tack: float = time.time()
         logger.info(f"Embedded {len(nuggets)} nuggets with {self.identifier} in {tack - tick} seconds.")
         statistics["nuggets"]["runtime"] = tack - tick
-
-        # compute embeddings for the attributes
-        attributes: List[Attribute] = document_base.attributes
-        logger.info(f"Embed {len(attributes)} attributes with {self.identifier}.")
-        tick: float = time.time()
-        status_callback(f"Embedding attributes with {self.identifier}...", -1)
-        statistics["attributes"]["num_attributes"] = len(attributes)
-        self._embed_attributes(attributes, interaction_callback, status_callback, statistics["attributes"])
-        status_callback(f"Embedding attributes with {self.identifier}...", 1)
-        tack: float = time.time()
-        logger.info(f"Embedded {len(attributes)} attributes with {self.identifier} in {tack - tick} seconds.")
-        statistics["attributes"]["runtime"] = tack - tick
 
     def _embed_nuggets(
             self,
@@ -116,6 +148,22 @@ class BaseEmbedder(BasePipelineElement, abc.ABC):
         """
         pass  # default behavior: do nothing
 
+    def _embed_documents(
+            self,
+            doc_base: DocumentBase,
+            interaction_callback: BaseInteractionCallback,
+            status_callback: BaseStatusCallback,
+            statistics: Statistics
+    ) -> None:
+        """
+        Compute embeddings for the given list of InformationNuggets.
+
+        :param doc_base: document base to work on
+        :param interaction_callback: callback to allow for user interaction
+        :param status_callback: callback to communicate current status (message and progress)
+        :param statistics: statistics object to collect statistics
+        """
+        pass  # default behavior: do nothing
 
 ########################################################################################################################
 # actual embedders
@@ -302,6 +350,43 @@ class SBERTContextSentenceEmbedder(BaseSBERTEmbedder):
 
         for nugget, embedding in zip(nuggets, embeddings):
             nugget[ContextSentenceEmbeddingSignal] = ContextSentenceEmbeddingSignal(embedding)
+
+
+@register_configurable_element
+class SBERTDocumentSentenceEmbedder(BaseSBERTEmbedder):
+    """Document sentence embedder based on SBERT."""
+    identifier: str = "SBERTDocumentSentenceEmbedder"
+
+    required_signal_identifiers: Dict[str, List[str]] = {
+        "nuggets": [],
+        "attributes": [],
+        "documents": [SentenceStartCharsSignal.identifier]
+    }
+
+    generated_signal_identifiers: Dict[str, List[str]] = {
+        "nuggets": [],
+        "attributes": [],
+        "documents": [DocumentSentenceEmbeddingSignal.identifier]
+    }
+
+    def _embed_documents(
+            self,
+            document_base: DocumentBase,
+            interaction_callback: BaseInteractionCallback,
+            status_callback: BaseStatusCallback,
+            statistics: Statistics
+    ) -> None:
+        count_docs_that_needed_sentence_embeddings = 0
+        for doc in document_base.documents:
+            # Look for DocumentSentenceEmbeddingSignal
+            if not 'DocumentSentenceEmbeddingSignal' in doc.signals:
+                logger.info(f"Embedding all sentences of document {doc.name}...")
+                sentences: List[str] = doc.sentences
+                embeddings: List[np.ndarray] = resources.MANAGER[self._sbert_resource_identifier].encode(
+                    sentences, show_progress_bar=False
+                )
+                doc[DocumentSentenceEmbeddingSignal] = DocumentSentenceEmbeddingSignal(embeddings)
+                count_docs_that_needed_sentence_embeddings += 1
 
 
 @register_configurable_element

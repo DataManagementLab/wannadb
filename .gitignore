@@ -8,3 +8,11 @@
 postgres/__pycache__
 flask_app/__pycache__
 1_:memory:
+
+/cache/
+.json
+.pdf
+.bson
+/evaluation/datasets/aviation/documents
+/evaluation/datasets/nobel/documents
+/evaluation/results/

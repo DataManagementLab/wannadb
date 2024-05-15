@@ -11,10 +11,11 @@ from bson import InvalidBSON
 from wannadb.configuration import Pipeline
 from wannadb.data.data import Attribute, Document, DocumentBase
 from wannadb.interaction import EmptyInteractionCallback, InteractionCallback
+from wannadb.matching.custom_match_extraction import FaissSentenceSimilarityExtractor
 from wannadb.matching.distance import SignalsMeanDistance
 from wannadb.matching.matching import RankingBasedMatcher
 from wannadb.preprocessing.embedding import BERTContextSentenceEmbedder, RelativePositionEmbedder, \
-    SBERTTextEmbedder, SBERTLabelEmbedder
+    SBERTTextEmbedder, SBERTLabelEmbedder, SBERTDocumentSentenceEmbedder
 from wannadb.preprocessing.extraction import StanzaNERExtractor, SpacyNERExtractor
 from wannadb.preprocessing.label_paraphrasing import OntoNotesLabelParaphraser, \
     SplitAttributeNameLabelParaphraser
@@ -123,6 +124,7 @@ class WannaDBAPI(QObject):
                 SBERTLabelEmbedder("SBERTBertLargeNliMeanTokensResource"),
                 SBERTTextEmbedder("SBERTBertLargeNliMeanTokensResource"),
                 BERTContextSentenceEmbedder("BertLargeCasedResource"),
+                SBERTDocumentSentenceEmbedder("SBERTBertLargeNliMeanTokensResource"),
                 RelativePositionEmbedder()
             ])
 
@@ -343,27 +345,12 @@ class WannaDBAPI(QObject):
             # load default matching phase
             self.status.emit("Loading matching phase...", -1)
 
-            # TODO: this should not be implemented here!
-            def find_additional_nuggets(nugget, documents):
-                new_nuggets = []
-                for document in documents:
-                    doc_text = document.text.lower()
-                    nug_text = nugget.text.lower()
-                    start = 0
-                    while True:
-                        start = doc_text.find(nug_text, start)
-                        if start == -1:
-                            break
-                        else:
-                            new_nuggets.append((document, start, start + len(nug_text)))
-                            start += len(nug_text)
-                return new_nuggets
-
             matching_phase = Pipeline(
                 [
                     SplitAttributeNameLabelParaphraser(do_lowercase=True, splitters=[" ", "_"]),
                     ContextSentenceCacher(),
                     SBERTLabelEmbedder("SBERTBertLargeNliMeanTokensResource"),
+                    SBERTDocumentSentenceEmbedder("SBERTBertLargeNliMeanTokensResource"),
                     RankingBasedMatcher(
                         distance=SignalsMeanDistance(
                             signal_identifiers=[
@@ -391,7 +378,8 @@ class WannaDBAPI(QObject):
                                 RelativePositionEmbedder()
                             ]
                         ),
-                        find_additional_nuggets=find_additional_nuggets
+                        find_additional_nuggets=FaissSentenceSimilarityExtractor(num_similar_sentences=20, num_phrases_per_sentence=3),
+                        store_best_guesses=True,
                     )
                 ]
             )

@@ -9,7 +9,7 @@ from spacy.tokens import Doc
 from wannadb import resources
 from wannadb.configuration import register_configurable_element, BasePipelineElement
 from wannadb.data.data import DocumentBase, InformationNugget
-from wannadb.data.signals import LabelSignal, POSTagsSignal, SentenceStartCharsSignal
+from wannadb.data.signals import LabelSignal, POSTagsSignal, SentenceStartCharsSignal, ExtractorNameSignal
 from wannadb.interaction import BaseInteractionCallback
 from wannadb.resources import StanzaNERPipeline, FigerNERPipeline
 from wannadb.statistics import Statistics
@@ -45,7 +45,7 @@ class SpacyNERExtractor(BaseExtractor):
     }
 
     generated_signal_identifiers: Dict[str, List[str]] = {
-        "nuggets": [LabelSignal.identifier, POSTagsSignal.identifier],
+        "nuggets": [LabelSignal.identifier, POSTagsSignal.identifier, ExtractorNameSignal.identifier],
         "attributes": [],
         "documents": [SentenceStartCharsSignal.identifier]
     }
@@ -93,6 +93,7 @@ class SpacyNERExtractor(BaseExtractor):
 
                 nugget[POSTagsSignal] = POSTagsSignal([])  # TODO: gather pos tags
                 nugget[LabelSignal] = LabelSignal(entity.label_)
+                nugget[ExtractorNameSignal] = ExtractorNameSignal(self.identifier)
 
                 document.nuggets.append(nugget)
 
@@ -123,7 +124,7 @@ class StanzaNERExtractor(BaseExtractor):
     }
 
     generated_signal_identifiers: Dict[str, List[str]] = {
-        "nuggets": [LabelSignal.identifier, POSTagsSignal.identifier],
+        "nuggets": [LabelSignal.identifier, POSTagsSignal.identifier, ExtractorNameSignal.identifier],
         "attributes": [],
         "documents": [SentenceStartCharsSignal.identifier]
     }
@@ -165,6 +166,7 @@ class StanzaNERExtractor(BaseExtractor):
 
                     nugget[POSTagsSignal] = POSTagsSignal([word.xpos for word in entity.words])
                     nugget[LabelSignal] = LabelSignal(entity.type)
+                    nugget[ExtractorNameSignal] = ExtractorNameSignal(self.identifier)
 
                     document.nuggets.append(nugget)
 
