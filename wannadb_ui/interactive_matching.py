@@ -1,5 +1,6 @@
 import logging
 
+import numpy as np
 from PyQt6 import QtGui
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QIcon, QTextCursor
@@ -507,6 +508,10 @@ class SuggestionListItemWidget(CustomScrollableListItem):
         self.text_label.setFont(CODE_FONT_BOLD)
         self.layout.addWidget(self.text_label)
 
+        self.distance_label = QLabel()
+        self.distance_label.setFont(CODE_FONT)
+        self.layout.addWidget(self.distance_label)
+
     def mousePressEvent(self, a0: QtGui.QMouseEvent) -> None:
         self.suggestion_list_widget.interactive_matching_widget.document_widget.current_nugget = self.nugget
         self.suggestion_list_widget.interactive_matching_widget.document_widget._highlight_current_nugget()
@@ -514,9 +519,14 @@ class SuggestionListItemWidget(CustomScrollableListItem):
 
     def update_item(self, item, params=None):
         self.nugget = item
+
         sanitized_text = self.nugget.text
         sanitized_text = sanitized_text.replace("\n", " ")
+        distance = np.round(self.nugget[CachedDistanceSignal], 3)
+
         self.text_label.setText(sanitized_text)
+        self.distance_label.setText(str(distance))
+
         if self.nugget == params:
             self.setStyleSheet(f"background-color: {YELLOW}")
             self.suggestion_list_widget.interactive_matching_widget.document_widget.suggestion_list.scroll_area.horizontalScrollBar().setValue(
