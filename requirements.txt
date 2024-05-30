@@ -69,7 +69,7 @@ murmurhash==1.0.9
     #   thinc
 nltk==3.8
     # via sentence-transformers
-numpy==1.21.4
+numpy==1.26.4
     # via
     #   aset (setup.py)
     #   blis
@@ -148,7 +148,7 @@ scikit-learn==1.0.1
     # via
     #   aset (setup.py)
     #   sentence-transformers
-scipy==1.7.2
+scipy==1.13.1
     # via
     #   aset (setup.py)
     #   scikit-learn
@@ -230,6 +230,12 @@ wasabi==0.10.1
     # via
     #   spacy
     #   thinc
+
+pyqtgraph==0.13.7
+
+PyOpenGL==3.1.7
+
+PyOpenGL_accelerate==3.1.7
 
 # The following packages are considered to be unsafe in a requirements file:
 # setuptools

@@ -9,6 +9,7 @@ from PyQt6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QTextEdit, QVBoxLa
 from wannadb.data.signals import CachedContextSentenceSignal, CachedDistanceSignal
 from wannadb_ui.common import BUTTON_FONT, CODE_FONT, CODE_FONT_BOLD, LABEL_FONT, MainWindowContent, \
     CustomScrollableList, CustomScrollableListItem, WHITE, LIGHT_YELLOW, YELLOW
+from wannadb_ui.visualizations import EmbeddingVisualizerWidget
 
 logger = logging.getLogger(__name__)
 
@@ -301,6 +302,10 @@ class DocumentWidget(QWidget):
                                                     above_widget=self.custom_selection_item_widget)
         self.suggestion_list.setFixedHeight(60)
         self.layout.addWidget(self.suggestion_list)
+
+        self.visualizer = EmbeddingVisualizerWidget()
+        self.visualizer.setFixedHeight(200)
+        self.layout.addWidget(self.visualizer)
 
         self.buttons_widget = QWidget()
         self.buttons_widget_layout = QHBoxLayout(self.buttons_widget)
