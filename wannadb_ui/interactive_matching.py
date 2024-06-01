@@ -9,7 +9,7 @@ from PyQt6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QTextEdit, QVBoxLa
 from wannadb.data.signals import CachedContextSentenceSignal, CachedDistanceSignal
 from wannadb_ui.common import BUTTON_FONT, CODE_FONT, CODE_FONT_BOLD, LABEL_FONT, MainWindowContent, \
     CustomScrollableList, CustomScrollableListItem, WHITE, LIGHT_YELLOW, YELLOW
-from wannadb_ui.visualizations import EmbeddingVisualizerWidget
+from wannadb_ui.visualizations import EmbeddingVisualizerWidget, BarChartVisualizerWidget
 
 logger = logging.getLogger(__name__)
 
@@ -288,6 +288,9 @@ class DocumentWidget(QWidget):
         self.text_edit.selectionChanged.connect(self._handle_selection_changed)
         self.text_edit.setText("")
 
+        self.cosine_barchart = BarChartVisualizerWidget()
+        self.layout.addWidget(self.cosine_barchart)
+
         # last custom selection values
         self.custom_start = 0
         self.custom_end = 0
@@ -307,6 +310,7 @@ class DocumentWidget(QWidget):
         self.visualizer.setFixedHeight(200)
         self.layout.addWidget(self.visualizer)
 
+
         self.buttons_widget = QWidget()
         self.buttons_widget_layout = QHBoxLayout(self.buttons_widget)
         self.buttons_widget_layout.setContentsMargins(0, 0, 0, 0)
@@ -322,6 +326,11 @@ class DocumentWidget(QWidget):
         self.match_button.setFont(BUTTON_FONT)
         self.match_button.clicked.connect(self._match_button_clicked)
         self.buttons_widget_layout.addWidget(self.match_button)
+
+    def update_barchart(self, data):
+        print("In update_barchart")
+        self.cosine_barchart.append_data(data)
+
 
     def _match_button_clicked(self):
         if self.current_nugget is None:
@@ -522,12 +531,14 @@ class SuggestionListItemWidget(CustomScrollableListItem):
         self.suggestion_list_widget.interactive_matching_widget.document_widget._highlight_current_nugget()
         self.suggestion_list_widget.interactive_matching_widget.document_widget.custom_selection_item_widget.hide()
 
+
     def update_item(self, item, params=None):
         self.nugget = item
 
-        sanitized_text = self.nugget.text
-        sanitized_text = sanitized_text.replace("\n", " ")
-        distance = np.round(self.nugget[CachedDistanceSignal], 3)
+        sanitized_text, distance = self.get_nugget_data()
+        print()
+
+
 
         self.text_label.setText(sanitized_text)
         self.distance_label.setText(str(distance))
@@ -539,12 +550,19 @@ class SuggestionListItemWidget(CustomScrollableListItem):
             )
         else:
             self.setStyleSheet(f"background-color: {LIGHT_YELLOW}")
+        self.suggestion_list_widget.interactive_matching_widget.document_widget.update_barchart(self.get_nugget_data())
 
     def enable_input(self):
         pass
 
     def disable_input(self):
         pass
+
+    def get_nugget_data(self):
+        sanitized_text = self.nugget.text
+        sanitized_text = sanitized_text.replace("\n", " ")
+        distance = np.round(self.nugget[CachedDistanceSignal], 3)
+        return sanitized_text, distance
 
 
 class CustomSelectionItemWidget(QWidget):
