@@ -4,7 +4,7 @@ import numpy as np
 from PyQt6 import QtGui
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QIcon, QTextCursor
-from PyQt6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QTextEdit, QVBoxLayout, QWidget
+from PyQt6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QTextEdit, QVBoxLayout, QWidget, QGridLayout
 
 from wannadb.data.signals import CachedContextSentenceSignal, CachedDistanceSignal
 from wannadb_ui.common import BUTTON_FONT, CODE_FONT, CODE_FONT_BOLD, LABEL_FONT, MainWindowContent, \
@@ -503,19 +503,19 @@ class SuggestionListItemWidget(CustomScrollableListItem):
         self.suggestion_list_widget = suggestion_list_widget
         self.nugget = None
 
-        self.setFixedHeight(30)
+        self.setFixedHeight(45)
         self.setStyleSheet(f"background-color: {WHITE}")
 
-        self.layout = QHBoxLayout(self)
+        self.layout = QGridLayout(self)
         self.layout.setContentsMargins(10, 0, 10, 0)
 
         self.text_label = QLabel()
         self.text_label.setFont(CODE_FONT_BOLD)
-        self.layout.addWidget(self.text_label)
+        self.layout.addWidget(self.text_label, 0, 0)
 
         self.distance_label = QLabel()
         self.distance_label.setFont(CODE_FONT)
-        self.layout.addWidget(self.distance_label)
+        self.layout.addWidget(self.distance_label), 0, 1
 
     def mousePressEvent(self, a0: QtGui.QMouseEvent) -> None:
         self.suggestion_list_widget.interactive_matching_widget.document_widget.current_nugget = self.nugget
