@@ -9,7 +9,7 @@ from PyQt6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QTextEdit, QVBoxLa
 from wannadb.data.signals import CachedContextSentenceSignal, CachedDistanceSignal
 from wannadb_ui.common import BUTTON_FONT, CODE_FONT, CODE_FONT_BOLD, LABEL_FONT, MainWindowContent, \
     CustomScrollableList, CustomScrollableListItem, WHITE, LIGHT_YELLOW, YELLOW
-from wannadb_ui.visualizations import EmbeddingVisualizerWidget, BarChartVisualizerWidget
+from wannadb_ui.visualizations import EmbeddingVisualizerWidget, BarChartVisualizerWidget, ScatterPlotVisualizerWidget
 
 logger = logging.getLogger(__name__)
 
@@ -310,6 +310,8 @@ class DocumentWidget(QWidget):
         self.visualizer.setFixedHeight(200)
         self.layout.addWidget(self.visualizer)
 
+        self.scatter_plot_widget = ScatterPlotVisualizerWidget()
+        self.layout.addWidget(self.scatter_plot_widget)
 
         self.buttons_widget = QWidget()
         self.buttons_widget_layout = QHBoxLayout(self.buttons_widget)
@@ -331,6 +333,9 @@ class DocumentWidget(QWidget):
         print("In update_barchart")
         self.cosine_barchart.append_data(data)
 
+    def update_scatter_plot(self, data):
+        print("In update_scatter_plot")
+        self.scatter_plot_widget.append_data(data)
 
     def _match_button_clicked(self):
         if self.current_nugget is None:
@@ -551,6 +556,7 @@ class SuggestionListItemWidget(CustomScrollableListItem):
         else:
             self.setStyleSheet(f"background-color: {LIGHT_YELLOW}")
         self.suggestion_list_widget.interactive_matching_widget.document_widget.update_barchart(self.get_nugget_data())
+        self.suggestion_list_widget.interactive_matching_widget.document_widget.update_scatter_plot(self.get_nugget_data())
 
     def enable_input(self):
         pass
