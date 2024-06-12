@@ -31,9 +31,9 @@ class EmbeddingVisualizerWidget(GLViewWidget):
 class BarChartVisualizerWidget(QWidget):
     def __init__(self, parent=None):
         super(BarChartVisualizerWidget, self).__init__(parent)
-        self.setFixedHeight(200)
 
         self.layout = QVBoxLayout(self)
+        self.layout.setContentsMargins(0, 0, 0, 0)
         self.button = QPushButton("Show Bar Chart with cosine values")
         self.layout.addWidget(self.button)
 
@@ -77,6 +77,7 @@ class ScatterPlotVisualizerWidget(QWidget):
     def __init__(self, parent=None):
         super(ScatterPlotVisualizerWidget, self).__init__(parent)
         self.layout = QVBoxLayout(self)
+        self.layout.setContentsMargins(0, 0, 0, 0)
         self.button = QPushButton("Show Scatter Plot with Cosine Distances")
         self.layout.addWidget(self.button)
         self.data = []  # Store data as a list of tuples

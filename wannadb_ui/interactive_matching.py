@@ -4,7 +4,7 @@ import numpy as np
 from PyQt6 import QtGui
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QIcon, QTextCursor
-from PyQt6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QTextEdit, QVBoxLayout, QWidget, QGridLayout
+from PyQt6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QTextEdit, QVBoxLayout, QWidget, QGridLayout, QSizePolicy
 
 from wannadb.data.signals import CachedContextSentenceSignal, CachedDistanceSignal
 from wannadb_ui.common import BUTTON_FONT, CODE_FONT, CODE_FONT_BOLD, LABEL_FONT, MainWindowContent, \
@@ -288,8 +288,6 @@ class DocumentWidget(QWidget):
         self.text_edit.selectionChanged.connect(self._handle_selection_changed)
         self.text_edit.setText("")
 
-        self.cosine_barchart = BarChartVisualizerWidget()
-        self.layout.addWidget(self.cosine_barchart)
 
         # last custom selection values
         self.custom_start = 0
@@ -306,12 +304,21 @@ class DocumentWidget(QWidget):
         self.suggestion_list.setFixedHeight(60)
         self.layout.addWidget(self.suggestion_list)
 
+
+        self.upper_buttons_widget = QWidget()
+        self.upper_buttons_widget_layout = QHBoxLayout(self.upper_buttons_widget)
+        self.upper_buttons_widget_layout.setContentsMargins(0, 0, 0, 0)
+        self.layout.addWidget(self.upper_buttons_widget)
+        self.cosine_barchart = BarChartVisualizerWidget()
+        self.cosine_barchart.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        self.upper_buttons_widget_layout.addWidget(self.cosine_barchart)
+        self.scatter_plot_widget = ScatterPlotVisualizerWidget()
+        self.scatter_plot_widget.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        self.upper_buttons_widget_layout.addWidget(self.scatter_plot_widget)
+
         self.visualizer = EmbeddingVisualizerWidget()
         self.visualizer.setFixedHeight(200)
         self.layout.addWidget(self.visualizer)
-
-        self.scatter_plot_widget = ScatterPlotVisualizerWidget()
-        self.layout.addWidget(self.scatter_plot_widget)
 
         self.buttons_widget = QWidget()
         self.buttons_widget_layout = QHBoxLayout(self.buttons_widget)
