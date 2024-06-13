@@ -337,11 +337,9 @@ class DocumentWidget(QWidget):
         self.buttons_widget_layout.addWidget(self.match_button)
 
     def update_barchart(self, data):
-        print("In update_barchart")
         self.cosine_barchart.append_data(data)
 
     def update_scatter_plot(self, data):
-        print("In update_scatter_plot")
         self.scatter_plot_widget.append_data(data)
 
     def _match_button_clicked(self):
