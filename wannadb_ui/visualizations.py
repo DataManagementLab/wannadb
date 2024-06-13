@@ -5,11 +5,21 @@ import pyqtgraph.opengl as gl
 import numpy as np
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QPushButton, QMainWindow
 from matplotlib import pyplot as plt
+from matplotlib.colors import LinearSegmentedColormap
 from matplotlib.patches import Rectangle
 from pyqtgraph.opengl import GLViewWidget
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.backends.backend_qt5agg import NavigationToolbar2QT as NavigationToolbar
+
+
+def get_colors(distances, color_start='red', color_end='blue'):
+    cmap = LinearSegmentedColormap.from_list("CustomMap", [color_start, color_end])
+    # Normalize the data for color mapping
+    norm = plt.Normalize(min(distances), max(distances))
+    # Generate the colors based on the data
+    colors = [cmap(norm(value)) for value in distances]
+    return colors
 
 
 class EmbeddingVisualizerWidget(GLViewWidget):
@@ -36,14 +46,11 @@ class BarChartVisualizerWidget(QWidget):
         self.layout.setContentsMargins(0, 0, 0, 0)
         self.button = QPushButton("Show Bar Chart with cosine values")
         self.layout.addWidget(self.button)
-
         self.data = []  # Initialize data as an empty dictionary
         self.button.clicked.connect(self.show_bar_chart)
         self.window = None
 
     def append_data(self, data_tuple):
-
-        # print(f"Shape of the data: {np.shape(self.data)}")
         self.data.append(data_tuple)
 
     def show_bar_chart(self):
@@ -60,9 +67,7 @@ class BarChartVisualizerWidget(QWidget):
         self.data = [(key, min_dict[key]) for key in min_dict]
 
     def plot_bar_chart(self):
-        # Clear data to prevent duplication
         self._unique_nuggets()
-        print(self.data)
         if self.window is not None:
             self.window.close()
 
@@ -70,13 +75,12 @@ class BarChartVisualizerWidget(QWidget):
         ax = fig.add_subplot(111)
         texts, distances = zip(*self.data)
 
-        # Round the distances to a fixed number of decimal places
         rounded_distances = np.round(distances, 3)
 
-        self.bar = ax.bar(texts, rounded_distances, alpha=0.75, picker=True)
-        # Set x-axis labels invisible
+        self.bar = ax.bar(texts, rounded_distances, alpha=0.75, picker=True, color=get_colors(distances))
         ax.set_xticks([])
-        # ...
+        ax.set_ylabel('Cosine Similarity', fontsize=15)
+        ax.set_xlabel('Information Nuggets', fontsize=15)
         fig.tight_layout()
 
         self.bar_chart_canvas = FigureCanvas(fig)
@@ -86,12 +90,12 @@ class BarChartVisualizerWidget(QWidget):
         self.window.setCentralWidget(self.bar_chart_canvas)
 
         self.bar_chart_toolbar = NavigationToolbar(self.bar_chart_canvas, self.window)
+        print(f"BAR CHART TOOLBAR TYPE: {type(self.bar_chart_toolbar)}")
         self.window.addToolBar(self.bar_chart_toolbar)
 
         self.window.show()
         self.bar_chart_canvas.draw()
 
-        # create annotation box
         self.annotation = ax.annotate(
             "", xy=(0, 0), xytext=(20, 20),
             textcoords="offset points", bbox=dict(boxstyle="round", fc="w"),
@@ -103,16 +107,27 @@ class BarChartVisualizerWidget(QWidget):
         self.texts = texts
         self.distances = rounded_distances
 
+        # todo after value is confirmed or value not in document, reinitialize data
+        #self.window.destroyed.connect(self.cleanup)
+
     def on_pick(self, event):
         if isinstance(event.artist, Rectangle):
             patch = event.artist
             index = self.bar.get_children().index(patch)
             text = f"Infomation Nugget: \n{self.texts[index]} \n\n Value: {self.distances[index]}"
             self.annotation.set_text(text)
-            self.annotation.xy = (patch.get_x() + patch.get_width() / 2,
-                                  patch.get_height() / 2)
+            print(patch.get_x())
+            print(patch.get_width())
+            # if patch.get_x() + patch.get_width() > 20:
+            annotation_x = patch.get_x() + patch.get_width() / 2
+            annotation_y = patch.get_height() / 2
+            self.annotation.xy = (annotation_x, annotation_y)
             self.annotation.set_visible(True)
             self.bar_chart_canvas.draw_idle()
+
+    def cleanup(self):
+        self.data = []
+        self.bar = None
 
 
 class ScatterPlotVisualizerWidget(QWidget):
@@ -223,7 +238,6 @@ class ScatterPlotVisualizerWidget(QWidget):
     def on_pick(self, event):
         if event.artist != self.scatter:
             return
-        print("SCATTER PLOT ", type(event))
         # Get index of the picked point
         ind = event.ind[0]
 

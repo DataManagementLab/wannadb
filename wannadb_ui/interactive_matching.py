@@ -323,7 +323,6 @@ class DocumentWidget(QWidget):
         self.buttons_widget = QWidget()
         self.buttons_widget_layout = QHBoxLayout(self.buttons_widget)
         self.buttons_widget_layout.setContentsMargins(0, 0, 0, 0)
-        # self.buttons_widget_layout.setAlignment(Qt.AlignmentFlag.AlignRight)
         self.layout.addWidget(self.buttons_widget)
 
         self.no_match_button = QPushButton("Value Not In Document")
@@ -544,12 +543,7 @@ class SuggestionListItemWidget(CustomScrollableListItem):
 
     def update_item(self, item, params=None):
         self.nugget = item
-
         sanitized_text, distance = self.get_nugget_data()
-        print()
-
-
-
         self.text_label.setText(sanitized_text)
         self.distance_label.setText(str(distance))
 
