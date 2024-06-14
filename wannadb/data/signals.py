@@ -280,6 +280,13 @@ class TypeSignal(BaseStringSignal):
 
 
 @register_signal
+class ExtractorNameSignal(BaseStringSignal):
+    """Type identifier of the nugget's value type."""
+    identifier: str = "ExtractorNameSignal"
+    do_serialize: bool = True
+
+
+@register_signal
 class LabelSignal(BaseFloatSignal):
     """Label of the nugget as determined by the extractors."""
     identifier: str = "LabelSignal"
@@ -360,4 +367,11 @@ class TextEmbeddingSignal(BaseNumpyArraySignal):
 class ContextSentenceEmbeddingSignal(BaseNumpyArraySignal):
     """Embedding of the nugget's textual context sentence."""
     identifier: str = "ContextSentenceEmbeddingSignal"
+    do_serialize: bool = True
+
+
+@register_signal
+class DocumentSentenceEmbeddingSignal(BaseNumpyArraySignal):
+    """Embedding of the sentences of a document."""
+    identifier: str = "DocumentSentenceEmbeddingSignal"
     do_serialize: bool = True

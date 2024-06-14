@@ -1,7 +1,7 @@
 import functools
 import logging
 import time
-from typing import Any, Dict, List, Optional, Type, Union
+from typing import Any, Dict, List, Optional, Type, Union, Tuple
 
 import bson
 
@@ -80,6 +80,18 @@ class InformationNugget:
     def text(self) -> str:
         """Actual text of the span."""
         return self._document.text[self._start_char:self._end_char]
+
+    @property
+    def extractor_name(self) -> str:
+        """Name of the extractor that created the nugget."""
+        if 'ExtractorNameSignal' not in self._signals.keys():
+            return "<UNK>"
+        return self._signals['ExtractorNameSignal'].value
+
+    @property
+    def serializable(self) -> (str, str, int, int):
+        """Serializable representation of the nugget."""
+        return self.text, self._document.name, self._start_char, self._end_char, self.extractor_name
 
     @property
     def signals(self) -> Dict[str, BaseSignal]:
@@ -266,6 +278,22 @@ class Document:
     def signals(self) -> Dict[str, BaseSignal]:
         """Signals associated with the document."""
         return self._signals
+
+    @property
+    def sentences(self) -> List[str]:
+        """Sentences of the document."""
+        # Build sentence list by splitting the text based on start chars in self.signals['SentenceStartCharsSignal']
+        sentences = []
+        for start_char, end_char in zip(self['SentenceStartCharsSignal'][:-1], self['SentenceStartCharsSignal'][1:]):
+            sentences.append(self.text[start_char:end_char])
+        sentences.append(self.text[self['SentenceStartCharsSignal'][-1]:])
+        return sentences
+
+    def sentence(self, idx: int) -> tuple[int, int, str]:
+        """Sentence of the document at the given index."""
+        start_char = self['SentenceStartCharsSignal'][idx]
+        end_char = self['SentenceStartCharsSignal'][idx + 1] if idx + 1 < len(self['SentenceStartCharsSignal']) else len(self.text)
+        return start_char, end_char, self.text[start_char:end_char]
 
     def __getitem__(self, item: Union[str, Type[BaseSignal]]) -> Any:
         """
@@ -465,27 +493,33 @@ class DocumentBase:
 
         # check that the document names are unique
         if not len([d.name for d in self._documents]) == len(set([d.name for d in self._documents])):
+            print("Document names are not unique.")
             return False
 
         # check that the attribute names are unique
         if not len([a.name for a in self._attributes]) == len(set([a.name for a in self._attributes])):
+            print("Attribute names are not unique.")
             return False
 
         # check that all nuggets in a document refer to that document
         for document in self._documents:
             for nugget in document.nuggets:
                 if nugget.document is not document:
+                    print(f"Nugget '{nugget}' does not refer to the document it is stored in.")
                     return False
 
         # check that the nuggets' span indices are valid
         for nugget in self.nuggets:
             if not 0 <= nugget.start_char < nugget.end_char <= len(nugget.document.text):
+                print(f"Nugget '{nugget}' has invalid span indices.")
                 return False
 
         # check that all attribute names in attribute mappings are part of the document base
         for document in self._documents:
             for attribute_name in document.attribute_mappings.keys():
                 if attribute_name not in [attribute.name for attribute in self._attributes]:
+                    logger.warning(f"Attribute '{attribute_name}' in document '{document.name}' is not part of the document base.")
+                    print(f"Attribute '{attribute_name}' in document '{document.name}' is not part of the document base.")
                     return False
 
         # check that all nuggets referred to in attribute mappings are part of the document
@@ -496,24 +530,28 @@ class DocumentBase:
                         if nug is nugget:
                             break
                     else:
+                        print(f"Nugget '{nugget}' in document '{document.name}' is not part of the document.")
                         return False
 
         # check that all nugget signals are stored under their own signal identifier
         for nugget in self.nuggets:
             for signal_identifier, signal in nugget.signals.items():
                 if signal_identifier != signal.identifier:
+                    print(f"Signal '{signal}' in nugget '{nugget}' is not stored under its own signal identifier.")
                     return False
 
         # check that all attribute signals are stored under their own signal identifier
         for attribute in self._attributes:
             for signal_identifier, signal in attribute.signals.items():
                 if signal_identifier != signal.identifier:
+                    print(f"Signal '{signal}' in attribute '{attribute}' is not stored under its own signal identifier.")
                     return False
 
         # check that all document signals are stored under their own signal identifier
         for document in self._documents:
             for signal_identifier, signal in document.signals.items():
                 if signal_identifier != signal.identifier:
+                    print(f"Signal '{signal}' in document '{document}' is not stored under its own signal identifier.")
                     return False
 
         tack: float = time.time()

@@ -1,16 +1,33 @@
 # WannaDB: Ad-hoc SQL Queries over Text Collections
 
-![Document collection and corresponding table.](header_image.svg)
+![System overview of WannaDB, consisting of offline preprocessing and only table filling phase](doc/overview_horizontal.png)
 
 WannaDB allows users to explore unstructured text collections by automatically organizing the relevant information nuggets in a table. It supports ad-hoc SQL queries over text collections using a novel two-phased approach: First, a superset of information nuggets is extracted from the texts using existing extractors such as named entity recognizers. The extractions are then interactively matched to a structured table definition as requested by the user.
 
 Watch our [demo video](https://link.tuda.systems/aset-video) or [read our paper](https://doi.org/10.18420/BTW2023-08) to learn more about the usage and underlying concepts.
 
+## GUI
+
+Our tool is provided ready-to-use with a graphical user interface that allows to load own text collections and execute the table extraction on them.
+
+![Screenshot of the WannaDB GUI: Main Window](doc/wannadb_main.png)
+*Main Window, specify the query or attributes list, check current table filling state and inspect the result table.*
+
+![Screenshot of the WannaDB GUI: Matching process](doc/wannadb_matching.png)
+*Interactive matching, inspect the current list of feedback requests and confirm matches or request detailed inspection.*
+
+![Screenshot of the WannaDB GUI: Inspecting a single document to confirm or fix a match](doc/wannadb_inspection.png)
+*Inspect a single document, see the extractions in context and chose the correct one (including custom text spans)  or state that the document does not contain a relevant value.*
+
 ## Usage
 
 Run `main.py` to start the WannaDB GUI.
 
-There are also various auxiliary scripts in `scripts/` and the experimentation repository (coming soon).
+To run batch experiments instead, use `experiments/experiment_runner.py`.
+
+To run the preprocessing stand-alone (e.g., on a server with GPUs) you can use `scripts/preprocess.py`.
+
+See [EXTRACTORS.md](EXTRACTORS.md) for more information on the interactive extraction component.
 
 ## Installation
 
