@@ -47,9 +47,9 @@ class EmbeddingVisualizerWidget(QWidget):
 
         add_grids(self.gl_widget)
 
-    def update_grid(self, new_points_to_display):
-        scatter = gl.GLScatterPlotItem(pos=np.array(new_points_to_display),
-                                       color=pg.glColor((0, 6.5)),
+    def update_grid(self, points_to_display):
+        scatter = gl.GLScatterPlotItem(pos=points_to_display,
+                                       color=pg.glColor((0, 10)),
                                        size=3,
                                        pxMode=True)
         self.gl_widget.addItem(scatter)

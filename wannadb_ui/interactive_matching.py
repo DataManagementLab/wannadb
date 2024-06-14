@@ -516,7 +516,8 @@ class DocumentWidget(QWidget):
         self.suggestion_list.disable_input()
 
     def update_attribute(self, attribute):
-        self.visualizer.update_grid(attribute[DimensionReducedLabelEmbeddingSignal])
+        point_to_display = np.array([attribute[DimensionReducedLabelEmbeddingSignal]])
+        self.visualizer.update_grid(point_to_display)
 
 
 class SuggestionListItemWidget(CustomScrollableListItem):
