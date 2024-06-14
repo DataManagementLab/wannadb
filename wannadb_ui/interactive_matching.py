@@ -6,7 +6,7 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QIcon, QTextCursor
 from PyQt6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QTextEdit, QVBoxLayout, QWidget, QGridLayout, QSizePolicy
 
-from wannadb.data.signals import CachedContextSentenceSignal, CachedDistanceSignal
+from wannadb.data.signals import CachedContextSentenceSignal, CachedDistanceSignal, DimensionReducedLabelEmbeddingSignal
 from wannadb_ui.common import BUTTON_FONT, CODE_FONT, CODE_FONT_BOLD, LABEL_FONT, MainWindowContent, \
     CustomScrollableList, CustomScrollableListItem, WHITE, LIGHT_YELLOW, YELLOW
 from wannadb_ui.visualizations import EmbeddingVisualizerWidget, BarChartVisualizerWidget, ScatterPlotVisualizerWidget
@@ -44,8 +44,10 @@ class InteractiveMatchingWidget(MainWindowContent):
         self.document_widget.disable_input()
 
     def handle_feedback_request(self, feedback_request):
-        self.header.setText(f"Attribute: {feedback_request['attribute'].name}")
+        attribute = feedback_request['attribute']
+        self.header.setText(f"Attribute: {attribute.name}")
         self.nugget_list_widget.update_nuggets(feedback_request)
+        self.document_widget.update_attribute(attribute)
         self.enable_input()
         self.show_nugget_list_widget()
 
@@ -512,6 +514,9 @@ class DocumentWidget(QWidget):
         self.match_button.setDisabled(True)
         self.no_match_button.setDisabled(True)
         self.suggestion_list.disable_input()
+
+    def update_attribute(self, attribute):
+        self.visualizer.update_grid(attribute[DimensionReducedLabelEmbeddingSignal])
 
 
 class SuggestionListItemWidget(CustomScrollableListItem):

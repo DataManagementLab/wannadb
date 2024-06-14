@@ -3,11 +3,10 @@ from collections import OrderedDict
 import pyqtgraph as pg
 import pyqtgraph.opengl as gl
 import numpy as np
-from PyQt6.QtWidgets import QWidget, QVBoxLayout, QPushButton, QMainWindow
+from PyQt6.QtWidgets import QWidget, QVBoxLayout, QPushButton, QMainWindow, QLabel
 from matplotlib import pyplot as plt
 from matplotlib.colors import LinearSegmentedColormap
 from matplotlib.patches import Rectangle
-from pyqtgraph.opengl import GLViewWidget
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.backends.backend_qt5agg import NavigationToolbar2QT as NavigationToolbar
@@ -22,21 +21,38 @@ def get_colors(distances, color_start='red', color_end='blue'):
     return colors
 
 
-class EmbeddingVisualizerWidget(GLViewWidget):
+def add_grids(widget):
+    grid_xy = gl.GLGridItem()
+    widget.addItem(grid_xy)
+
+    grid_xz = gl.GLGridItem()
+    grid_xz.rotate(90, 1, 0, 0)
+    widget.addItem(grid_xz)
+
+    grid_yz = gl.GLGridItem()
+    grid_yz.rotate(90, 0, 1, 0)
+    widget.addItem(grid_yz)
+
+
+class EmbeddingVisualizerWidget(QWidget):
 
     def __init__(self):
         super(EmbeddingVisualizerWidget, self).__init__()
 
-        grid = gl.GLGridItem()
-        self.addItem(grid)
+        layout = QVBoxLayout()
+        self.setLayout(layout)
 
-        pts = [0, 0, 0]
+        self.gl_widget = gl.GLViewWidget()
+        layout.addWidget(self.gl_widget)
 
-        scatter = gl.GLScatterPlotItem(pos=np.array(pts),
+        add_grids(self.gl_widget)
+
+    def update_grid(self, new_points_to_display):
+        scatter = gl.GLScatterPlotItem(pos=np.array(new_points_to_display),
                                        color=pg.glColor((0, 6.5)),
                                        size=3,
                                        pxMode=True)
-        self.addItem(scatter)
+        self.gl_widget.addItem(scatter)
 
 
 class BarChartVisualizerWidget(QWidget):
