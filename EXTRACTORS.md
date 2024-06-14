@@ -3,7 +3,7 @@
 In previous research, we proposed an interactive system for extracting structured representations but mainly concentrated on the alignment of information nuggets and target cells while assuming that there are off-the-shelf extractors suitable for finding the required nuggets in the text.
 With the latest additions to this repository, we are now extending on that, presenting an approach for going beyond these fixed sets of nuggets while leveraging the same feedback for extraction and alignment. 
 
-![Overview of the interactive extraction and matching as part of the overall system flow](extraction_overview.png)
+![Overview of the interactive extraction and matching as part of the overall system flow](doc/extraction_overview.png)
 
 User feedback can be used to provide ad-hoc domain adaptation and find additional relevant extractions that were missed by the generic extractors before. 
 Once a user points the system to a missing extraction (and provides the relevant value by selecting it from the source document), the system should not only consider that custom span as a valid nugget but additionally try to find similar text spans in different documents and add these missing extractions to the vector space. 
