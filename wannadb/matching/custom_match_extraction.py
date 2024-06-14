@@ -222,7 +222,7 @@ class ExactCustomMatchExtractor(BaseCustomMatchExtractor):
 
 class VarianceExtractor(BaseCustomMatchExtractor):
     """
-        Extractor based on finding exact matches of the currently annotated custom span.
+        Extractor based on finding close matches of the currently annotated custom span.
     """
 
     identifier: str = "VarianceExtractor"
