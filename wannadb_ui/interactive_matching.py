@@ -6,7 +6,8 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QIcon, QTextCursor
 from PyQt6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QTextEdit, QVBoxLayout, QWidget, QGridLayout, QSizePolicy
 
-from wannadb.data.signals import CachedContextSentenceSignal, CachedDistanceSignal, DimensionReducedLabelEmbeddingSignal
+from wannadb.data.signals import CachedContextSentenceSignal, CachedDistanceSignal, \
+    DimensionReducedLabelEmbeddingSignal, DimensionReducedTextEmbeddingSignal
 from wannadb_ui.common import BUTTON_FONT, CODE_FONT, CODE_FONT_BOLD, LABEL_FONT, MainWindowContent, \
     CustomScrollableList, CustomScrollableListItem, WHITE, LIGHT_YELLOW, YELLOW
 from wannadb_ui.visualizations import EmbeddingVisualizerWidget, BarChartVisualizerWidget, ScatterPlotVisualizerWidget
@@ -439,6 +440,7 @@ class DocumentWidget(QWidget):
         self.nuggets_sorted_by_distance = list(sorted(self.document.nuggets, key=lambda x: x[CachedDistanceSignal]))
         self.nuggets_in_order = list(sorted(self.document.nuggets, key=lambda x: x.start_char))
         self.custom_selection_item_widget.hide()
+        self.update_nuggets(self.document.nuggets)
 
         self.old_start = -1
         self.old_end = -1
@@ -517,7 +519,15 @@ class DocumentWidget(QWidget):
 
     def update_attribute(self, attribute):
         point_to_display = np.array([attribute[DimensionReducedLabelEmbeddingSignal]])
-        self.visualizer.update_grid(point_to_display)
+        self.visualizer.display_attribute_embedding(point_to_display)
+
+    def update_nuggets(self, nuggets):
+        points_to_display: np.ndarray = np.array([nugget[DimensionReducedTextEmbeddingSignal] for nugget in nuggets])
+
+        if points_to_display.size == 0:
+            return
+
+        self.visualizer.display_nugget_embedding(points_to_display)
 
 
 class SuggestionListItemWidget(CustomScrollableListItem):

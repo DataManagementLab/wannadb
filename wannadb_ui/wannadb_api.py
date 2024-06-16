@@ -14,6 +14,7 @@ from wannadb.interaction import EmptyInteractionCallback, InteractionCallback
 from wannadb.matching.custom_match_extraction import FaissSentenceSimilarityExtractor
 from wannadb.matching.distance import SignalsMeanDistance
 from wannadb.matching.matching import RankingBasedMatcher
+from wannadb.preprocessing.dimension_reduction import PCAReducer
 from wannadb.preprocessing.embedding import BERTContextSentenceEmbedder, RelativePositionEmbedder, \
     SBERTTextEmbedder, SBERTLabelEmbedder, SBERTDocumentSentenceEmbedder
 from wannadb.preprocessing.extraction import StanzaNERExtractor, SpacyNERExtractor
@@ -125,7 +126,8 @@ class WannaDBAPI(QObject):
                 SBERTTextEmbedder("SBERTBertLargeNliMeanTokensResource"),
                 BERTContextSentenceEmbedder("BertLargeCasedResource"),
                 SBERTDocumentSentenceEmbedder("SBERTBertLargeNliMeanTokensResource"),
-                RelativePositionEmbedder()
+                RelativePositionEmbedder(),
+                PCAReducer()
             ])
 
             # run preprocessing phase
@@ -351,6 +353,7 @@ class WannaDBAPI(QObject):
                     ContextSentenceCacher(),
                     SBERTLabelEmbedder("SBERTBertLargeNliMeanTokensResource"),
                     SBERTDocumentSentenceEmbedder("SBERTBertLargeNliMeanTokensResource"),
+                    PCAReducer(),
                     RankingBasedMatcher(
                         distance=SignalsMeanDistance(
                             signal_identifiers=[
@@ -375,7 +378,8 @@ class WannaDBAPI(QObject):
                                 SBERTLabelEmbedder("SBERTBertLargeNliMeanTokensResource"),
                                 SBERTTextEmbedder("SBERTBertLargeNliMeanTokensResource"),
                                 BERTContextSentenceEmbedder("BertLargeCasedResource"),
-                                RelativePositionEmbedder()
+                                RelativePositionEmbedder(),
+                                PCAReducer()
                             ]
                         ),
                         find_additional_nuggets=FaissSentenceSimilarityExtractor(num_similar_sentences=20, num_phrases_per_sentence=3),

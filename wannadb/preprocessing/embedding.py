@@ -12,9 +12,8 @@ from wannadb.configuration import BasePipelineElement, register_configurable_ele
 from wannadb.data.data import Attribute, DocumentBase, InformationNugget
 from wannadb.data.signals import ContextSentenceEmbeddingSignal, LabelEmbeddingSignal, RelativePositionSignal, \
     TextEmbeddingSignal, UserProvidedExamplesSignal, NaturalLanguageLabelSignal, CachedContextSentenceSignal, \
-    SentenceStartCharsSignal, DocumentSentenceEmbeddingSignal, DimensionReducedLabelEmbeddingSignal
+    SentenceStartCharsSignal, DocumentSentenceEmbeddingSignal
 from wannadb.interaction import BaseInteractionCallback
-from wannadb.preprocessing.dimension_reduction import PCAReduction
 from wannadb.statistics import Statistics
 from wannadb.status import BaseStatusCallback
 
@@ -172,11 +171,6 @@ class BaseEmbedder(BasePipelineElement, abc.ABC):
         """
         pass  # default behavior: do nothing
 
-    def _apply_dimension_reduction(self, data: List[np.ndarray]) -> List[np.ndarray]:
-        red = PCAReduction()
-        result: np.ndarray = red.reduce_dimensions(data)
-        return [embedding for embedding in result]
-
 
 ########################################################################################################################
 # actual embedders
@@ -254,11 +248,9 @@ class SBERTLabelEmbedder(BaseSBERTEmbedder):
         embeddings: List[np.ndarray] = resources.MANAGER[self._sbert_resource_identifier].encode(
             texts, show_progress_bar=False
         )
-        dim_reduced_embeddings: List[np.ndarray] = self._apply_dimension_reduction(embeddings)
 
-        for attribute, embedding, dim_reduced_embedding in zip(attributes, embeddings, dim_reduced_embeddings):
+        for attribute, embedding in zip(attributes, embeddings):
             attribute[LabelEmbeddingSignal] = LabelEmbeddingSignal(embedding)
-            attribute[DimensionReducedLabelEmbeddingSignal] = DimensionReducedLabelEmbeddingSignal(dim_reduced_embedding)
 
 
 @register_configurable_element
