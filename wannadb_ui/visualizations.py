@@ -11,6 +11,9 @@ from matplotlib.figure import Figure
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.backends.backend_qt5agg import NavigationToolbar2QT as NavigationToolbar
 
+RED = pg.mkColor('red')
+BLUE = pg.mkColor('blue')
+GREEN = pg.mkColor('green')
 
 def get_colors(distances, color_start='red', color_end='blue'):
     cmap = LinearSegmentedColormap.from_list("CustomMap", [color_start, color_end])
@@ -47,9 +50,15 @@ class EmbeddingVisualizerWidget(QWidget):
 
         add_grids(self.gl_widget)
 
-    def update_grid(self, points_to_display):
+    def display_attribute_embedding(self, attributes_embedding):
+        self.update_grid(attributes_embedding, RED)
+
+    def display_nugget_embedding(self, nuggets_embeddings):
+        self.update_grid(nuggets_embeddings, GREEN)
+
+    def update_grid(self, points_to_display, color):
         scatter = gl.GLScatterPlotItem(pos=points_to_display,
-                                       color=pg.glColor((0, 10)),
+                                       color=color,
                                        size=3,
                                        pxMode=True)
         self.gl_widget.addItem(scatter)
