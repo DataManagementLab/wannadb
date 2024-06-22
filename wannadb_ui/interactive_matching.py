@@ -506,6 +506,21 @@ class DocumentWidget(QWidget):
         scroll_cursor.setPosition(nugget.start_char)
         self.text_edit.setTextCursor(scroll_cursor)
         self.text_edit.ensureCursorVisible()
+        # Clear bar chart data when updating document
+        self.clear_barchart_data()
+
+        # Clear scatter plot data when updating document
+        self.clear_scatter_plot_data()
+
+        # Update with new nuggets
+        self.update_nuggets(self.document.nuggets)
+
+    def clear_barchart_data(self):
+        self.cosine_barchart.clear_data()
+
+    def clear_scatter_plot_data(self):
+        self.scatter_plot_widget.clear_data()
+
 
     def enable_input(self):
         self.match_button.setEnabled(True)
