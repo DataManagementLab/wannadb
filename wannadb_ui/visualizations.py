@@ -1,3 +1,4 @@
+import copy
 from collections import OrderedDict
 
 import pyqtgraph as pg
@@ -10,16 +11,16 @@ from matplotlib.patches import Rectangle
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.backends.backend_qt5agg import NavigationToolbar2QT as NavigationToolbar
+from pyqtgraph.opengl import GLViewWidget, GLScatterPlotItem
 
 RED = pg.mkColor('red')
 BLUE = pg.mkColor('blue')
 GREEN = pg.mkColor('green')
 
+
 def get_colors(distances, color_start='red', color_end='blue'):
     cmap = LinearSegmentedColormap.from_list("CustomMap", [color_start, color_end])
-    # Normalize the data for color mapping
     norm = plt.Normalize(min(distances), max(distances))
-    # Generate the colors based on the data
     colors = [cmap(norm(value)) for value in distances]
     return colors
 
@@ -37,31 +38,78 @@ def add_grids(widget):
     widget.addItem(grid_yz)
 
 
-class EmbeddingVisualizerWidget(QWidget):
+def update_grid(gl_widget, points_to_display, color):
+    scatter = GLScatterPlotItem(pos=points_to_display, color=color, size=3, pxMode=True)
+    print(f"type of points_to_display: {type(points_to_display)}")
+    gl_widget.addItem(scatter)
 
+
+
+class FullscreenWindow(QMainWindow):
+    def __init__(self, attribute_embeddings, nugget_embeddings):
+        super(FullscreenWindow, self).__init__()
+
+        self.setWindowTitle("3D Grid Visualizer")
+        self.setGeometry(100, 100, 800, 600)
+
+        central_widget = QWidget()
+        self.setCentralWidget(central_widget)
+        self.fullscreen_layout = QVBoxLayout()
+        central_widget.setLayout(self.fullscreen_layout)
+
+        self.fullscreen_gl_widget = GLViewWidget()
+        self.fullscreen_layout.addWidget(self.fullscreen_gl_widget)
+
+        add_grids(self.fullscreen_gl_widget)
+        self.copy_state(attribute_embeddings, nugget_embeddings, self.fullscreen_gl_widget)
+
+    def closeEvent(self, event):
+        self.parent().return_from_fullscreen()
+        event.accept()
+
+    def copy_state(self, attribute_embeddings, nugget_embeddings, target_gl_widget):
+        update_grid(target_gl_widget, attribute_embeddings, RED)
+        update_grid(target_gl_widget, nugget_embeddings, GREEN)
+
+class EmbeddingVisualizerWidget(QWidget):
     def __init__(self):
         super(EmbeddingVisualizerWidget, self).__init__()
 
-        layout = QVBoxLayout()
-        self.setLayout(layout)
+        self.layout = QVBoxLayout()
+        self.layout.setContentsMargins(0, 0, 0, 0)
+        self.setLayout(self.layout)
 
-        self.gl_widget = gl.GLViewWidget()
-        layout.addWidget(self.gl_widget)
+        self.gl_widget = GLViewWidget()
+        self.gl_widget.setMinimumHeight(200)  # Set the initial height of the grid to 200
+        self.layout.addWidget(self.gl_widget)
+
+        self.fullscreen_button = QPushButton("Show 3D Grid in windowed fullscreen mode")
+        self.fullscreen_button.clicked.connect(self._show_fullscreen)
+        self.layout.addWidget(self.fullscreen_button)
 
         add_grids(self.gl_widget)
 
-    def display_attribute_embedding(self, attributes_embedding):
-        self.update_grid(attributes_embedding, RED)
+        self.fullscreen_window = None
+        self.attribute_embeddings = None
+        self.nugget_embeddings = None
 
-    def display_nugget_embedding(self, nuggets_embeddings):
-        self.update_grid(nuggets_embeddings, GREEN)
+    def _show_fullscreen(self):
+        if self.fullscreen_window is None:
+            self.fullscreen_window = FullscreenWindow(attribute_embeddings=self.attribute_embeddings, nugget_embeddings=self.nugget_embeddings)
+        self.fullscreen_window.show()
 
-    def update_grid(self, points_to_display, color):
-        scatter = gl.GLScatterPlotItem(pos=points_to_display,
-                                       color=color,
-                                       size=3,
-                                       pxMode=True)
-        self.gl_widget.addItem(scatter)
+    def return_from_fullscreen(self):
+        self.fullscreen_window.close()
+        self.fullscreen_window = None
+
+    def display_attribute_embedding(self, attribute_embeddings):
+        update_grid(self.gl_widget, attribute_embeddings, RED)
+        self.attribute_embeddings = attribute_embeddings  # save for later use
+
+    def display_nugget_embedding(self, nugget_embeddings):
+        update_grid(self.gl_widget, nugget_embeddings, GREEN)
+        self.nugget_embeddings = nugget_embeddings
+
 
 
 class BarChartVisualizerWidget(QWidget):
@@ -133,7 +181,7 @@ class BarChartVisualizerWidget(QWidget):
         self.distances = rounded_distances
 
         # todo after value is confirmed or value not in document, reinitialize data
-        #self.window.destroyed.connect(self.cleanup)
+        # self.window.destroyed.connect(self.cleanup)
 
     def on_pick(self, event):
         if isinstance(event.artist, Rectangle):

@@ -1,6 +1,7 @@
 import logging
 import sys
 
+from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QApplication
 
 from wannadb.resources import ResourceManager
@@ -14,6 +15,7 @@ if __name__ == "__main__":
 
     with ResourceManager() as resource_manager:
         # set up PyQt application
+        QApplication.setAttribute(Qt.ApplicationAttribute.AA_ShareOpenGLContexts)
         app = QApplication(sys.argv)
 
         window = MainWindow()
