@@ -198,7 +198,7 @@ class BarChartVisualizerWidget(QWidget):
             self.annotation.set_visible(True)
             self.bar_chart_canvas.draw_idle()
 
-    def cleanup(self):
+    def clear_data(self):
         self.data = []
         self.bar = None
 
@@ -216,9 +216,26 @@ class ScatterPlotVisualizerWidget(QWidget):
         self.scatter_plot_toolbar = None
         self.window = None
         self.annotation = None
+        self.texts = None
+        self.distances = None
+        self.y = None
+        self.scatter = None
 
     def append_data(self, data_tuple):
         self.data.append(data_tuple)
+
+    def clear_data(self):
+        self.data = []
+        self.texts = None
+        self.distances = None
+        self.y = None
+        self.scatter = None
+        if self.window is not None:
+            self.window.close()
+        self.scatter_plot_canvas = None
+        self.scatter_plot_toolbar = None
+        self.window = None
+        self.annotation = None
 
     def show_scatter_plot(self):
         if not self.data:
