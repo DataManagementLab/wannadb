@@ -40,7 +40,6 @@ def add_grids(widget):
 
 def update_grid(gl_widget, points_to_display, color):
     scatter = GLScatterPlotItem(pos=points_to_display, color=color, size=3, pxMode=True)
-    print(f"type of points_to_display: {type(points_to_display)}")
     gl_widget.addItem(scatter)
 
 
@@ -64,7 +63,6 @@ class FullscreenWindow(QMainWindow):
         self.copy_state(attribute_embeddings, nugget_embeddings, self.fullscreen_gl_widget)
 
     def closeEvent(self, event):
-        self.parent().return_from_fullscreen()
         event.accept()
 
     def copy_state(self, attribute_embeddings, nugget_embeddings, target_gl_widget):
@@ -163,7 +161,6 @@ class BarChartVisualizerWidget(QWidget):
         self.window.setCentralWidget(self.bar_chart_canvas)
 
         self.bar_chart_toolbar = NavigationToolbar(self.bar_chart_canvas, self.window)
-        print(f"BAR CHART TOOLBAR TYPE: {type(self.bar_chart_toolbar)}")
         self.window.addToolBar(self.bar_chart_toolbar)
 
         self.window.show()
@@ -189,8 +186,6 @@ class BarChartVisualizerWidget(QWidget):
             index = self.bar.get_children().index(patch)
             text = f"Infomation Nugget: \n{self.texts[index]} \n\n Value: {self.distances[index]}"
             self.annotation.set_text(text)
-            print(patch.get_x())
-            print(patch.get_width())
             # if patch.get_x() + patch.get_width() > 20:
             annotation_x = patch.get_x() + patch.get_width() / 2
             annotation_y = patch.get_height() / 2
