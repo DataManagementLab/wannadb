@@ -1,6 +1,7 @@
 /venv/
 /.idea/
 /__pycache__/
+/wannadb_ui/__pycache__/
 /.pytest_cache/
 
 /models/
