@@ -1,4 +1,5 @@
 import copy
+import logging
 from collections import OrderedDict
 
 import pyqtgraph as pg
@@ -12,6 +13,10 @@ from matplotlib.figure import Figure
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.backends.backend_qt5agg import NavigationToolbar2QT as NavigationToolbar
 from pyqtgraph.opengl import GLViewWidget, GLScatterPlotItem
+
+from wannadb.data.signals import DimensionReducedTextEmbeddingSignal
+
+logger: logging.Logger = logging.getLogger(__name__)
 
 RED = pg.mkColor('red')
 BLUE = pg.mkColor('blue')
@@ -38,15 +43,18 @@ def add_grids(widget):
     widget.addItem(grid_yz)
 
 
-def update_grid(gl_widget, points_to_display, color):
+def update_grid(gl_widget, points_to_display, color) -> GLScatterPlotItem:
     scatter = GLScatterPlotItem(pos=points_to_display, color=color, size=3, pxMode=True)
     gl_widget.addItem(scatter)
+    return scatter
 
 
+class EmbeddingVisualizerWindow(QMainWindow):
+    def __init__(self, attribute_embedding, nuggets, currently_highlighted_nugget):
+        super(EmbeddingVisualizerWindow, self).__init__()
 
-class FullscreenWindow(QMainWindow):
-    def __init__(self, attribute_embeddings, nugget_embeddings):
-        super(FullscreenWindow, self).__init__()
+        self.nugget_to_scatter = {}
+        self.currently_highlighted_nugget = None
 
         self.setWindowTitle("3D Grid Visualizer")
         self.setGeometry(100, 100, 800, 600)
@@ -60,14 +68,36 @@ class FullscreenWindow(QMainWindow):
         self.fullscreen_layout.addWidget(self.fullscreen_gl_widget)
 
         add_grids(self.fullscreen_gl_widget)
-        self.copy_state(attribute_embeddings, nugget_embeddings, self.fullscreen_gl_widget)
+        self.copy_state(attribute_embedding, nuggets)
+
+        if currently_highlighted_nugget is not None:
+            self.highlight_nugget(currently_highlighted_nugget)
 
     def closeEvent(self, event):
         event.accept()
 
-    def copy_state(self, attribute_embeddings, nugget_embeddings, target_gl_widget):
-        update_grid(target_gl_widget, attribute_embeddings, RED)
-        update_grid(target_gl_widget, nugget_embeddings, GREEN)
+    def copy_state(self, attribute_embeddings, nuggets):
+        update_grid(self.fullscreen_gl_widget, attribute_embeddings, RED)
+
+        for nugget in nuggets:
+            nugget_embedding: np.ndarray = np.array([nugget[DimensionReducedTextEmbeddingSignal]])
+            scatter = update_grid(self.fullscreen_gl_widget, nugget_embedding, GREEN)
+            self.nugget_to_scatter[nugget] = scatter
+
+    def highlight_nugget(self, nugget):
+        scatter_to_highlight = self.nugget_to_scatter[nugget]
+
+        if scatter_to_highlight is None:
+            logger.warning("Couldn't find nugget to highlight")
+            return
+
+        if self.currently_highlighted_nugget is not None:
+            currently_highlighted_scatter = self.nugget_to_scatter[self.currently_highlighted_nugget]
+            currently_highlighted_scatter.setData(color=GREEN, size=3)
+
+        scatter_to_highlight.setData(color=BLUE, size=10)
+        self.currently_highlighted_nugget = nugget
+
 
 class EmbeddingVisualizerWidget(QWidget):
     def __init__(self):
@@ -82,21 +112,24 @@ class EmbeddingVisualizerWidget(QWidget):
         self.layout.addWidget(self.gl_widget)
 
         self.fullscreen_button = QPushButton("Show 3D Grid in windowed fullscreen mode")
-        self.fullscreen_button.clicked.connect(self._show_fullscreen)
+        self.fullscreen_button.clicked.connect(self._show_embedding_visualizer_window)
         self.layout.addWidget(self.fullscreen_button)
 
         add_grids(self.gl_widget)
 
         self.fullscreen_window = None
         self.attribute_embeddings = None
-        self.nugget_embeddings = None
+        self.nugget_to_scatter = {}
+        self.currently_highlighted_nugget = None
 
-    def _show_fullscreen(self):
+    def _show_embedding_visualizer_window(self):
         if self.fullscreen_window is None:
-            self.fullscreen_window = FullscreenWindow(attribute_embeddings=self.attribute_embeddings, nugget_embeddings=self.nugget_embeddings)
+            self.fullscreen_window = EmbeddingVisualizerWindow(attribute_embedding=self.attribute_embeddings,
+                                                               nuggets=self.nugget_to_scatter.keys(),
+                                                               currently_highlighted_nugget=self.currently_highlighted_nugget)
         self.fullscreen_window.show()
 
-    def return_from_fullscreen(self):
+    def return_from_embedding_visualizer_window(self):
         self.fullscreen_window.close()
         self.fullscreen_window = None
 
@@ -104,10 +137,35 @@ class EmbeddingVisualizerWidget(QWidget):
         update_grid(self.gl_widget, attribute_embeddings, RED)
         self.attribute_embeddings = attribute_embeddings  # save for later use
 
-    def display_nugget_embedding(self, nugget_embeddings):
-        update_grid(self.gl_widget, nugget_embeddings, GREEN)
-        self.nugget_embeddings = nugget_embeddings
+    def display_nugget_embedding(self, nuggets):
+        for nugget in nuggets:
+            nugget_embedding: np.ndarray = np.array([nugget[DimensionReducedTextEmbeddingSignal]])
+            scatter = update_grid(self.gl_widget, nugget_embedding, GREEN)
+            self.nugget_to_scatter[nugget] = scatter
 
+    def highlight_nugget(self, nugget):
+        scatter_to_highlight = self.nugget_to_scatter[nugget]
+
+        if scatter_to_highlight is None:
+            logger.warning("Couldn't find nugget to highlight")
+            return
+
+        if self.currently_highlighted_nugget is not None:
+            currently_highlighted_scatter = self.nugget_to_scatter[self.currently_highlighted_nugget]
+            currently_highlighted_scatter.setData(color=GREEN, size=3)
+
+        scatter_to_highlight.setData(color=BLUE, size=10)
+        self.currently_highlighted_nugget = nugget
+
+        if self.fullscreen_window is not None:
+            self.fullscreen_window.highlight_nugget(nugget)
+
+    def reset(self):
+        [self.gl_widget.removeItem(scatter) for scatter in self.nugget_to_scatter.values()]
+
+        self.fullscreen_window = None
+        self.nugget_to_scatter = {}
+        self.currently_highlighted_nugget = None
 
 
 class BarChartVisualizerWidget(QWidget):
