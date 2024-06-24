@@ -291,7 +291,6 @@ class DocumentWidget(QWidget):
         self.text_edit.selectionChanged.connect(self._handle_selection_changed)
         self.text_edit.setText("")
 
-
         # last custom selection values
         self.custom_start = 0
         self.custom_end = 0
@@ -306,7 +305,6 @@ class DocumentWidget(QWidget):
                                                     above_widget=self.custom_selection_item_widget)
         self.suggestion_list.setFixedHeight(60)
         self.layout.addWidget(self.suggestion_list)
-
 
         self.upper_buttons_widget = QWidget()
         self.upper_buttons_widget_layout = QHBoxLayout(self.upper_buttons_widget)
@@ -427,6 +425,8 @@ class DocumentWidget(QWidget):
             )
             self.text_edit.setText("")
             self.text_edit.textCursor().insertHtml(formatted_text)
+
+            self.visualizer.highlight_nugget(self.current_nugget)
         else:
             self.text_edit.setText("")
             self.text_edit.textCursor().insertHtml(self.base_formatted_text)
@@ -512,15 +512,11 @@ class DocumentWidget(QWidget):
         # Clear scatter plot data when updating document
         self.clear_scatter_plot_data()
 
-        # Update with new nuggets
-        self.update_nuggets(self.document.nuggets)
-
     def clear_barchart_data(self):
         self.cosine_barchart.clear_data()
 
     def clear_scatter_plot_data(self):
         self.scatter_plot_widget.clear_data()
-
 
     def enable_input(self):
         self.match_button.setEnabled(True)
@@ -537,12 +533,11 @@ class DocumentWidget(QWidget):
         self.visualizer.display_attribute_embedding(point_to_display)
 
     def update_nuggets(self, nuggets):
-        points_to_display: np.ndarray = np.array([nugget[DimensionReducedTextEmbeddingSignal] for nugget in nuggets])
-
-        if points_to_display.size == 0:
+        if len(nuggets) == 0:
             return
 
-        self.visualizer.display_nugget_embedding(points_to_display)
+        self.visualizer.reset()
+        self.visualizer.display_nugget_embedding(nuggets)
 
 
 class SuggestionListItemWidget(CustomScrollableListItem):
@@ -570,7 +565,6 @@ class SuggestionListItemWidget(CustomScrollableListItem):
         self.suggestion_list_widget.interactive_matching_widget.document_widget.current_nugget = self.nugget
         self.suggestion_list_widget.interactive_matching_widget.document_widget._highlight_current_nugget()
         self.suggestion_list_widget.interactive_matching_widget.document_widget.custom_selection_item_widget.hide()
-
 
     def update_item(self, item, params=None):
         self.nugget = item
