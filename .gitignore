@@ -8,3 +8,6 @@
 .json
 .pdf
 .bson
+/evaluation/datasets/aviation/documents
+/evaluation/datasets/nobel/documents
+/evaluation/results/
