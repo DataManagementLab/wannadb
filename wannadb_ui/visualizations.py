@@ -14,7 +14,7 @@ from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.backends.backend_qt5agg import NavigationToolbar2QT as NavigationToolbar
 from pyqtgraph.opengl import GLViewWidget, GLScatterPlotItem
 
-from wannadb.data.signals import DimensionReducedTextEmbeddingSignal
+from wannadb.data.signals import PCADimensionReducedTextEmbeddingSignal, TSNEDimensionReducedTextEmbeddingSignal
 
 logger: logging.Logger = logging.getLogger(__name__)
 
@@ -80,7 +80,7 @@ class EmbeddingVisualizerWindow(QMainWindow):
         update_grid(self.fullscreen_gl_widget, attribute_embeddings, RED)
 
         for nugget in nuggets:
-            nugget_embedding: np.ndarray = np.array([nugget[DimensionReducedTextEmbeddingSignal]])
+            nugget_embedding: np.ndarray = np.array([nugget[PCADimensionReducedTextEmbeddingSignal]])
             scatter = update_grid(self.fullscreen_gl_widget, nugget_embedding, GREEN)
             self.nugget_to_scatter[nugget] = scatter
 
@@ -139,7 +139,7 @@ class EmbeddingVisualizerWidget(QWidget):
 
     def display_nugget_embedding(self, nuggets):
         for nugget in nuggets:
-            nugget_embedding: np.ndarray = np.array([nugget[DimensionReducedTextEmbeddingSignal]])
+            nugget_embedding: np.ndarray = np.array([nugget[PCADimensionReducedTextEmbeddingSignal]])
             scatter = update_grid(self.gl_widget, nugget_embedding, GREEN)
             self.nugget_to_scatter[nugget] = scatter
 

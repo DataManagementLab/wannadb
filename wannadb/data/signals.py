@@ -357,9 +357,16 @@ class LabelEmbeddingSignal(BaseNumpyArraySignal):
 
 
 @register_signal
-class DimensionReducedLabelEmbeddingSignal(BaseNumpyArraySignal):
+class PCADimensionReducedLabelEmbeddingSignal(BaseNumpyArraySignal):
     """Embedding of the nugget's label or attribute's name reduced to 3 dimensions."""
     identifier: str = "DimensionReducedLabelEmbeddingSignal"
+    do_serialize: bool = True
+
+
+@register_signal
+class TSNEDimensionReducedLabelEmbeddingSignal(BaseNumpyArraySignal):
+    """Embedding of the nugget's label or attribute's name reduced to 3 dimensions."""
+    identifier: str = "TSNEDimensionReducedLabelEmbeddingSignal"
     do_serialize: bool = True
 
 
@@ -371,9 +378,16 @@ class TextEmbeddingSignal(BaseNumpyArraySignal):
 
 
 @register_signal
-class DimensionReducedTextEmbeddingSignal(BaseNumpyArraySignal):
+class PCADimensionReducedTextEmbeddingSignal(BaseNumpyArraySignal):
     """Embedding of the nugget's text reduced to 3 dimensions."""
-    identifier: str = "DimensionReducedTextEmbeddingSignal"
+    identifier: str = "PCADimensionReducedTextEmbeddingSignal"
+    do_serialize: bool = True
+
+
+@register_signal
+class TSNEDimensionReducedTextEmbeddingSignal(BaseNumpyArraySignal):
+    """Embedding of the nugget's text reduced to 3 dimensions."""
+    identifier: str = "TSNEDimensionReducedTextEmbeddingSignal"
     do_serialize: bool = True
 
 
