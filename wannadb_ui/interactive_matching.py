@@ -7,7 +7,8 @@ from PyQt6.QtGui import QIcon, QTextCursor
 from PyQt6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QTextEdit, QVBoxLayout, QWidget, QGridLayout, QSizePolicy
 
 from wannadb.data.signals import CachedContextSentenceSignal, CachedDistanceSignal, \
-    DimensionReducedLabelEmbeddingSignal, DimensionReducedTextEmbeddingSignal
+    PCADimensionReducedLabelEmbeddingSignal, PCADimensionReducedTextEmbeddingSignal, \
+    TSNEDimensionReducedLabelEmbeddingSignal
 from wannadb_ui.common import BUTTON_FONT, CODE_FONT, CODE_FONT_BOLD, LABEL_FONT, MainWindowContent, \
     CustomScrollableList, CustomScrollableListItem, WHITE, LIGHT_YELLOW, YELLOW
 from wannadb_ui.visualizations import EmbeddingVisualizerWidget, BarChartVisualizerWidget, ScatterPlotVisualizerWidget
@@ -529,7 +530,7 @@ class DocumentWidget(QWidget):
         self.suggestion_list.disable_input()
 
     def update_attribute(self, attribute):
-        point_to_display = np.array([attribute[DimensionReducedLabelEmbeddingSignal]])
+        point_to_display = np.array([attribute[PCADimensionReducedLabelEmbeddingSignal]])
         self.visualizer.display_attribute_embedding(point_to_display)
 
     def update_nuggets(self, nuggets):
