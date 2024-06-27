@@ -370,7 +370,15 @@ class NuggetListItemWidget(CustomScrollableListItem, VisualizationProvidingItem)
         # self.info_button.setText(f"{str(round(self.nugget[CachedDistanceSignal], 2)).ljust(4)}")
 
     def _multi_match_ready_checkbox_state_changed(self, state):
-        self.setCheckState(state)
+        used_state = None
+        if state == 0:
+            used_state = Qt.CheckState.Unchecked
+        elif state == 2:
+            used_state = Qt.CheckState.Checked
+        else:
+            logger.info(f"Multi match ready checkbox state changed to {state}, which is not handled.")
+            return
+        self.multi_match_ready_checkbox.setCheckState(used_state)
         self.nugget_list_widget.update_multi_match_button()
 
     @track_button_click(button_name="nugget_list_match_button")
