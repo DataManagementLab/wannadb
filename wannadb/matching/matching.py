@@ -490,6 +490,29 @@ class RankingBasedMatcher(BaseMatcher):
                             logger.info("CONFIRMED NUGGET NOT IN RANKED LIST: Did not change the maximum distance "
                                         "since the confirmed nugget was not in the ranked list.")
 
+                elif feedback_result["message"] == "multi-match":
+                    for nugget in feedback_result["nuggets"]:
+                        statistics[attribute.name]["num_confirmed_match"] += 1
+                        nugget.document.attribute_mappings[attribute.name] = [nugget]
+                        try: remaining_documents.remove(nugget.document)
+                        except ValueError: pass
+
+                    # update the distances for the other documents
+                    for document in remaining_documents:
+                        new_distances: np.ndarray = self._distance.compute_distances(
+                            feedback_result["nuggets"],
+                            document.nuggets,
+                            statistics["distance"]
+                        )[0]
+                        for nugget, new_distance in zip(document.nuggets, new_distances):
+                            if distances_based_on_label or new_distance < nugget[CachedDistanceSignal]:
+                                nugget[CachedDistanceSignal] = new_distance
+                        for ix, nugget in enumerate(document.nuggets):
+                            current_guess: InformationNugget = document.nuggets[document[CurrentMatchIndexSignal]]
+                            if nugget[CachedDistanceSignal] < current_guess[CachedDistanceSignal]:
+                                document[CurrentMatchIndexSignal] = ix
+                    distances_based_on_label = False
+
                 if self.store_best_guesses: # and (num_feedback == 0 or (num_feedback+1) % 5 == 0):
                     best_guesses = []
                     for document in document_base.documents:
