@@ -138,6 +138,7 @@ class NuggetListWidget(QWidget):
         for item in self.nugget_list.item_widgets:
             if item.multi_match_ready_checkbox.isChecked():
                 nuggets.append(item.nugget)
+                item.multi_match_ready_checkbox.setChecked(False)
         self.interactive_matching_widget.main_window.give_feedback_task({
             "message": "multi-match",
             "nuggets": nuggets
