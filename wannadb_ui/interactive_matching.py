@@ -3,7 +3,7 @@ import logging
 from PyQt6 import QtGui
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QIcon, QTextCursor
-from PyQt6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QTextEdit, QVBoxLayout, QWidget
+from PyQt6.QtWidgets import QCheckBox, QHBoxLayout, QLabel, QPushButton, QTextEdit, QVBoxLayout, QWidget
 
 from wannadb.data.signals import CachedContextSentenceSignal, CachedDistanceSignal
 from wannadb_ui.common import BUTTON_FONT, CODE_FONT, CODE_FONT_BOLD, LABEL_FONT, MainWindowContent, \
@@ -99,6 +99,11 @@ class NuggetListWidget(QWidget):
                                                 above_widget=self.num_nuggets_above_label)
         self.layout.addWidget(self.nugget_list)
 
+        self.multi_match_button = QPushButton("Confirm all selected matches")
+        self.multi_match_button.setFont(BUTTON_FONT)
+        self.multi_match_button.clicked.connect(self._multi_match_button_clicked)
+        self.layout.addWidget(self.multi_match_button)
+
     def update_nuggets(self, feedback_request):
         self.description.setText("Please confirm or edit the cell value guesses displayed below until you are satisfied with the guessed values, at which point you may continue with the next attribute."
                                  "\nWannaDB will use your feedback to continuously update its guesses. Note that the cells with low confidence (low confidence bar, light yellow highlights) will be left empty.")
@@ -116,6 +121,27 @@ class NuggetListWidget(QWidget):
             self.num_nuggets_below_label.setText(f"... and {feedback_request['num-nuggets-below']} more cells that will be populated ...")
         else:
             self.num_nuggets_below_label.setText("")
+
+    def update_multi_match_button(self):
+        multi_match = False
+        for item in self.nugget_list.item_widgets:
+            if item.multi_match_ready_checkbox.isChecked():
+                multi_match = True
+                break
+        if multi_match:
+            self.multi_match_button.show()
+        else:
+            self.multi_match_button.hide()
+
+    def _multi_match_button_clicked(self):
+        nuggets = []
+        for item in self.nugget_list.item_widgets:
+            if item.multi_match_ready_checkbox.isChecked():
+                nuggets.append(item.nugget)
+        self.interactive_matching_widget.main_window.give_feedback_task({
+            "message": "multi-match",
+            "nuggets": nuggets
+        })
 
     def enable_input(self):
         self.nugget_list.enable_input()
@@ -153,6 +179,12 @@ class NuggetListItemWidget(CustomScrollableListItem):
         # self.left_split_label = QLabel("|")
         # self.left_split_label.setFont(CODE_FONT_BOLD)
         # self.layout.addWidget(self.left_split_label)
+
+        self.multi_match_ready_checkbox = QCheckBox()
+        self.multi_match_ready_checkbox.setCheckable(True)
+        self.multi_match_ready_checkbox.setChecked(False)
+        self.multi_match_ready_checkbox.stateChanged.connect(self._multi_match_ready_checkbox_state_changed)
+        self.layout.addWidget(self.multi_match_ready_checkbox)
 
         self.text_edit = QTextEdit()
         self.text_edit.setReadOnly(True)
@@ -217,6 +249,10 @@ class NuggetListItemWidget(CustomScrollableListItem):
         self.text_edit.setDisabled(True)
 
         # self.info_button.setText(f"{str(round(self.nugget[CachedDistanceSignal], 2)).ljust(4)}")
+
+    def _multi_match_ready_checkbox_state_changed(self, state):
+        self.setCheckState(state)
+        self.nugget_list_widget.update_multi_match_button()
 
     def _match_button_clicked(self):
         self.nugget_list_widget.interactive_matching_widget.main_window.give_feedback_task({
