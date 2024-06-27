@@ -7,7 +7,7 @@ from typing import Any, Dict, List, Callable, Tuple, Counter
 import numpy as np
 
 from wannadb.configuration import BasePipelineElement, register_configurable_element, Pipeline
-from wannadb.data.data import Document, DocumentBase, InformationNugget
+from wannadb.data.data import Attribute, Document, DocumentBase, InformationNugget
 from wannadb.data.signals import CachedContextSentenceSignal, CachedDistanceSignal, \
     SentenceStartCharsSignal, CurrentMatchIndexSignal, LabelSignal, ExtractorNameSignal
 from wannadb.interaction import BaseInteractionCallback
@@ -545,6 +545,193 @@ class RankingBasedMatcher(BaseMatcher):
 
     @classmethod
     def from_config(cls, config: Dict[str, Any]) -> "RankingBasedMatcher":
+        distance: BaseDistance = BaseDistance.from_config(config["distance"])
+        return cls(distance, config["max_num_feedback"], config["len_ranked_list"], config["max_distance"],
+                   config["num_random_docs"], config["sampling_mode"], config["adjust_threshold"],
+                   Pipeline.from_config(config["nugget_pipeline"]))
+
+
+@register_configurable_element
+class DocumentBasedMatcher(BaseMatcher):
+    """Matcher that displays matched nuggets of document to the user for feedback."""
+
+    identifier: str = "DocumentBasedMatcher"
+
+    required_signal_identifiers: Dict[str, List[str]] = {
+        "nuggets": [CachedContextSentenceSignal.identifier],
+        "attributes": [],
+        "documents": [SentenceStartCharsSignal.identifier]
+    }
+
+    generated_signal_identifiers: Dict[str, List[str]] = {
+        "nuggets": [
+            CachedDistanceSignal.identifier,
+        ],
+        "attributes": [],
+        "documents": []
+    }
+
+    def __init__(
+            self,
+            distance: BaseDistance,
+            max_num_feedback: int,
+            len_ranked_list: int,
+            max_distance: float,
+            num_random_docs: int,
+            sampling_mode: str,
+            adjust_threshold: bool,
+            nugget_pipeline: Pipeline,
+            find_additional_nuggets: Callable[[InformationNugget, List[Document]], List[Tuple[Document, int, int]]] = lambda nugget, documents: (),
+    ) -> None:
+        """
+        Initialize the RankingBasedMatcher.
+        :param distance: distance function
+        :param max_num_feedback: maximum number of user interactions per attribute
+        :param len_ranked_list: length of the ranked list of nuggets presented to the user for feedback
+        :param max_distance: maximum distance at which nuggets will be accepted
+        :param num_random_docs: number of random documents that are part of the ranked list of nuggets
+        :param sampling_mode: determines how to sample the nuggets presented to the user for feedback
+        :param adjust_threshold: whether to adjust the maximum distance threshold based on the user feedback
+        :param nugget_pipeline: pipeline that is used to process newly-generated nuggets
+        :param find_additional_nuggets: optional function to add nuggets similar to a manually added and matched nugget
+        """
+        super(DocumentBasedMatcher, self).__init__()
+        self._distance: BaseDistance = distance
+        self._max_num_feedback: int = max_num_feedback
+        self._len_ranked_list: int = len_ranked_list
+        self._default_max_distance: float = max_distance
+        self._max_distance: float = max_distance
+        self._num_random_docs: int = num_random_docs
+        self._sampling_mode: str = sampling_mode
+        self._adjust_threshold: bool = adjust_threshold
+        self._nugget_pipeline: Pipeline = nugget_pipeline
+        self._find_additional_nuggets = find_additional_nuggets
+
+        # add signals required by the distance function to the signals required by the matcher
+        self._add_required_signal_identifiers(self._distance.required_signal_identifiers)
+
+        logger.debug(f"Initialized '{self.identifier}'.")
+
+    def _call(
+            self,
+            document_base: DocumentBase,
+            interaction_callback: BaseInteractionCallback,
+            status_callback: BaseStatusCallback,
+            statistics: Statistics
+    ) -> None:
+        statistics["num_documents"] = len(document_base.documents)
+        statistics["num_nuggets"] = len(document_base.nuggets)
+
+        for document in document_base.documents:
+            feedback_result: Dict[str, Any] = interaction_callback(
+                self.identifier,
+                {
+                    "do-document-request": None,
+                    "document": document
+                }
+            )
+
+            if not feedback_result["do-document"]:
+                logger.info(f"Skip document '{document.name}'.")
+                statistics[document.name]["skipped"] = True
+                continue
+
+            logger.info(f"Matching document '{document.name}'.")
+            self._max_distance = self._default_max_distance
+            statistics[document.name]["max_distances"] = [self._max_distance]
+            statistics[document.name]["feedback_durations"] = []
+
+            if feedback_result["message"] == "stop-interactive-matching":
+                statistics[document.name]["stopped_matching_by_hand"] = True
+                continue
+
+            elif feedback_result["message"] == "no-match-for-attribute":
+                attribute: Attribute = feedback_result["attribute"]
+                statistics[attribute.name]["num_no_match_in_document"] += 1
+                document.attribute_mappings[attribute.name] = []
+                continue
+
+            elif feedback_result["message"] == "custom-match":
+                attribute: Attribute = feedback_result["attribute"]
+                statistics[attribute.name]["num_custom_match"] += 1
+
+                confirmed_nugget = InformationNugget(feedback_result["document"], feedback_result["start"], feedback_result["end"])
+                confirmed_nugget[LabelSignal] = attribute.name
+
+                # run the nugget pipeline for this nugget
+                dummy_document = Document("dummy", confirmed_nugget.document.text)
+                dummy_document[SentenceStartCharsSignal] = confirmed_nugget.document[SentenceStartCharsSignal]
+                dummy_document.nuggets.append(confirmed_nugget)
+
+                dummy_document_base = DocumentBase([dummy_document], [])
+                self._nugget_pipeline(dummy_document_base, interaction_callback, status_callback, statistics["nugget-pipeline"])
+
+                # add other signals for this nugget
+                confirmed_nugget[CachedDistanceSignal] = CachedDistanceSignal(0.0)
+
+                # add this nugget to the document as a match
+                document.nuggets.append(confirmed_nugget)
+                document.attribute_mappings[attribute.name] = [confirmed_nugget]
+
+                # Find more nuggets that are similar to this match
+                additional_nuggets: List[Tuple[Document, int, int]] = self._find_additional_nuggets(confirmed_nugget, document_base.documents)
+                statistics[attribute.name]["num_additional_nuggets"] += len(additional_nuggets)
+                if len(additional_nuggets) == 0:
+                    continue
+                # convert nugget description into InformationNugget
+                additional_nuggets = list(map(lambda i: InformationNugget(*i), additional_nuggets))
+                for additional_nugget in additional_nuggets:
+                    additional_nugget[LabelSignal] = attribute.name
+                    additional_nugget.document.nuggets.append(additional_nugget)
+                # run the nugget pipeline for these nuggets
+                dummy_document_base = DocumentBase(additional_nuggets, [])
+                self._nugget_pipeline(dummy_document_base, interaction_callback, status_callback, statistics["nugget-pipeline"])
+
+                # calculate proper distances based on currently confirmed nugget
+                new_distances: np.ndarray = self._distance.compute_distances(
+                    [confirmed_nugget],
+                    additional_nuggets,
+                    statistics["distance"]
+                )[0]
+                for nugget, new_distance in zip(additional_nuggets, new_distances):
+                    nugget[CachedDistanceSignal] = new_distance
+                for nugget in additional_nuggets:
+                    current_guess: InformationNugget = nugget.document.nuggets[nugget.document[CurrentMatchIndexSignal]]
+                    if nugget[CachedDistanceSignal] < current_guess[CachedDistanceSignal]:
+                        nugget.document[CurrentMatchIndexSignal] = nugget.document.nuggets.index(nugget)
+
+            elif feedback_result["message"] == "is-match":
+                attribute: Attribute = feedback_result["attribute"]
+                statistics[attribute.name]["num_confirmed_match"] += 1
+
+                feedback_result["nugget"].document.attribute_mappings[attribute.name] = [feedback_result["nugget"]]
+
+                # add other signals for this nugget
+                feedback_result["nugget"][CachedDistanceSignal] = CachedDistanceSignal(0.0)
+
+                # add this nugget to the document as a match
+                feedback_result["nugget"].document.nuggets.append(feedback_result["nugget"])
+                feedback_result["nugget"].document.attribute_mappings[attribute.name] = [feedback_result["nugget"]]
+
+            else:
+                logger.error(f"Unknown message '{feedback_result['message']}'!")
+                assert False, f"Unknown message '{feedback_result['message']}'!"
+
+    def to_config(self) -> Dict[str, Any]:
+        return {
+            "identifier": self.identifier,
+            "distance": self._distance.to_config(),
+            "max_num_feedback": self._max_num_feedback,
+            "len_ranked_list": self._len_ranked_list,
+            "max_distance": self._max_distance,
+            "num_random_docs": self._num_random_docs,
+            "sampling_mode": self._sampling_mode,
+            "adjust_threshold": self._adjust_threshold,
+            "nugget_pipeline": self._nugget_pipeline.to_config()
+        }
+
+    @classmethod
+    def from_config(cls, config: Dict[str, Any]) -> "DocumentBasedMatcher":
         distance: BaseDistance = BaseDistance.from_config(config["distance"])
         return cls(distance, config["max_num_feedback"], config["len_ranked_list"], config["max_distance"],
                    config["num_random_docs"], config["sampling_mode"], config["adjust_threshold"],
