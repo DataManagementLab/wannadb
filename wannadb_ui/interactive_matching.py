@@ -530,8 +530,7 @@ class DocumentWidget(QWidget):
         self.suggestion_list.disable_input()
 
     def update_attribute(self, attribute):
-        point_to_display = np.array([attribute[PCADimensionReducedLabelEmbeddingSignal]])
-        self.visualizer.display_attribute_embedding(point_to_display)
+        self.visualizer.display_attribute_embedding(attribute)
 
     def update_nuggets(self, nuggets):
         if len(nuggets) == 0:

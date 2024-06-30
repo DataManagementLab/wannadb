@@ -1,10 +1,9 @@
-import copy
 import logging
-from collections import OrderedDict
 
 import pyqtgraph as pg
 import pyqtgraph.opengl as gl
 import numpy as np
+from PyQt6.QtGui import QFont
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QPushButton, QMainWindow, QLabel
 from matplotlib import pyplot as plt
 from matplotlib.colors import LinearSegmentedColormap
@@ -12,15 +11,18 @@ from matplotlib.patches import Rectangle
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.backends.backend_qt5agg import NavigationToolbar2QT as NavigationToolbar
-from pyqtgraph.opengl import GLViewWidget, GLScatterPlotItem
+from pyqtgraph.opengl import GLViewWidget, GLScatterPlotItem, GLTextItem
 
-from wannadb.data.signals import PCADimensionReducedTextEmbeddingSignal, TSNEDimensionReducedTextEmbeddingSignal
+from wannadb.data.signals import PCADimensionReducedTextEmbeddingSignal, TSNEDimensionReducedTextEmbeddingSignal, \
+    PCADimensionReducedLabelEmbeddingSignal
 
 logger: logging.Logger = logging.getLogger(__name__)
 
 RED = pg.mkColor('red')
 BLUE = pg.mkColor('blue')
 GREEN = pg.mkColor('green')
+WHITE = pg.mkColor('white')
+EMBEDDING_ANNOTATION_FONT = QFont('Helvetica', 10)
 
 
 def get_colors(distances, color_start='red', color_end='blue'):
@@ -43,17 +45,22 @@ def add_grids(widget):
     widget.addItem(grid_yz)
 
 
-def update_grid(gl_widget, points_to_display, color) -> GLScatterPlotItem:
+def update_grid(gl_widget, points_to_display, color, annotation_text) -> (GLScatterPlotItem, GLTextItem):
     scatter = GLScatterPlotItem(pos=points_to_display, color=color, size=3, pxMode=True)
+    annotation = GLTextItem(pos=[points_to_display[0][0], points_to_display[0][1], points_to_display[0][2]],
+                            color=WHITE,
+                            text=annotation_text,
+                            font=EMBEDDING_ANNOTATION_FONT)
     gl_widget.addItem(scatter)
-    return scatter
+    gl_widget.addItem(annotation)
+    return scatter, annotation
 
 
 class EmbeddingVisualizerWindow(QMainWindow):
-    def __init__(self, attribute_embedding, nuggets, currently_highlighted_nugget):
+    def __init__(self, attribute, nuggets, currently_highlighted_nugget):
         super(EmbeddingVisualizerWindow, self).__init__()
 
-        self.nugget_to_scatter = {}
+        self.nugget_to_displayed_items = {}
         self.currently_highlighted_nugget = None
 
         self.setWindowTitle("3D Grid Visualizer")
@@ -68,7 +75,7 @@ class EmbeddingVisualizerWindow(QMainWindow):
         self.fullscreen_layout.addWidget(self.fullscreen_gl_widget)
 
         add_grids(self.fullscreen_gl_widget)
-        self.copy_state(attribute_embedding, nuggets)
+        self.copy_state(attribute, nuggets)
 
         if currently_highlighted_nugget is not None:
             self.highlight_nugget(currently_highlighted_nugget)
@@ -76,23 +83,27 @@ class EmbeddingVisualizerWindow(QMainWindow):
     def closeEvent(self, event):
         event.accept()
 
-    def copy_state(self, attribute_embeddings, nuggets):
-        update_grid(self.fullscreen_gl_widget, attribute_embeddings, RED)
+    def copy_state(self, attribute, nuggets):
+
+        update_grid(self.fullscreen_gl_widget,
+                    [attribute[PCADimensionReducedLabelEmbeddingSignal]],
+                    RED,
+                    attribute.name)
 
         for nugget in nuggets:
             nugget_embedding: np.ndarray = np.array([nugget[PCADimensionReducedTextEmbeddingSignal]])
-            scatter = update_grid(self.fullscreen_gl_widget, nugget_embedding, GREEN)
-            self.nugget_to_scatter[nugget] = scatter
+            scatter, annotation = update_grid(self.fullscreen_gl_widget, nugget_embedding, GREEN, nugget.text)
+            self.nugget_to_displayed_items[nugget] = (scatter, annotation)
 
     def highlight_nugget(self, nugget):
-        scatter_to_highlight = self.nugget_to_scatter[nugget]
+        scatter_to_highlight, _ = self.nugget_to_displayed_items[nugget]
 
         if scatter_to_highlight is None:
             logger.warning("Couldn't find nugget to highlight")
             return
 
         if self.currently_highlighted_nugget is not None:
-            currently_highlighted_scatter = self.nugget_to_scatter[self.currently_highlighted_nugget]
+            currently_highlighted_scatter, _ = self.nugget_to_displayed_items[self.currently_highlighted_nugget]
             currently_highlighted_scatter.setData(color=GREEN, size=3)
 
         scatter_to_highlight.setData(color=BLUE, size=10)
@@ -118,14 +129,14 @@ class EmbeddingVisualizerWidget(QWidget):
         add_grids(self.gl_widget)
 
         self.fullscreen_window = None
-        self.attribute_embeddings = None
-        self.nugget_to_scatter = {}
+        self.attribute = None
+        self.nugget_to_displayed_items = {}
         self.currently_highlighted_nugget = None
 
     def _show_embedding_visualizer_window(self):
         if self.fullscreen_window is None:
-            self.fullscreen_window = EmbeddingVisualizerWindow(attribute_embedding=self.attribute_embeddings,
-                                                               nuggets=self.nugget_to_scatter.keys(),
+            self.fullscreen_window = EmbeddingVisualizerWindow(attribute=self.attribute,
+                                                               nuggets=self.nugget_to_displayed_items.keys(),
                                                                currently_highlighted_nugget=self.currently_highlighted_nugget)
         self.fullscreen_window.show()
 
@@ -133,25 +144,29 @@ class EmbeddingVisualizerWidget(QWidget):
         self.fullscreen_window.close()
         self.fullscreen_window = None
 
-    def display_attribute_embedding(self, attribute_embeddings):
-        update_grid(self.gl_widget, attribute_embeddings, RED)
-        self.attribute_embeddings = attribute_embeddings  # save for later use
+    def display_attribute_embedding(self, attribute):
+        attribute_embedding = np.array([attribute[PCADimensionReducedLabelEmbeddingSignal]])
+        update_grid(self.gl_widget, attribute_embedding, RED, attribute.name)
+        self.attribute = attribute  # save for later use
 
     def display_nugget_embedding(self, nuggets):
         for nugget in nuggets:
-            nugget_embedding: np.ndarray = np.array([nugget[PCADimensionReducedTextEmbeddingSignal]])
-            scatter = update_grid(self.gl_widget, nugget_embedding, GREEN)
-            self.nugget_to_scatter[nugget] = scatter
+            self._add_nugget_embedding(nugget)
+
+    def _add_nugget_embedding(self, nugget):
+        nugget_embedding: np.ndarray = np.array([nugget[PCADimensionReducedTextEmbeddingSignal]])
+        scatter, annotation = update_grid(self.gl_widget, nugget_embedding, GREEN, nugget.text)
+        self.nugget_to_displayed_items[nugget] = (scatter, annotation)
 
     def highlight_nugget(self, nugget):
-        scatter_to_highlight = self.nugget_to_scatter[nugget]
+        scatter_to_highlight, _ = self.nugget_to_displayed_items[nugget]
 
         if scatter_to_highlight is None:
             logger.warning("Couldn't find nugget to highlight")
             return
 
         if self.currently_highlighted_nugget is not None:
-            currently_highlighted_scatter = self.nugget_to_scatter[self.currently_highlighted_nugget]
+            currently_highlighted_scatter, _ = self.nugget_to_displayed_items[self.currently_highlighted_nugget]
             currently_highlighted_scatter.setData(color=GREEN, size=3)
 
         scatter_to_highlight.setData(color=BLUE, size=10)
@@ -161,10 +176,12 @@ class EmbeddingVisualizerWidget(QWidget):
             self.fullscreen_window.highlight_nugget(nugget)
 
     def reset(self):
-        [self.gl_widget.removeItem(scatter) for scatter in self.nugget_to_scatter.values()]
+        for scatter, annotation in self.nugget_to_displayed_items.values():
+            self.gl_widget.removeItem(scatter)
+            self.gl_widget.removeItem(annotation)
 
         self.fullscreen_window = None
-        self.nugget_to_scatter = {}
+        self.nugget_to_displayed_items = {}
         self.currently_highlighted_nugget = None
 
 
