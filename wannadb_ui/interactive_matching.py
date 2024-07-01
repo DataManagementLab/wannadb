@@ -130,14 +130,11 @@ class NuggetListWidget(QWidget):
             self.num_nuggets_below_label.setText("")
 
     def _process_likely_nuggets_label(self, nuggets, max_distance):
-        nuggets_to_add = []
-        TOP_NUGGETS = 5 #todo configure
-        for nugget in nuggets:
-            if max_distance < nugget[CachedDistanceSignal]:
-                nuggets_to_add.append(nugget)
-        if len(nuggets_to_add) > 0:
-            self.likely_nuggets.setText(f"Based upon your last choice, the top most likely choices are {', '.join(map(str, nuggets_to_add[:TOP_NUGGETS]))}.")
-            pass
+        TOP_NUGGETS = 5
+        nuggets_to_add = [nugget for nugget in nuggets if max_distance < nugget[CachedDistanceSignal]]
+        if nuggets_to_add:
+            top_nuggets = ', '.join(map(str, nuggets_to_add[:TOP_NUGGETS]))
+            self.likely_nuggets.setText(f"Based upon your last choice, the top most likely choices are {top_nuggets}.")
         else:
             self.likely_nuggets.setText("")
 
