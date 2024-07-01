@@ -89,6 +89,10 @@ class NuggetListWidget(QWidget):
         self.description.setFont(LABEL_FONT)
         self.layout.addWidget(self.description)
 
+        self.likely_nuggets = QLabel("")
+        self.likely_nuggets.setFont(LABEL_FONT)
+        self.layout.addWidget(self.likely_nuggets)
+
         # nugget list
         self.num_nuggets_above_label = QLabel("")
         self.num_nuggets_above_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -113,6 +117,8 @@ class NuggetListWidget(QWidget):
             "max_start_chars": max([nugget[CachedContextSentenceSignal]["start_char"] for nugget in nuggets]),
             "max_distance": feedback_request["max-distance"]
         }
+
+        self._process_likely_nuggets_label(nuggets, feedback_request["max-distance"])
         self.nugget_list.update_item_list(nuggets, params)
         if feedback_request["num-nuggets-above"] > 0:
             self.num_nuggets_above_label.setText(f"... and {feedback_request['num-nuggets-above']} more cells that will be left empty ...")
@@ -122,6 +128,18 @@ class NuggetListWidget(QWidget):
             self.num_nuggets_below_label.setText(f"... and {feedback_request['num-nuggets-below']} more cells that will be populated ...")
         else:
             self.num_nuggets_below_label.setText("")
+
+    def _process_likely_nuggets_label(self, nuggets, max_distance):
+        nuggets_to_add = []
+        TOP_NUGGETS = 5 #todo configure
+        for nugget in nuggets:
+            if max_distance < nugget[CachedDistanceSignal]:
+                nuggets_to_add.append(nugget)
+        if len(nuggets_to_add) > 0:
+            self.likely_nuggets.setText(f"Based upon your last choice, the top most likely choices are {', '.join(map(str, nuggets_to_add[:TOP_NUGGETS]))}.")
+            pass
+        else:
+            self.likely_nuggets.setText("")
 
     def enable_input(self):
         self.nugget_list.enable_input()
