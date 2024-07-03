@@ -217,6 +217,7 @@ class BarChartVisualizerWidget(QWidget):
         if self.window is not None:
             self.window.close()
 
+     
         fig = Figure()
         ax = fig.add_subplot(111)
         texts, distances = zip(*self.data)
@@ -227,8 +228,8 @@ class BarChartVisualizerWidget(QWidget):
         ax.set_xticks([])
         ax.set_ylabel('Cosine Similarity', fontsize=15)
         ax.set_xlabel('Information Nuggets', fontsize=15)
-        fig.tight_layout()
-
+        #fig.tight_layout()
+        fig.subplots_adjust(left=0.115, right=0.920, top=0.945, bottom=0.065)
         self.bar_chart_canvas = FigureCanvas(fig)
         self.window = QMainWindow()
         self.window.setWindowTitle("Bar Chart")
@@ -357,7 +358,8 @@ class ScatterPlotVisualizerWidget(QWidget):
         ax.set_xlim(min(rounded_distances) - 0.05,
                     max(rounded_distances) + 0.05)  # Adjust x-axis limits for better visibility
         ax.set_yticks([])  # Remove y-axis labels to avoid confusion
-        fig.tight_layout()
+        fig.subplots_adjust(left=0.020, right=0.980, top=0.940, bottom=0.075)
+        #fig.tight_layout()
 
         # Create canvas
         self.scatter_plot_canvas = FigureCanvas(fig)
@@ -403,7 +405,7 @@ class ScatterPlotVisualizerWidget(QWidget):
 
         # Update annotation text and position
         self.annotation.xy = (self.distances[ind], self.y[ind])
-        text = f"Distance: {self.distances[ind]:.3f}\nText: {self.texts[ind]}"
+        text = f"Text: {self.texts[ind]}\nValue: {self.distances[ind]:.3f}"
         self.annotation.set_text(text)
         self.annotation.set_visible(True)
         self.scatter_plot_canvas.draw_idle()
