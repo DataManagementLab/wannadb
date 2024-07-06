@@ -349,7 +349,9 @@ class ScatterPlotVisualizerWidget(QWidget):
 
         # Generating a list of colors for each point
         num_points = len(distances)
-        colors = plt.cm.jet(np.linspace(0, 1, num_points))
+        colormap = plt.cm.jet
+        norm = plt.Normalize(min(rounded_distances), max(rounded_distances))
+        colors = colormap(norm(rounded_distances))
 
         # Plot the points
         scatter = ax.scatter(rounded_distances, y, c=colors, alpha=0.75, picker=True)  # Enable picking
