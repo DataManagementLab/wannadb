@@ -53,8 +53,8 @@ class InteractiveMatchingWidget(MainWindowContent):
         self.enable_input()
         self.show_nugget_list_widget()
 
-    def get_document_feedback(self, nugget):
-        self.document_widget.update_document(nugget)
+    def get_document_feedback(self, nugget, other_best_guesses):
+        self.document_widget.update_document(nugget, other_best_guesses)
         self.show_document_widget()
 
     def show_nugget_list_widget(self):
@@ -120,6 +120,7 @@ class NuggetListWidget(QWidget):
 
         self._process_likely_nuggets_label(nuggets, feedback_request["max-distance"])
         self.nugget_list.update_item_list(nuggets, params)
+        self.update_other_best_guesses(nuggets)
         if feedback_request["num-nuggets-above"] > 0:
             self.num_nuggets_above_label.setText(f"... and {feedback_request['num-nuggets-above']} more cells that will be left empty ...")
         else:
@@ -144,12 +145,18 @@ class NuggetListWidget(QWidget):
     def disable_input(self):
         self.nugget_list.disable_input()
 
+    def update_other_best_guesses(self, other_best_guesses):
+        for item_widget in self.nugget_list.item_widgets:
+            item_widget.update_other_best_guesses(other_best_guesses)
+
+
 
 class NuggetListItemWidget(CustomScrollableListItem):
     def __init__(self, nugget_list_widget):
         super(NuggetListItemWidget, self).__init__(nugget_list_widget)
         self.nugget_list_widget = nugget_list_widget
         self.nugget = None
+        self.other_best_guesses = None
 
         self.setFixedHeight(45)
         self.setObjectName("nuggetListItemWidget")
@@ -239,6 +246,9 @@ class NuggetListItemWidget(CustomScrollableListItem):
 
         # self.info_button.setText(f"{str(round(self.nugget[CachedDistanceSignal], 2)).ljust(4)}")
 
+    def update_other_best_guesses(self, other_best_guesses):
+        self.other_best_guesses = [other_best_guess for other_best_guess in other_best_guesses if other_best_guess != self.nugget]
+
     def _match_button_clicked(self):
         self.nugget_list_widget.interactive_matching_widget.main_window.give_feedback_task({
             "message": "is-match",
@@ -247,7 +257,7 @@ class NuggetListItemWidget(CustomScrollableListItem):
         })
 
     def _fix_button_clicked(self):
-        self.nugget_list_widget.interactive_matching_widget.get_document_feedback(self.nugget)
+        self.nugget_list_widget.interactive_matching_widget.get_document_feedback(self.nugget, self.other_best_guesses)
 
     # def _info_button_clicked(self):
     #     lines = []
@@ -288,6 +298,7 @@ class DocumentWidget(QWidget):
         self.document = None
         self.original_nugget = None
         self.current_nugget = None
+        self.current_other_best_guesses = None
         self.base_formatted_text = ""
         self.idx_mapper = {}
         self.nuggets_in_order = []
@@ -334,7 +345,7 @@ class DocumentWidget(QWidget):
         self.upper_buttons_widget_layout.addWidget(self.scatter_plot_widget)
 
         self.visualizer = EmbeddingVisualizerWidget()
-        self.visualizer.setFixedHeight(200)
+        self.visualizer.setFixedHeight(300)
         self.layout.addWidget(self.visualizer)
 
         self.buttons_widget = QWidget()
@@ -442,21 +453,22 @@ class DocumentWidget(QWidget):
             self.text_edit.setText("")
             self.text_edit.textCursor().insertHtml(formatted_text)
 
-            self.visualizer.highlight_nugget(self.current_nugget)
+            self.visualizer.highlight_selected_nugget(self.current_nugget)
         else:
             self.text_edit.setText("")
             self.text_edit.textCursor().insertHtml(self.base_formatted_text)
 
         self.suggestion_list.update_item_list(self.nuggets_sorted_by_distance, self.current_nugget)
 
-    def update_document(self, nugget):
+    def update_document(self, nugget, other_best_guesses):
         self.document = nugget.document
         self.original_nugget = nugget
         self.current_nugget = nugget
+        self.current_other_best_guesses = other_best_guesses
         self.nuggets_sorted_by_distance = list(sorted(self.document.nuggets, key=lambda x: x[CachedDistanceSignal]))
         self.nuggets_in_order = list(sorted(self.document.nuggets, key=lambda x: x.start_char))
         self.custom_selection_item_widget.hide()
-        self.update_nuggets(self.document.nuggets)
+        self.update_nuggets(self.document.nuggets, self.current_other_best_guesses)
 
         self.old_start = -1
         self.old_end = -1
@@ -517,6 +529,7 @@ class DocumentWidget(QWidget):
             self.base_formatted_text = ""
 
         self._highlight_current_nugget()
+        self._highlight_best_guess(self.nuggets_sorted_by_distance[0] if len(self.nuggets_sorted_by_distance) > 0 else None)
 
         scroll_cursor = QTextCursor(self.text_edit.document())
         scroll_cursor.setPosition(nugget.start_char)
@@ -547,12 +560,19 @@ class DocumentWidget(QWidget):
     def update_attribute(self, attribute):
         self.visualizer.display_attribute_embedding(attribute)
 
-    def update_nuggets(self, nuggets):
+    def update_nuggets(self, nuggets, other_best_guesses):
         if len(nuggets) == 0:
             return
 
         self.visualizer.reset()
         self.visualizer.display_nugget_embedding(nuggets)
+        self.visualizer.update_other_best_guesses(other_best_guesses)
+
+    def _highlight_best_guess(self, best_guess):
+        if best_guess is None:
+            return
+
+        self.visualizer.highlight_best_guess(best_guess)
 
 
 class SuggestionListItemWidget(CustomScrollableListItem):
