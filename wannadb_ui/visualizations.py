@@ -4,7 +4,7 @@ import pyqtgraph as pg
 import pyqtgraph.opengl as gl
 import numpy as np
 from PyQt6.QtGui import QFont
-from PyQt6.QtWidgets import QWidget, QVBoxLayout, QPushButton, QMainWindow, QLabel
+from PyQt6.QtWidgets import QWidget, QVBoxLayout, QPushButton, QMainWindow, QLabel, QHBoxLayout
 from matplotlib import pyplot as plt
 from matplotlib.colors import LinearSegmentedColormap
 from matplotlib.patches import Rectangle
@@ -127,24 +127,28 @@ class EmbeddingVisualizerWidget(QWidget):
 
         self.layout = QVBoxLayout()
         self.layout.setContentsMargins(0, 0, 0, 0)
+        self.layout.setSpacing(0)
         self.setLayout(self.layout)
 
         self.gl_widget = GLViewWidget()
-        self.gl_widget.setMinimumHeight(200)  # Set the initial height of the grid to 200
+        self.gl_widget.setMinimumHeight(300)  # Set the initial height of the grid to 200
         self.layout.addWidget(self.gl_widget)
 
+        self.best_guesses_widget = QWidget()
+        self.best_guesses_widget_layout = QHBoxLayout(self.best_guesses_widget)
+        self.best_guesses_widget_layout.setContentsMargins(0, 0, 0, 0)
+        self.best_guesses_widget_layout.setSpacing(0)
         self.fullscreen_button = QPushButton("Show 3D Grid in windowed fullscreen mode")
         self.fullscreen_button.clicked.connect(self._show_embedding_visualizer_window)
-        self.layout.addWidget(self.fullscreen_button)
-
+        self.best_guesses_widget_layout.addWidget(self.fullscreen_button)
         self.show_other_best_guesses_button = QPushButton("Show best guesses from other documents")
         self.show_other_best_guesses_button.clicked.connect(self._display_other_best_guesses)
-        self.layout.addWidget(self.show_other_best_guesses_button)
-
+        self.best_guesses_widget_layout.addWidget(self.show_other_best_guesses_button)
         self.remove_other_best_guesses_button = QPushButton("Stop showing best guesses from other documents")
         self.remove_other_best_guesses_button.setEnabled(False)
         self.remove_other_best_guesses_button.clicked.connect(self._remove_other_best_guesses)
-        self.layout.addWidget(self.remove_other_best_guesses_button)
+        self.best_guesses_widget_layout.addWidget(self.remove_other_best_guesses_button)
+        self.layout.addWidget(self.best_guesses_widget)
 
         add_grids(self.gl_widget)
 
@@ -154,6 +158,8 @@ class EmbeddingVisualizerWidget(QWidget):
         self.currently_highlighted_nugget = None
         self.best_guess = None
         self.other_best_guesses = None
+
+
 
     def _show_embedding_visualizer_window(self):
         if self.fullscreen_window is None:
