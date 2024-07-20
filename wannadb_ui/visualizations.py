@@ -304,6 +304,7 @@ class BarChartVisualizerWidget(QWidget):
         self.data = []
         self.button.clicked.connect(self.show_bar_chart)
         self.window = None
+        self.current_annotation_index = None
 
     def append_data(self, data_tuple):
         self.data.append(data_tuple)
@@ -387,14 +388,20 @@ class BarChartVisualizerWidget(QWidget):
         if isinstance(event.artist, Rectangle):
             patch = event.artist
             index = self.bar.get_children().index(patch)
-            text = f"Information Nugget: \n{self.texts[index]} \n\n Value: {self.distances[index]}"
-            self.annotation.set_text(text)
-            annotation_x = patch.get_x() + patch.get_width() / 2
-            annotation_y = patch.get_height() / 2
-            self.annotation.xy = (annotation_x, annotation_y)
-            self.annotation.set_visible(True)
+            if self.current_annotation_index == index and self.annotation.get_visible():
+                # If the same bar is clicked again, hide the annotation
+                self.annotation.set_visible(False)
+                self.current_annotation_index = None
+            else:
+                # Show annotation for the clicked bar
+                text = f"Information Nugget: \n{self.texts[index]} \n\n Value: {self.distances[index]}"
+                self.annotation.set_text(text)
+                annotation_x = patch.get_x() + patch.get_width() / 2
+                annotation_y = patch.get_height() / 2
+                self.annotation.xy = (annotation_x, annotation_y)
+                self.annotation.set_visible(True)
+                self.current_annotation_index = index
             self.bar_chart_canvas.draw_idle()
-
     def clear_data(self):
         self.data = []
         self.bar = None
