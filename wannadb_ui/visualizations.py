@@ -1,21 +1,23 @@
 import logging
 
+import numpy as np
 import pyqtgraph as pg
 import pyqtgraph.opengl as gl
-import numpy as np
+from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QFont
-from PyQt6.QtWidgets import QWidget, QVBoxLayout, QPushButton, QMainWindow, QLabel, QHBoxLayout
+from PyQt6.QtWidgets import QWidget, QVBoxLayout, QPushButton, QMainWindow, QHBoxLayout, QFrame, QScrollArea, \
+    QApplication
 from matplotlib import pyplot as plt
-from matplotlib.colors import LinearSegmentedColormap
-from matplotlib.patches import Rectangle
-from matplotlib.figure import Figure
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.backends.backend_qt5agg import NavigationToolbar2QT as NavigationToolbar
+from matplotlib.colors import LinearSegmentedColormap
+from matplotlib.figure import Figure
+from matplotlib.patches import Rectangle
 from pyqtgraph import Color
 from pyqtgraph.opengl import GLViewWidget, GLScatterPlotItem, GLTextItem
 
-from wannadb.data.signals import PCADimensionReducedTextEmbeddingSignal, TSNEDimensionReducedTextEmbeddingSignal, \
-    PCADimensionReducedLabelEmbeddingSignal, CachedDistanceSignal
+from wannadb.data.signals import PCADimensionReducedTextEmbeddingSignal, PCADimensionReducedLabelEmbeddingSignal, \
+    CachedDistanceSignal
 
 logger: logging.Logger = logging.getLogger(__name__)
 
@@ -25,6 +27,12 @@ GREEN = pg.mkColor('green')
 WHITE = pg.mkColor('white')
 YELLOW = pg.mkColor('yellow')
 EMBEDDING_ANNOTATION_FONT = QFont('Helvetica', 10)
+
+app = QApplication([])
+screen = app.primaryScreen()
+screen_geometry = screen.geometry()
+WINDOW_WIDTH = int(screen_geometry.width() * 0.7)
+WINDOW_HEIGHT = int(screen_geometry.height() * 0.7)
 
 
 def get_colors(distances, color_start='red', color_end='blue'):
@@ -126,7 +134,7 @@ class EmbeddingVisualizerWindow(QMainWindow):
         self.best_guess = best_guess
 
         self.setWindowTitle("3D Grid Visualizer")
-        self.setGeometry(100, 100, 800, 600)
+        self.setGeometry(100, 100, WINDOW_WIDTH, WINDOW_HEIGHT)
 
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
@@ -158,7 +166,8 @@ class EmbeddingVisualizerWindow(QMainWindow):
             self.nugget_to_displayed_items[nugget] = (scatter, annotation)
 
     def highlight_selected_nugget(self, nugget):
-        highlight_selected_nugget(nugget, self.currently_highlighted_nugget, self.best_guess, self.nugget_to_displayed_items)
+        highlight_selected_nugget(nugget, self.currently_highlighted_nugget, self.best_guess,
+                                  self.nugget_to_displayed_items)
 
         self.currently_highlighted_nugget = nugget
 
@@ -257,7 +266,8 @@ class EmbeddingVisualizerWidget(QWidget):
         self.nugget_to_displayed_items[nugget] = (scatter, annotation)
 
     def highlight_selected_nugget(self, nugget):
-        highlight_selected_nugget(nugget, self.currently_highlighted_nugget, self.best_guess, self.nugget_to_displayed_items)
+        highlight_selected_nugget(nugget, self.currently_highlighted_nugget, self.best_guess,
+                                  self.nugget_to_displayed_items)
 
         if self.fullscreen_window is not None:
             self.fullscreen_window.highlight_selected_nugget(nugget)
@@ -291,7 +301,7 @@ class BarChartVisualizerWidget(QWidget):
         self.layout.setContentsMargins(0, 0, 0, 0)
         self.button = QPushButton("Show Bar Chart with cosine values")
         self.layout.addWidget(self.button)
-        self.data = []  # Initialize data as an empty dictionary
+        self.data = []
         self.button.clicked.connect(self.show_bar_chart)
         self.window = None
 
@@ -326,13 +336,35 @@ class BarChartVisualizerWidget(QWidget):
         ax.set_xticks([])
         ax.set_ylabel('Cosine Similarity', fontsize=15)
         ax.set_xlabel('Information Nuggets', fontsize=15)
-        #fig.tight_layout()
         fig.subplots_adjust(left=0.115, right=0.920, top=0.945, bottom=0.065)
+        for idx, rect in enumerate(self.bar):
+            height = rect.get_height()
+            ax.text(
+                rect.get_x() + rect.get_width() / 2,
+                height/2,
+                f'{texts[idx]}',
+                ha='center',
+                va='center',
+                rotation=90,  # Rotate text by 90 degrees
+                fontsize=12,
+                color='white'# fontcolors[idx]# Optional: Adjust font size
+            )
+
         self.bar_chart_canvas = FigureCanvas(fig)
+        self.bar_chart_canvas.setMinimumWidth(
+            max(0.9 * WINDOW_WIDTH, len(texts) * 50))  # Set a minimum width based on number of bars
+
+        scroll_area = QScrollArea()
+        scroll_area.setWidget(self.bar_chart_canvas)
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOn)
+        scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll_area.setFrameShape(QFrame.Shape.NoFrame)
+
         self.window = QMainWindow()
         self.window.setWindowTitle("Bar Chart")
-        self.window.setGeometry(100, 100, 800, 600)
-        self.window.setCentralWidget(self.bar_chart_canvas)
+        self.window.setGeometry(100, 100, WINDOW_WIDTH, WINDOW_HEIGHT)
+        self.window.setCentralWidget(scroll_area)
 
         self.bar_chart_toolbar = NavigationToolbar(self.bar_chart_canvas, self.window)
         self.window.addToolBar(self.bar_chart_toolbar)
@@ -351,16 +383,12 @@ class BarChartVisualizerWidget(QWidget):
         self.texts = texts
         self.distances = rounded_distances
 
-        # todo after value is confirmed or value not in document, reinitialize data
-        # self.window.destroyed.connect(self.cleanup)
-
     def on_pick(self, event):
         if isinstance(event.artist, Rectangle):
             patch = event.artist
             index = self.bar.get_children().index(patch)
-            text = f"Infomation Nugget: \n{self.texts[index]} \n\n Value: {self.distances[index]}"
+            text = f"Information Nugget: \n{self.texts[index]} \n\n Value: {self.distances[index]}"
             self.annotation.set_text(text)
-            # if patch.get_x() + patch.get_width() > 20:
             annotation_x = patch.get_x() + patch.get_width() / 2
             annotation_y = patch.get_height() / 2
             self.annotation.xy = (annotation_x, annotation_y)
@@ -459,7 +487,7 @@ class ScatterPlotVisualizerWidget(QWidget):
                     max(rounded_distances) + 0.05)  # Adjust x-axis limits for better visibility
         ax.set_yticks([])  # Remove y-axis labels to avoid confusion
         fig.subplots_adjust(left=0.020, right=0.980, top=0.940, bottom=0.075)
-        #fig.tight_layout()
+        # fig.tight_layout()
 
         # Create canvas
         self.scatter_plot_canvas = FigureCanvas(fig)
@@ -467,7 +495,7 @@ class ScatterPlotVisualizerWidget(QWidget):
         # Create a new window for the plot
         self.window = QMainWindow()
         self.window.setWindowTitle("Scatter Plot")
-        self.window.setGeometry(100, 100, 800, 600)
+        self.window.setGeometry(100, 100, WINDOW_WIDTH, WINDOW_HEIGHT)
 
         # Set the central widget of the window to the canvas
         self.window.setCentralWidget(self.scatter_plot_canvas)
