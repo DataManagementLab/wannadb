@@ -260,6 +260,7 @@ class RankingBasedMatcher(BaseMatcher):
                             doc.nuggets[doc[CurrentMatchIndexSignal]] for doc in selected_documents)
                     )
                 )
+                remaining_nuggets = tuple([doc.nuggets[doc[CurrentMatchIndexSignal]] for doc in remaining_documents])
                 num_feedback += 1
                 statistics[attribute.name]["num_feedback"] += 1
                 t0 = time.time()
@@ -268,6 +269,7 @@ class RankingBasedMatcher(BaseMatcher):
                     {
                         "max-distance": self._max_distance,
                         "nuggets": feedback_nuggets,
+                        "remaining-nuggets": remaining_nuggets,
                         "attribute": attribute,
                         "num-feedback": num_feedback,
                         "num-nuggets-above": num_nuggets_above,
@@ -444,7 +446,7 @@ class RankingBasedMatcher(BaseMatcher):
                             [feedback_result["nugget"]],
                             document.nuggets,
                             statistics["distance"]
-                        )[0]
+                        ) [0]
                         for nugget, new_distance in zip(document.nuggets, new_distances):
                             if distances_based_on_label or new_distance < nugget[CachedDistanceSignal]:
                                 nugget[CachedDistanceSignal] = new_distance
