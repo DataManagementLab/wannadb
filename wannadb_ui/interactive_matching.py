@@ -4,14 +4,16 @@ import numpy as np
 from PyQt6 import QtGui
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QIcon, QTextCursor
-from PyQt6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QTextEdit, QVBoxLayout, QWidget, QGridLayout, QSizePolicy
+from PyQt6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QTextEdit, QVBoxLayout, QWidget, QGridLayout, QSizePolicy, \
+    QBoxLayout
 
 from wannadb.data.signals import CachedContextSentenceSignal, CachedDistanceSignal, \
     PCADimensionReducedLabelEmbeddingSignal, PCADimensionReducedTextEmbeddingSignal, \
     TSNEDimensionReducedLabelEmbeddingSignal
 from wannadb_ui.common import BUTTON_FONT, CODE_FONT, CODE_FONT_BOLD, LABEL_FONT, MainWindowContent, \
     CustomScrollableList, CustomScrollableListItem, WHITE, LIGHT_YELLOW, YELLOW
-from wannadb_ui.visualizations import EmbeddingVisualizerWidget, BarChartVisualizerWidget, ScatterPlotVisualizerWidget
+from wannadb_ui.visualizations import EmbeddingVisualizerWidget, BarChartVisualizerWidget, ScatterPlotVisualizerWidget, \
+    EmbeddingVisualizerWindow
 
 logger = logging.getLogger(__name__)
 
@@ -93,6 +95,19 @@ class NuggetListWidget(QWidget):
         self.likely_nuggets.setFont(LABEL_FONT)
         self.layout.addWidget(self.likely_nuggets)
 
+        # suggestion visualizer
+        self.suggestion_visualizer = EmbeddingVisualizerWindow()
+        self.suggestion_visualizer_button = QPushButton("Show Suggestions In 3D-Grid")
+        self.suggestion_visualizer_button.setFont(BUTTON_FONT)
+        self.suggestion_visualizer_button.setMaximumWidth(240)
+        self.suggestion_visualizer_button.setVisible(False)
+        self.suggestion_visualizer_button.clicked.connect(self._show_suggestion_visualizer)
+        self.suggestion_visualizer_layout = QHBoxLayout()
+        self.suggestion_visualizer_layout.setContentsMargins(0, 0, 0, 0)
+        self.suggestion_visualizer_layout.setSpacing(10)
+        self.suggestion_visualizer_layout.addWidget(self.suggestion_visualizer_button, 0, Qt.AlignmentFlag.AlignRight)
+        self.layout.addLayout(self.suggestion_visualizer_layout)
+
         # nugget list
         self.num_nuggets_above_label = QLabel("")
         self.num_nuggets_above_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -112,15 +127,23 @@ class NuggetListWidget(QWidget):
     def update_nuggets(self, feedback_request):
         self.description.setText("Please confirm or edit the cell value guesses displayed below until you are satisfied with the guessed values, at which point you may continue with the next attribute."
                                  "\nWannaDB will use your feedback to continuously update its guesses. Note that the cells with low confidence (low confidence bar, light yellow highlights) will be left empty.")
-        nuggets = feedback_request["nuggets"]
+        feedback_nuggets = feedback_request["nuggets"]
+        remaining_nuggets = feedback_request["remaining-nuggets"]
+        attribute = feedback_request["attribute"]
         params = {
-            "max_start_chars": max([nugget[CachedContextSentenceSignal]["start_char"] for nugget in nuggets]),
+            "max_start_chars": max([nugget[CachedContextSentenceSignal]["start_char"] for nugget in feedback_nuggets]),
             "max_distance": feedback_request["max-distance"]
         }
 
-        self._process_likely_nuggets_label(nuggets, feedback_request["max-distance"])
-        self.nugget_list.update_item_list(nuggets, params)
-        self.update_other_best_guesses(nuggets)
+        self.suggestion_visualizer_button.setVisible(True)
+
+        self._process_likely_nuggets_label(feedback_nuggets, feedback_request["max-distance"])
+
+        self.nugget_list.update_item_list(feedback_nuggets, params)
+        self.update_other_best_guesses(feedback_nuggets)
+        if len(feedback_nuggets) > 0:
+            self.suggestion_visualizer.update_grid(attribute, feedback_nuggets + remaining_nuggets, feedback_nuggets[0], feedback_nuggets[0])
+
         if feedback_request["num-nuggets-above"] > 0:
             self.num_nuggets_above_label.setText(f"... and {feedback_request['num-nuggets-above']} more cells that will be left empty ...")
         else:
@@ -149,6 +172,8 @@ class NuggetListWidget(QWidget):
         for item_widget in self.nugget_list.item_widgets:
             item_widget.update_other_best_guesses(other_best_guesses)
 
+    def _show_suggestion_visualizer(self):
+        self.suggestion_visualizer.setVisible(True)
 
 
 class NuggetListItemWidget(CustomScrollableListItem):

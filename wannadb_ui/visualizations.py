@@ -126,7 +126,7 @@ def determine_update_values(previously_selected_nugget, newly_selected_nugget, b
 
 
 class EmbeddingVisualizerWindow(QMainWindow):
-    def __init__(self, attribute, nuggets, currently_highlighted_nugget, best_guess):
+    def __init__(self, attribute=None, nuggets=None, currently_highlighted_nugget=None, best_guess=None):
         super(EmbeddingVisualizerWindow, self).__init__()
 
         self.nugget_to_displayed_items = {}
@@ -145,10 +145,14 @@ class EmbeddingVisualizerWindow(QMainWindow):
         self.fullscreen_layout.addWidget(self.fullscreen_gl_widget)
 
         add_grids(self.fullscreen_gl_widget)
-        self.copy_state(attribute, nuggets)
 
-        highlight_best_guess(best_guess, currently_highlighted_nugget, self.nugget_to_displayed_items)
-        self.highlight_selected_nugget(currently_highlighted_nugget)
+        if (attribute is not None and
+                nuggets is not None and
+                currently_highlighted_nugget is not None and
+                best_guess is not None):
+            self.update_grid(attribute, nuggets, currently_highlighted_nugget, best_guess)
+        else:
+            self.setVisible(False)
 
     def closeEvent(self, event):
         event.accept()
@@ -177,6 +181,22 @@ class EmbeddingVisualizerWindow(QMainWindow):
 
     def remove_other_best_guesses(self, other_best_guesses):
         remove_nuggets_from_widget(other_best_guesses, self.nugget_to_displayed_items, self.fullscreen_gl_widget)
+
+    def update_grid(self, attribute, nuggets, currently_highlighted_nugget, best_guess):
+        self.reset()
+
+        self.copy_state(attribute, nuggets)
+        highlight_best_guess(best_guess, currently_highlighted_nugget, self.nugget_to_displayed_items)
+        self.highlight_selected_nugget(currently_highlighted_nugget)
+
+    def reset(self):
+        for scatter, annotation in self.nugget_to_displayed_items.values():
+            self.fullscreen_gl_widget.removeItem(scatter)
+            self.fullscreen_gl_widget.removeItem(annotation)
+
+        self.nugget_to_displayed_items = {}
+        self.currently_highlighted_nugget = None
+        self.best_guess = None
 
 
 class EmbeddingVisualizerWidget(QWidget):
