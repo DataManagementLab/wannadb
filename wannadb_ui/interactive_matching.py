@@ -11,7 +11,7 @@ from wannadb.data.signals import CachedContextSentenceSignal, CachedDistanceSign
     PCADimensionReducedLabelEmbeddingSignal, PCADimensionReducedTextEmbeddingSignal, \
     TSNEDimensionReducedLabelEmbeddingSignal
 from wannadb_ui.common import BUTTON_FONT, CODE_FONT, CODE_FONT_BOLD, LABEL_FONT, MainWindowContent, \
-    CustomScrollableList, CustomScrollableListItem, WHITE, LIGHT_YELLOW, YELLOW
+    CustomScrollableList, CustomScrollableListItem, WHITE, LIGHT_YELLOW, YELLOW, SUBHEADER_FONT
 from wannadb_ui.visualizations import EmbeddingVisualizerWidget, BarChartVisualizerWidget, ScatterPlotVisualizerWidget, \
     EmbeddingVisualizerWindow
 
@@ -87,6 +87,10 @@ class NuggetListWidget(QWidget):
         self.layout.setContentsMargins(0, 0, 0, 0)
         self.layout.setSpacing(10)
 
+        self.current_threshold_label = QLabel()
+        self.current_threshold_label.setFont(SUBHEADER_FONT)
+        self.layout.addWidget(self.current_threshold_label)
+
         self.description = QLabel("Please wait while WannaDB prepares the interactive table population.")
         self.description.setFont(LABEL_FONT)
         self.layout.addWidget(self.description)
@@ -125,37 +129,47 @@ class NuggetListWidget(QWidget):
         self.layout.addWidget(self.nugget_list)
 
     def update_nuggets(self, feedback_request):
-        self.description.setText("Please confirm or edit the cell value guesses displayed below until you are satisfied with the guessed values, at which point you may continue with the next attribute."
-                                 "\nWannaDB will use your feedback to continuously update its guesses. Note that the cells with low confidence (low confidence bar, light yellow highlights) will be left empty.")
         feedback_nuggets = feedback_request["nuggets"]
-        remaining_nuggets = feedback_request["remaining-nuggets"]
+        all_guessed_nugget_matches = feedback_request["all-guessed-nugget-matches"]
         attribute = feedback_request["attribute"]
+        current_threshold = feedback_request["max-distance"]
+
+        self.description.setText(
+            "Please confirm or edit the cell value guesses displayed below until you are satisfied with the guessed values, at which point you may continue with the next attribute."
+            "\nWannaDB will use your feedback to continuously update its guesses. Note that the cells with low confidence (low confidence bar, light yellow highlights) will be left empty.")
+        self.current_threshold_label.setText(f"Current Threshold: {current_threshold}")
+
         params = {
             "max_start_chars": max([nugget[CachedContextSentenceSignal]["start_char"] for nugget in feedback_nuggets]),
-            "max_distance": feedback_request["max-distance"]
+            "max_distance": current_threshold
         }
 
         self.suggestion_visualizer_button.setVisible(True)
 
-        self._process_likely_nuggets_label(feedback_nuggets, feedback_request["max-distance"])
+        self._process_likely_nuggets_label(feedback_nuggets, current_threshold)
 
         self.nugget_list.update_item_list(feedback_nuggets, params)
         self.update_other_best_guesses(feedback_nuggets)
         if len(feedback_nuggets) > 0:
-            self.suggestion_visualizer.update_grid(attribute, feedback_nuggets + remaining_nuggets, feedback_nuggets[0], feedback_nuggets[0])
+            self.suggestion_visualizer.update_and_display_params(attribute=attribute,
+                                                                 nuggets=feedback_nuggets + all_guessed_nugget_matches,
+                                                                 currently_highlighted_nugget=None,
+                                                                 best_guess=feedback_nuggets[0])
 
         if feedback_request["num-nuggets-above"] > 0:
-            self.num_nuggets_above_label.setText(f"... and {feedback_request['num-nuggets-above']} more cells that will be left empty ...")
+            self.num_nuggets_above_label.setText(
+                f"... and {feedback_request['num-nuggets-above']} more cells that will be left empty ...")
         else:
             self.num_nuggets_above_label.setText("")
         if feedback_request["num-nuggets-below"] > 0:
-            self.num_nuggets_below_label.setText(f"... and {feedback_request['num-nuggets-below']} more cells that will be populated ...")
+            self.num_nuggets_below_label.setText(
+                f"... and {feedback_request['num-nuggets-below']} more cells that will be populated ...")
         else:
             self.num_nuggets_below_label.setText("")
 
-    def _process_likely_nuggets_label(self, nuggets, max_distance):
+    def _process_likely_nuggets_label(self, nuggets, current_threshold):
         TOP_NUGGETS = 5
-        nuggets_to_add = [nugget for nugget in nuggets if max_distance < nugget[CachedDistanceSignal]]
+        nuggets_to_add = [nugget for nugget in nuggets if current_threshold < nugget[CachedDistanceSignal]]
         if nuggets_to_add:
             top_nuggets = ', '.join(map(str, nuggets_to_add[:TOP_NUGGETS]))
             self.likely_nuggets.setText(f"Based upon your last choice, the top most likely choices are {top_nuggets}.")
@@ -272,7 +286,8 @@ class NuggetListItemWidget(CustomScrollableListItem):
         # self.info_button.setText(f"{str(round(self.nugget[CachedDistanceSignal], 2)).ljust(4)}")
 
     def update_other_best_guesses(self, other_best_guesses):
-        self.other_best_guesses = [other_best_guess for other_best_guess in other_best_guesses if other_best_guess != self.nugget]
+        self.other_best_guesses = [other_best_guess for other_best_guess in other_best_guesses if
+                                   other_best_guess != self.nugget]
 
     def _match_button_clicked(self):
         self.nugget_list_widget.interactive_matching_widget.main_window.give_feedback_task({
@@ -323,14 +338,16 @@ class DocumentWidget(QWidget):
         self.document = None
         self.original_nugget = None
         self.current_nugget = None
+        self.current_attribute = None
         self.current_other_best_guesses = None
         self.base_formatted_text = ""
         self.idx_mapper = {}
         self.nuggets_in_order = []
         self.nuggets_sorted_by_distance = []
 
-        self.description = QLabel("Please select the correct value by clicking on one of the highlighted snippets. You may also "
-                                  "highlight a different span of text in case the required value is not highlighted already.")
+        self.description = QLabel(
+            "Please select the correct value by clicking on one of the highlighted snippets. You may also "
+            "highlight a different span of text in case the required value is not highlighted already.")
         self.description.setFont(LABEL_FONT)
         self.layout.addWidget(self.description)
 
@@ -467,7 +484,8 @@ class DocumentWidget(QWidget):
     def _highlight_current_nugget(self):
         if self.current_nugget:
             mapped_start_char = self.idx_mapper[self.current_nugget.start_char]
-            mapped_end_char = self.idx_mapper[self.current_nugget.end_char] if self.current_nugget.end_char < len(self.document.text) else len(self.base_formatted_text)
+            mapped_end_char = self.idx_mapper[self.current_nugget.end_char] if self.current_nugget.end_char < len(
+                self.document.text) else len(self.base_formatted_text)
 
             formatted_text = (
                 f"{self.base_formatted_text[:mapped_start_char]}"
@@ -493,7 +511,6 @@ class DocumentWidget(QWidget):
         self.nuggets_sorted_by_distance = list(sorted(self.document.nuggets, key=lambda x: x[CachedDistanceSignal]))
         self.nuggets_in_order = list(sorted(self.document.nuggets, key=lambda x: x.start_char))
         self.custom_selection_item_widget.hide()
-        self.update_nuggets(self.document.nuggets, self.current_other_best_guesses)
 
         self.old_start = -1
         self.old_end = -1
@@ -547,6 +564,11 @@ class DocumentWidget(QWidget):
                             inside = False
                         self.base_formatted_text += char
                         self.idx_mapper[idx] = len(self.base_formatted_text) - 1
+
+            self.visualizer.update_and_display_params(attribute=self.current_attribute,
+                                                      nuggets=self.document.nuggets,
+                                                      currently_highlighted_nugget=nugget,
+                                                      best_guess=self.nuggets_sorted_by_distance[0])
         else:
             self.idx_mapper = {}
             for idx in range(len(self.document.text)):
@@ -554,7 +576,8 @@ class DocumentWidget(QWidget):
             self.base_formatted_text = ""
 
         self._highlight_current_nugget()
-        self._highlight_best_guess(self.nuggets_sorted_by_distance[0] if len(self.nuggets_sorted_by_distance) > 0 else None)
+        self._highlight_best_guess(
+            self.nuggets_sorted_by_distance[0] if len(self.nuggets_sorted_by_distance) > 0 else None)
 
         scroll_cursor = QTextCursor(self.text_edit.document())
         scroll_cursor.setPosition(nugget.start_char)
@@ -583,14 +606,14 @@ class DocumentWidget(QWidget):
         self.suggestion_list.disable_input()
 
     def update_attribute(self, attribute):
-        self.visualizer.display_attribute_embedding(attribute)
+        self.current_attribute = attribute
 
     def update_nuggets(self, nuggets, other_best_guesses):
         if len(nuggets) == 0:
             return
 
         self.visualizer.reset()
-        self.visualizer.display_nugget_embedding(nuggets)
+        self.visualizer.display_nugget_embeddings(nuggets)
         self.visualizer.update_other_best_guesses(other_best_guesses)
 
     def _highlight_best_guess(self, best_guess):
@@ -640,7 +663,8 @@ class SuggestionListItemWidget(CustomScrollableListItem):
         else:
             self.setStyleSheet(f"background-color: {LIGHT_YELLOW}")
         self.suggestion_list_widget.interactive_matching_widget.document_widget.update_barchart(self.get_nugget_data())
-        self.suggestion_list_widget.interactive_matching_widget.document_widget.update_scatter_plot(self.get_nugget_data())
+        self.suggestion_list_widget.interactive_matching_widget.document_widget.update_scatter_plot(
+            self.get_nugget_data())
 
     def enable_input(self):
         pass

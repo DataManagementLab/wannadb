@@ -9,7 +9,7 @@ import numpy as np
 from wannadb.configuration import BasePipelineElement, register_configurable_element, Pipeline
 from wannadb.data.data import Document, DocumentBase, InformationNugget
 from wannadb.data.signals import CachedContextSentenceSignal, CachedDistanceSignal, \
-    SentenceStartCharsSignal, CurrentMatchIndexSignal, LabelSignal, ExtractorNameSignal
+    SentenceStartCharsSignal, CurrentMatchIndexSignal, LabelSignal, ExtractorNameSignal, CurrentThresholdSignal
 from wannadb.interaction import BaseInteractionCallback
 from wannadb.matching.custom_match_extraction import BaseCustomMatchExtractor
 from wannadb.matching.distance import BaseDistance
@@ -131,6 +131,7 @@ class RankingBasedMatcher(BaseMatcher):
             logger.info(f"Matching attribute '{attribute.name}'.")
             start_matching: float = time.time()
             self._max_distance = self._default_max_distance
+            attribute[CurrentThresholdSignal] = CurrentThresholdSignal(self._max_distance)
             statistics[attribute.name]["max_distances"] = [self._max_distance]
             statistics[attribute.name]["feedback_durations"] = []
             if self.store_best_guesses:
@@ -260,7 +261,7 @@ class RankingBasedMatcher(BaseMatcher):
                             doc.nuggets[doc[CurrentMatchIndexSignal]] for doc in selected_documents)
                     )
                 )
-                remaining_nuggets = tuple([doc.nuggets[doc[CurrentMatchIndexSignal]] for doc in remaining_documents])
+                all_guessed_nugget_matches = tuple([doc.nuggets[doc[CurrentMatchIndexSignal]] for doc in document_base.documents])
                 num_feedback += 1
                 statistics[attribute.name]["num_feedback"] += 1
                 t0 = time.time()
@@ -269,7 +270,7 @@ class RankingBasedMatcher(BaseMatcher):
                     {
                         "max-distance": self._max_distance,
                         "nuggets": feedback_nuggets,
-                        "remaining-nuggets": remaining_nuggets,
+                        "all-guessed-nugget-matches": all_guessed_nugget_matches,
                         "attribute": attribute,
                         "num-feedback": num_feedback,
                         "num-nuggets-above": num_nuggets_above,
@@ -312,6 +313,7 @@ class RankingBasedMatcher(BaseMatcher):
                                         min_dist = min(min_dist, feedback_nuggets[ix][CachedDistanceSignal])
                                 if min_dist < self._max_distance:
                                     self._max_distance = min_dist
+                                    attribute[CurrentThresholdSignal] = CurrentThresholdSignal(min_dist)
                                     statistics[attribute.name]["max_distances"].append(min_dist)
                                     logger.info(f"NO MATCH IN DOCUMENT: Decreased the maximum distance to "
                                                 f"{self._max_distance}.")
@@ -358,6 +360,9 @@ class RankingBasedMatcher(BaseMatcher):
                     feedback_result["document"].nuggets.append(confirmed_nugget)
                     feedback_result["document"].attribute_mappings[attribute.name] = [confirmed_nugget]
                     remaining_documents.remove(feedback_result["document"])
+
+                    # add this nugget as a confirmed match to the corresponding attribute
+                    attribute.confirmed_matches.append(confirmed_nugget)
 
                     # update the distances for the other documents
                     for document in remaining_documents:
@@ -440,6 +445,9 @@ class RankingBasedMatcher(BaseMatcher):
                     if doc in docs_with_added_nuggets:
                         docs_with_added_nuggets.pop(doc)
 
+                    # add this nugget as a confirmed match to the corresponding attribute
+                    attribute.confirmed_matches.append(feedback_result["nugget"])
+
                     # update the distances for the other documents
                     for document in remaining_documents:
                         new_distances: np.ndarray = self._distance.compute_distances(
@@ -476,6 +484,7 @@ class RankingBasedMatcher(BaseMatcher):
                                             max_dist = max(max_dist, feedback_nuggets[ix][CachedDistanceSignal])
                                     if max_dist > self._max_distance:
                                         self._max_distance = max_dist
+                                        attribute[CurrentThresholdSignal] = CurrentThresholdSignal(max_dist)
                                         statistics[attribute.name]["max_distances"].append(max_dist)
                                         logger.info(f"CONFIRMED NUGGET FROM RANKED LIST: Increased the maximum distance"
                                                     f"to {self._max_distance}.")

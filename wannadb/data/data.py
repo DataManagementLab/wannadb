@@ -150,6 +150,7 @@ class Attribute:
         :param name: name of the attribute (must be unique in the document base)
         """
         self._name: str = name
+        self._confirmed_matches: List[InformationNugget] = []
 
         self._signals: Dict[str, BaseSignal] = {}
 
@@ -169,6 +170,11 @@ class Attribute:
     def name(self) -> str:
         """Name of the attribute."""
         return self._name
+
+    @property
+    def confirmed_matches(self) -> List[InformationNugget]:
+        """All nuggets that have been explicitly confirmed as match for this attribute by the user."""
+        return self._confirmed_matches
 
     @property
     def signals(self) -> Dict[str, BaseSignal]:
