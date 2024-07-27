@@ -137,11 +137,12 @@ class NuggetListWidget(QWidget):
         self.description.setText(
             "Please confirm or edit the cell value guesses displayed below until you are satisfied with the guessed values, at which point you may continue with the next attribute."
             "\nWannaDB will use your feedback to continuously update its guesses. Note that the cells with low confidence (low confidence bar, light yellow highlights) will be left empty.")
-        self.current_threshold_label.setText(f"Current Threshold: {current_threshold}")
+        self.current_threshold_label.setText(f"Current Threshold: {round(current_threshold, 4)}")
 
         params = {
             "max_start_chars": max([nugget[CachedContextSentenceSignal]["start_char"] for nugget in feedback_nuggets]),
-            "max_distance": current_threshold
+            "max_distance": current_threshold,
+            "other_best_guesses": feedback_nuggets
         }
 
         self.suggestion_visualizer_button.setVisible(True)
@@ -149,12 +150,12 @@ class NuggetListWidget(QWidget):
         self._process_likely_nuggets_label(feedback_nuggets, current_threshold)
 
         self.nugget_list.update_item_list(feedback_nuggets, params)
-        self.update_other_best_guesses(feedback_nuggets)
         if len(feedback_nuggets) > 0:
             self.suggestion_visualizer.update_and_display_params(attribute=attribute,
                                                                  nuggets=feedback_nuggets + all_guessed_nugget_matches,
                                                                  currently_highlighted_nugget=None,
-                                                                 best_guess=feedback_nuggets[0])
+                                                                 best_guess=feedback_nuggets[0],
+                                                                 other_best_guesses=feedback_nuggets)
 
         if feedback_request["num-nuggets-above"] > 0:
             self.num_nuggets_above_label.setText(
@@ -181,10 +182,6 @@ class NuggetListWidget(QWidget):
 
     def disable_input(self):
         self.nugget_list.disable_input()
-
-    def update_other_best_guesses(self, other_best_guesses):
-        for item_widget in self.nugget_list.item_widgets:
-            item_widget.update_other_best_guesses(other_best_guesses)
 
     def _show_suggestion_visualizer(self):
         self.suggestion_visualizer.setVisible(True)
@@ -254,6 +251,8 @@ class NuggetListItemWidget(CustomScrollableListItem):
 
         max_start_chars = params["max_start_chars"]
         max_distance = params["max_distance"]
+        self.other_best_guesses = [other_best_guess for other_best_guess in params["other_best_guesses"]
+                                   if other_best_guess != self.nugget]
 
         sentence = self.nugget[CachedContextSentenceSignal]["text"]
         start_char = self.nugget[CachedContextSentenceSignal]["start_char"]
@@ -284,10 +283,6 @@ class NuggetListItemWidget(CustomScrollableListItem):
         self.text_edit.setDisabled(True)
 
         # self.info_button.setText(f"{str(round(self.nugget[CachedDistanceSignal], 2)).ljust(4)}")
-
-    def update_other_best_guesses(self, other_best_guesses):
-        self.other_best_guesses = [other_best_guess for other_best_guess in other_best_guesses if
-                                   other_best_guess != self.nugget]
 
     def _match_button_clicked(self):
         self.nugget_list_widget.interactive_matching_widget.main_window.give_feedback_task({
@@ -568,7 +563,8 @@ class DocumentWidget(QWidget):
             self.visualizer.update_and_display_params(attribute=self.current_attribute,
                                                       nuggets=self.document.nuggets,
                                                       currently_highlighted_nugget=nugget,
-                                                      best_guess=self.nuggets_sorted_by_distance[0])
+                                                      best_guess=self.nuggets_sorted_by_distance[0],
+                                                      other_best_guesses=other_best_guesses)
         else:
             self.idx_mapper = {}
             for idx in range(len(self.document.text)):
@@ -607,14 +603,6 @@ class DocumentWidget(QWidget):
 
     def update_attribute(self, attribute):
         self.current_attribute = attribute
-
-    def update_nuggets(self, nuggets, other_best_guesses):
-        if len(nuggets) == 0:
-            return
-
-        self.visualizer.reset()
-        self.visualizer.display_nugget_embeddings(nuggets)
-        self.visualizer.update_other_best_guesses(other_best_guesses)
 
     def _highlight_best_guess(self, best_guess):
         if best_guess is None:
