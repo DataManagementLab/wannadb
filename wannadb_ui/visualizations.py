@@ -65,19 +65,23 @@ class EmbeddingVisualizer:
                  attribute: Attribute = None,
                  nuggets: List[InformationNugget] = None,
                  currently_highlighted_nugget: InformationNugget = None,
-                 best_guess: InformationNugget = None):
+                 best_guess: InformationNugget = None,
+                 other_best_guesses: List[InformationNugget] = None):
         self._attribute: Attribute = attribute
         self._nuggets: List[InformationNugget] = nuggets
         self._currently_highlighted_nugget: InformationNugget = currently_highlighted_nugget
         self._best_guess: InformationNugget = best_guess
+        self._other_best_guesses: List[InformationNugget] = other_best_guesses
         self._nugget_to_displayed_items: Dict[InformationNugget, Tuple[GLScatterPlotItem, GLTextItem]] = dict()
+        self._nugget_to_similar_nugget: Dict[InformationNugget, Union[InformationNugget, None]] = dict()
         self._gl_widget = GLViewWidget()
 
     def update_and_display_params(self,
                                   attribute: Attribute,
                                   nuggets: List[InformationNugget],
                                   currently_highlighted_nugget: Union[InformationNugget, None],
-                                  best_guess: Union[InformationNugget, None]):
+                                  best_guess: Union[InformationNugget, None],
+                                  other_best_guesses: List[InformationNugget]):
         self.reset()
 
         if attribute is not None:
@@ -103,18 +107,26 @@ class EmbeddingVisualizer:
         else:
             logger.info("Given nugget to highlight is null, can not highlight.")
 
+        self._other_best_guesses = other_best_guesses
+
     def add_item_to_grid(self,
                          nugget_to_display_context: Tuple[Union[InformationNugget, Attribute], Color],
                          annotation_text: str,
                          size: int = DEFAULT_NUGGET_SIZE):
         item_to_display, color = nugget_to_display_context
-        position = np.array([item_to_display[PCADimensionReducedTextEmbeddingSignal]]) if isinstance(item_to_display, InformationNugget) \
+        position = np.array([item_to_display[PCADimensionReducedTextEmbeddingSignal]]) if isinstance(item_to_display,
+                                                                                                     InformationNugget) \
             else np.array([item_to_display[PCADimensionReducedLabelEmbeddingSignal]])
 
-        # Check for already existing scatter at the same position representing same nugget. This can happen due to usage of different extractors
-        for nugget, (scatter, _) in self._nugget_to_displayed_items.items():
+        # Check for already existing scatter at the same position representing same nugget.
+        # This can happen due to usage of different extractors.
+        for nugget, (scatter, annotation) in self._nugget_to_displayed_items.items():
             if positions_equal(scatter.pos, position) and nugget.text == item_to_display.text:
-                logger.info(f"{item_to_display} is already shown in the grid - probably it was extracted by multiple extractors - will not add again to grid.")
+                logger.info(
+                    f"{item_to_display} is already shown in the grid - probably it was extracted by multiple extractors"
+                    f" - will not add again to grid.")
+                self._nugget_to_displayed_items[item_to_display] = (scatter, annotation)
+                self._nugget_to_similar_nugget[item_to_display] = nugget
                 return
 
         scatter = GLScatterPlotItem(pos=position, color=color, size=size, pxMode=True)
@@ -128,6 +140,7 @@ class EmbeddingVisualizer:
 
         if isinstance(item_to_display, InformationNugget):
             self._nugget_to_displayed_items[item_to_display] = (scatter, annotation)
+            self._nugget_to_similar_nugget[item_to_display] = None
 
         return scatter, annotation
 
@@ -145,21 +158,21 @@ class EmbeddingVisualizer:
             previously_selected_nugget=self._currently_highlighted_nugget,
             newly_selected_nugget=newly_selected_nugget)
 
-        self._highlight_nugget(nugget_to_highlight=newly_selected_nugget,
-                               new_color=highlight_color,
-                               new_size=highlight_size)
-
         if self._currently_highlighted_nugget is not None:
             currently_highlighted_scatter, _ = self._nugget_to_displayed_items[self._currently_highlighted_nugget]
             currently_highlighted_scatter.setData(color=reset_color, size=reset_size)
 
+        self._highlight_nugget(nugget_to_highlight=newly_selected_nugget,
+                               new_color=highlight_color,
+                               new_size=highlight_size)
+
         self._currently_highlighted_nugget = newly_selected_nugget
 
-    def display_other_best_guesses(self, other_best_guesses):
+    def display_other_best_guesses(self, other_best_guesses: List[InformationNugget]):
         for other_best_guess in other_best_guesses:
             self._add_other_best_guess(other_best_guess)
 
-    def remove_other_best_guesses(self, other_best_guesses):
+    def remove_other_best_guesses(self, other_best_guesses: List[InformationNugget]):
         self.remove_nuggets_from_widget(other_best_guesses)
 
     def display_nugget_embeddings(self, nuggets):
@@ -174,26 +187,64 @@ class EmbeddingVisualizer:
                               annotation_text=attribute.name)
         self._attribute = attribute  # save for later use
 
+    def remove_nuggets_from_widget(self, nuggets_to_remove):
+        for nugget in nuggets_to_remove:
+            scatter, annotation = self._nugget_to_displayed_items.pop(nugget)
+
+            if nugget in self._nugget_to_similar_nugget and self._nugget_to_similar_nugget[nugget] is not None:
+                # This nugget is represented by same items as another nugget.
+                # Once this other nugget is processed, the corresponding items will be removed from grid
+                continue
+
+            self._gl_widget.removeItem(scatter)
+            self._gl_widget.removeItem(annotation)
+
+    def highlight_confirmed_matches(self):
+        if self._attribute is None:
+            logger.warning("Attribute has not been initialized yet, can not highlight confirmed matches.")
+            return
+
+        for confirmed_match in self._attribute.confirmed_matches:
+            if confirmed_match in self._nugget_to_displayed_items:
+                self._highlight_nugget(confirmed_match, GREEN, DEFAULT_NUGGET_SIZE)
+
     def reset(self):
-        for scatter, annotation in self._nugget_to_displayed_items.values():
+        for nugget, (scatter, annotation) in self._nugget_to_displayed_items.items():
+            if nugget in self._nugget_to_similar_nugget and self._nugget_to_similar_nugget[nugget] is not None:
+                # Corresponding items will be removed once processing similar nugget
+                continue
             self._gl_widget.removeItem(scatter)
             self._gl_widget.removeItem(annotation)
 
         self._nugget_to_displayed_items = {}
+        self._nugget_to_similar_nugget = {}
         self._currently_highlighted_nugget = None
         self._best_guess = None
 
     def _determine_update_values(self, previously_selected_nugget, newly_selected_nugget) -> (
             (int, Color), (int, Color)):
+        similar_prev_selected_nugget = self._nugget_to_similar_nugget[previously_selected_nugget] \
+            if previously_selected_nugget in self._nugget_to_similar_nugget else None
+        similar_newly_selected_nugget = self._nugget_to_similar_nugget[newly_selected_nugget] \
+            if previously_selected_nugget in self._nugget_to_similar_nugget else None
+
         highlight_color = BLUE
-        highlight_size = 15 if newly_selected_nugget == self._best_guess else 10
+        highlight_size = 15 if newly_selected_nugget == self._best_guess or similar_newly_selected_nugget == self._best_guess \
+            else 10
 
-        if previously_selected_nugget in self._attribute.confirmed_matches:
-            print("")
-
-        reset_color = WHITE if previously_selected_nugget == self._best_guess or previously_selected_nugget is None else self._determine_nuggets_color(
-            previously_selected_nugget)
-        reset_size = 15 if previously_selected_nugget == self._best_guess else 3
+        if previously_selected_nugget is None:
+            reset_color = WHITE
+            reset_size = DEFAULT_NUGGET_SIZE
+        elif (previously_selected_nugget in self._attribute.confirmed_matches or
+              similar_prev_selected_nugget in self._attribute.confirmed_matches):
+            reset_color = GREEN
+            reset_size = DEFAULT_NUGGET_SIZE
+        elif previously_selected_nugget == self._best_guess or similar_prev_selected_nugget == self._best_guess:
+            reset_color = WHITE
+            reset_size = 15
+        else:
+            reset_color = self._determine_nuggets_color(previously_selected_nugget)
+            reset_size = DEFAULT_NUGGET_SIZE
 
         return (highlight_color, highlight_size), (reset_color, reset_size)
 
@@ -204,12 +255,12 @@ class EmbeddingVisualizer:
                            f"Will return purple as color highlighting nuggets with this issue.")
             return PURPLE
 
-        return WHITE if nugget[CachedDistanceSignal] < self._attribute[CurrentThresholdSignal] else RED
+        similar_nugget = self._nugget_to_similar_nugget[nugget] if nugget in self._nugget_to_similar_nugget else None
 
-    def highlight_confirmed_matches(self):
-        for confirmed_match in self._attribute.confirmed_matches:
-            if confirmed_match in self._nugget_to_displayed_items:
-                self._highlight_nugget(confirmed_match, GREEN, DEFAULT_NUGGET_SIZE)
+        return (WHITE if nugget[CachedDistanceSignal] < self._attribute[CurrentThresholdSignal] or
+                         (similar_nugget is not None and similar_nugget[CachedDistanceSignal] < self._attribute[
+                             CurrentThresholdSignal])
+                else RED)
 
     def _add_grids(self):
         grid_xy = gl.GLGridItem()
@@ -237,20 +288,14 @@ class EmbeddingVisualizer:
                               annotation_text=build_nuggets_annotation_text(other_best_guess),
                               size=15)
 
-    def remove_nuggets_from_widget(self, nuggets_to_remove):
-        for nugget in nuggets_to_remove:
-            scatter, annotation = self._nugget_to_displayed_items.pop(nugget)
-
-            self._gl_widget.removeItem(scatter)
-            self._gl_widget.removeItem(annotation)
-
 
 class EmbeddingVisualizerWindow(EmbeddingVisualizer, QMainWindow):
     def __init__(self,
-                 attribute=None,
-                 nuggets=None,
-                 currently_highlighted_nugget=None,
-                 best_guess=None):
+                 attribute: Attribute = None,
+                 nuggets: List[InformationNugget] = None,
+                 currently_highlighted_nugget: InformationNugget = None,
+                 best_guess: InformationNugget = None,
+                 other_best_guesses: List[InformationNugget] = None):
         EmbeddingVisualizer.__init__(self, attribute, nuggets, currently_highlighted_nugget, best_guess)
         QMainWindow.__init__(self)
 
@@ -270,7 +315,8 @@ class EmbeddingVisualizerWindow(EmbeddingVisualizer, QMainWindow):
                 nuggets is not None and
                 currently_highlighted_nugget is not None and
                 best_guess is not None):
-            self.update_and_display_params(attribute, nuggets, currently_highlighted_nugget, best_guess)
+            self.update_and_display_params(attribute, nuggets, currently_highlighted_nugget, best_guess,
+                                           other_best_guesses)
         else:
             self.setVisible(False)
 
@@ -309,60 +355,65 @@ class EmbeddingVisualizerWidget(EmbeddingVisualizer, QWidget):
 
         self._add_grids()
 
-        self.fullscreen_window = None
-        self.other_best_guesses = None
+        self._fullscreen_window = None
+        self._other_best_guesses = None
 
     def _show_embedding_visualizer_window(self):
-        if self.fullscreen_window is None:
-            self.fullscreen_window = EmbeddingVisualizerWindow(attribute=self._attribute,
-                                                               nuggets=list(self._nugget_to_displayed_items.keys()),
-                                                               currently_highlighted_nugget=self._currently_highlighted_nugget,
-                                                               best_guess=self._best_guess)
-        self.fullscreen_window.show()
+        if self._fullscreen_window is None:
+            self._fullscreen_window = EmbeddingVisualizerWindow(attribute=self._attribute,
+                                                                nuggets=list(self._nugget_to_displayed_items.keys()),
+                                                                currently_highlighted_nugget=self._currently_highlighted_nugget,
+                                                                best_guess=self._best_guess)
+        self._fullscreen_window.show()
 
     def return_from_embedding_visualizer_window(self):
-        self.fullscreen_window.close()
-        self.fullscreen_window = None
+        self._fullscreen_window.close()
+        self._fullscreen_window = None
 
     def update_other_best_guesses(self, other_best_guesses):
-        self.other_best_guesses = other_best_guesses
+        self._other_best_guesses = other_best_guesses
 
     def highlight_selected_nugget(self, nugget):
         super().highlight_selected_nugget(nugget)
 
-        if self.fullscreen_window is not None:
-            self.fullscreen_window.highlight_selected_nugget(nugget)
+        if self._fullscreen_window is not None:
+            self._fullscreen_window.highlight_selected_nugget(nugget)
 
     def highlight_best_guess(self, best_guess: InformationNugget):
         super().highlight_best_guess(best_guess)
 
-        if self.fullscreen_window is not None:
-            self.fullscreen_window.highlight_best_guess(best_guess)
+        if self._fullscreen_window is not None:
+            self._fullscreen_window.highlight_best_guess(best_guess)
 
     def reset(self):
         super().reset()
 
-        self.fullscreen_window = None
-        self.other_best_guesses = None
+        self._fullscreen_window = None
+        self._other_best_guesses = None
 
         self.show_other_best_guesses_button.setEnabled(True)
         self.remove_other_best_guesses_button.setEnabled(False)
 
     def _handle_show_other_best_guesses_clicked(self):
+        if self._other_best_guesses is None:
+            logger.warning("Can not display best guesses from other documents as these best guesses have not been "
+                           "initialized yet.")
+            return
+
         self.show_other_best_guesses_button.setEnabled(False)
         self.remove_other_best_guesses_button.setEnabled(True)
 
-        self.display_other_best_guesses(self.other_best_guesses)
-        if self.fullscreen_window is not None:
-            self.fullscreen_window.display_other_best_guesses(self.other_best_guesses)
+        self.display_other_best_guesses(self._other_best_guesses)
+        if self._fullscreen_window is not None:
+            self._fullscreen_window.display_other_best_guesses(self._other_best_guesses)
 
     def _handle_remove_other_best_guesses_clicked(self):
         self.show_other_best_guesses_button.setEnabled(True)
         self.remove_other_best_guesses_button.setEnabled(False)
 
-        self.remove_nuggets_from_widget(self.other_best_guesses)
-        if self.fullscreen_window is not None:
-            self.fullscreen_window.remove_nuggets_from_widget(self.other_best_guesses)
+        self.remove_nuggets_from_widget(self._other_best_guesses)
+        if self._fullscreen_window is not None:
+            self._fullscreen_window.remove_nuggets_from_widget(self._other_best_guesses)
 
 
 class BarChartVisualizerWidget(QWidget):
