@@ -1,4 +1,6 @@
 import logging
+import math
+from typing import List, Dict, Tuple, Union
 
 import numpy as np
 import pyqtgraph as pg
@@ -16,8 +18,9 @@ from matplotlib.patches import Rectangle
 from pyqtgraph import Color
 from pyqtgraph.opengl import GLViewWidget, GLScatterPlotItem, GLTextItem
 
+from wannadb.data.data import InformationNugget, Attribute
 from wannadb.data.signals import PCADimensionReducedTextEmbeddingSignal, PCADimensionReducedLabelEmbeddingSignal, \
-    CachedDistanceSignal
+    CachedDistanceSignal, CurrentThresholdSignal
 
 logger: logging.Logger = logging.getLogger(__name__)
 
@@ -26,7 +29,9 @@ BLUE = pg.mkColor('blue')
 GREEN = pg.mkColor('green')
 WHITE = pg.mkColor('white')
 YELLOW = pg.mkColor('yellow')
+PURPLE = pg.mkColor('purple')
 EMBEDDING_ANNOTATION_FONT = QFont('Helvetica', 10)
+DEFAULT_NUGGET_SIZE = 7
 
 app = QApplication([])
 screen = app.primaryScreen()
@@ -42,96 +47,212 @@ def get_colors(distances, color_start='red', color_end='blue'):
     return colors
 
 
-def add_grids(widget):
-    grid_xy = gl.GLGridItem()
-    widget.addItem(grid_xy)
+def positions_equal(pos1: np.ndarray, pos2: np.ndarray) -> bool:
+    if pos1.shape != (1, 3) or pos2.shape != (1, 3):
+        return False
 
-    grid_xz = gl.GLGridItem()
-    grid_xz.rotate(90, 1, 0, 0)
-    widget.addItem(grid_xz)
-
-    grid_yz = gl.GLGridItem()
-    grid_yz.rotate(90, 0, 1, 0)
-    widget.addItem(grid_yz)
+    return (math.isclose(pos1[0][0], pos2[0][0], rel_tol=1e-05, abs_tol=1e-05) and
+            math.isclose(pos1[0][1], pos2[0][1], rel_tol=1e-05, abs_tol=1e-05) and
+            math.isclose(pos1[0][2], pos2[0][2], rel_tol=1e-05, abs_tol=1e-05))
 
 
-def update_grid(gl_widget, points_to_display, color, annotation_text, size=3) -> (GLScatterPlotItem, GLTextItem):
-    scatter = GLScatterPlotItem(pos=points_to_display, color=color, size=size, pxMode=True)
-    annotation = GLTextItem(pos=[points_to_display[0][0], points_to_display[0][1], points_to_display[0][2]],
-                            color=WHITE,
-                            text=annotation_text,
-                            font=EMBEDDING_ANNOTATION_FONT)
-    gl_widget.addItem(scatter)
-    gl_widget.addItem(annotation)
-    return scatter, annotation
-
-
-def build_annotation_text(nugget) -> str:
+def build_nuggets_annotation_text(nugget) -> str:
     return f"{nugget.text}: {round(nugget[CachedDistanceSignal], 3)}"
 
 
-def add_other_best_guess(gl_widget, other_best_guess, nugget_to_displayed_items):
-    nugget_embedding: np.ndarray = np.array([other_best_guess[PCADimensionReducedTextEmbeddingSignal]])
-    scatter, annotation = update_grid(gl_widget, nugget_embedding, YELLOW,
-                                      build_annotation_text(other_best_guess), 15)
-    nugget_to_displayed_items[other_best_guess] = (scatter, annotation)
+class EmbeddingVisualizer:
+    def __init__(self,
+                 attribute: Attribute = None,
+                 nuggets: List[InformationNugget] = None,
+                 currently_highlighted_nugget: InformationNugget = None,
+                 best_guess: InformationNugget = None):
+        self._attribute: Attribute = attribute
+        self._nuggets: List[InformationNugget] = nuggets
+        self._currently_highlighted_nugget: InformationNugget = currently_highlighted_nugget
+        self._best_guess: InformationNugget = best_guess
+        self._nugget_to_displayed_items: Dict[InformationNugget, Tuple[GLScatterPlotItem, GLTextItem]] = dict()
+        self._gl_widget = GLViewWidget()
+
+    def update_and_display_params(self,
+                                  attribute: Attribute,
+                                  nuggets: List[InformationNugget],
+                                  currently_highlighted_nugget: Union[InformationNugget, None],
+                                  best_guess: Union[InformationNugget, None]):
+        self.reset()
+
+        if attribute is not None:
+            self.display_attribute_embedding(attribute)
+        else:
+            logger.warning("Given attribute is null, can not display.")
+
+        if nuggets:
+            self._nuggets = nuggets
+            self.display_nugget_embeddings(nuggets)
+        else:
+            logger.warning("Given nugget list is null or empty, can not display.")
+
+        if best_guess is not None:
+            self.highlight_best_guess(best_guess)
+        else:
+            logger.info("Given best_guess is null, can not highlight.")
+
+        self.highlight_confirmed_matches()
+
+        if currently_highlighted_nugget is not None:
+            self.highlight_selected_nugget(currently_highlighted_nugget)
+        else:
+            logger.info("Given nugget to highlight is null, can not highlight.")
+
+    def add_item_to_grid(self,
+                         nugget_to_display_context: Tuple[Union[InformationNugget, Attribute], Color],
+                         annotation_text: str,
+                         size: int = DEFAULT_NUGGET_SIZE):
+        item_to_display, color = nugget_to_display_context
+        position = np.array([item_to_display[PCADimensionReducedTextEmbeddingSignal]]) if isinstance(item_to_display, InformationNugget) \
+            else np.array([item_to_display[PCADimensionReducedLabelEmbeddingSignal]])
+
+        # Check for already existing scatter at the same position representing same nugget. This can happen due to usage of different extractors
+        for nugget, (scatter, _) in self._nugget_to_displayed_items.items():
+            if positions_equal(scatter.pos, position) and nugget.text == item_to_display.text:
+                logger.info(f"{item_to_display} is already shown in the grid - probably it was extracted by multiple extractors - will not add again to grid.")
+                return
+
+        scatter = GLScatterPlotItem(pos=position, color=color, size=size, pxMode=True)
+        annotation = GLTextItem(pos=[position[0][0], position[0][1], position[0][2]],
+                                color=WHITE,
+                                text=annotation_text,
+                                font=EMBEDDING_ANNOTATION_FONT)
+
+        self._gl_widget.addItem(scatter)
+        self._gl_widget.addItem(annotation)
+
+        if isinstance(item_to_display, InformationNugget):
+            self._nugget_to_displayed_items[item_to_display] = (scatter, annotation)
+
+        return scatter, annotation
+
+    def highlight_best_guess(self, best_guess: InformationNugget):
+        self._best_guess = best_guess
+
+        if self._best_guess == self._currently_highlighted_nugget:
+            self._highlight_nugget(self._best_guess, BLUE, 15)
+            return
+
+        self._highlight_nugget(self._best_guess, WHITE, 15)
+
+    def highlight_selected_nugget(self, newly_selected_nugget: InformationNugget):
+        (highlight_color, highlight_size), (reset_color, reset_size) = self._determine_update_values(
+            previously_selected_nugget=self._currently_highlighted_nugget,
+            newly_selected_nugget=newly_selected_nugget)
+
+        self._highlight_nugget(nugget_to_highlight=newly_selected_nugget,
+                               new_color=highlight_color,
+                               new_size=highlight_size)
+
+        if self._currently_highlighted_nugget is not None:
+            currently_highlighted_scatter, _ = self._nugget_to_displayed_items[self._currently_highlighted_nugget]
+            currently_highlighted_scatter.setData(color=reset_color, size=reset_size)
+
+        self._currently_highlighted_nugget = newly_selected_nugget
+
+    def display_other_best_guesses(self, other_best_guesses):
+        for other_best_guess in other_best_guesses:
+            self._add_other_best_guess(other_best_guess)
+
+    def remove_other_best_guesses(self, other_best_guesses):
+        self.remove_nuggets_from_widget(other_best_guesses)
+
+    def display_nugget_embeddings(self, nuggets):
+        for nugget in nuggets:
+            nugget_to_display_context = (nugget, self._determine_nuggets_color(nugget))
+
+            self.add_item_to_grid(nugget_to_display_context=nugget_to_display_context,
+                                  annotation_text=build_nuggets_annotation_text(nugget))
+
+    def display_attribute_embedding(self, attribute):
+        self.add_item_to_grid(nugget_to_display_context=(attribute, RED),
+                              annotation_text=attribute.name)
+        self._attribute = attribute  # save for later use
+
+    def reset(self):
+        for scatter, annotation in self._nugget_to_displayed_items.values():
+            self._gl_widget.removeItem(scatter)
+            self._gl_widget.removeItem(annotation)
+
+        self._nugget_to_displayed_items = {}
+        self._currently_highlighted_nugget = None
+        self._best_guess = None
+
+    def _determine_update_values(self, previously_selected_nugget, newly_selected_nugget) -> (
+            (int, Color), (int, Color)):
+        highlight_color = BLUE
+        highlight_size = 15 if newly_selected_nugget == self._best_guess else 10
+
+        if previously_selected_nugget in self._attribute.confirmed_matches:
+            print("")
+
+        reset_color = WHITE if previously_selected_nugget == self._best_guess or previously_selected_nugget is None else self._determine_nuggets_color(
+            previously_selected_nugget)
+        reset_size = 15 if previously_selected_nugget == self._best_guess else 3
+
+        return (highlight_color, highlight_size), (reset_color, reset_size)
+
+    def _determine_nuggets_color(self, nugget: InformationNugget) -> Color:
+        if (self._attribute is None or
+                CurrentThresholdSignal.identifier not in self._attribute.signals):
+            logger.warning(f"Could not determine nuggets color from given attribute: {self._attribute}. "
+                           f"Will return purple as color highlighting nuggets with this issue.")
+            return PURPLE
+
+        return WHITE if nugget[CachedDistanceSignal] < self._attribute[CurrentThresholdSignal] else RED
+
+    def highlight_confirmed_matches(self):
+        for confirmed_match in self._attribute.confirmed_matches:
+            if confirmed_match in self._nugget_to_displayed_items:
+                self._highlight_nugget(confirmed_match, GREEN, DEFAULT_NUGGET_SIZE)
+
+    def _add_grids(self):
+        grid_xy = gl.GLGridItem()
+        self._gl_widget.addItem(grid_xy)
+
+        grid_xz = gl.GLGridItem()
+        grid_xz.rotate(90, 1, 0, 0)
+        self._gl_widget.addItem(grid_xz)
+
+        grid_yz = gl.GLGridItem()
+        grid_yz.rotate(90, 0, 1, 0)
+        self._gl_widget.addItem(grid_yz)
+
+    def _highlight_nugget(self, nugget_to_highlight, new_color, new_size):
+        scatter_to_highlight, _ = self._nugget_to_displayed_items[nugget_to_highlight]
+
+        if scatter_to_highlight is None:
+            logger.warning("Couldn't find nugget to highlight.")
+            return
+
+        scatter_to_highlight.setData(color=new_color, size=new_size)
+
+    def _add_other_best_guess(self, other_best_guess):
+        self.add_item_to_grid(nugget_to_display_context=(other_best_guess, YELLOW),
+                              annotation_text=build_nuggets_annotation_text(other_best_guess),
+                              size=15)
+
+    def remove_nuggets_from_widget(self, nuggets_to_remove):
+        for nugget in nuggets_to_remove:
+            scatter, annotation = self._nugget_to_displayed_items.pop(nugget)
+
+            self._gl_widget.removeItem(scatter)
+            self._gl_widget.removeItem(annotation)
 
 
-def remove_nuggets_from_widget(nuggets_to_remove, nugget_to_displayed_items, gl_widget):
-    for nugget in nuggets_to_remove:
-        scatter, annotation = nugget_to_displayed_items.pop(nugget)
-
-        gl_widget.removeItem(scatter)
-        gl_widget.removeItem(annotation)
-
-
-def highlight_best_guess(best_guess, currently_highlighted_nugget, nugget_to_displayed_items):
-    if best_guess == currently_highlighted_nugget:
-        highlight_nugget(best_guess, nugget_to_displayed_items, BLUE, 15)
-        return
-
-    highlight_nugget(best_guess, nugget_to_displayed_items, WHITE, 15)
-
-
-def highlight_selected_nugget(nugget, currently_highlighted_nugget, best_guess, nugget_to_displayed_items):
-    (highlight_color, highlight_size), (reset_color, reset_size) = determine_update_values(
-        currently_highlighted_nugget, nugget, best_guess)
-
-    highlight_nugget(nugget, nugget_to_displayed_items, highlight_color, highlight_size)
-
-    if currently_highlighted_nugget is not None:
-        currently_highlighted_scatter, _ = nugget_to_displayed_items[currently_highlighted_nugget]
-        currently_highlighted_scatter.setData(color=reset_color, size=reset_size)
-
-
-def highlight_nugget(nugget_to_highlight, nugget_to_displayed_items, new_color, new_size):
-    scatter_to_highlight, _ = nugget_to_displayed_items[nugget_to_highlight]
-
-    if scatter_to_highlight is None:
-        logger.warning("Couldn't find nugget to highlight")
-        return
-
-    scatter_to_highlight.setData(color=new_color, size=new_size)
-
-
-def determine_update_values(previously_selected_nugget, newly_selected_nugget, best_guess) -> (
-        (int, Color), (int, Color)):
-    highlight_color = BLUE
-    highlight_size = 15 if newly_selected_nugget == best_guess else 10
-
-    reset_color = WHITE if previously_selected_nugget == best_guess else GREEN
-    reset_size = 15 if previously_selected_nugget == best_guess else 3
-
-    return (highlight_color, highlight_size), (reset_color, reset_size)
-
-
-class EmbeddingVisualizerWindow(QMainWindow):
-    def __init__(self, attribute=None, nuggets=None, currently_highlighted_nugget=None, best_guess=None):
-        super(EmbeddingVisualizerWindow, self).__init__()
-
-        self.nugget_to_displayed_items = {}
-        self.currently_highlighted_nugget = None
-        self.best_guess = best_guess
+class EmbeddingVisualizerWindow(EmbeddingVisualizer, QMainWindow):
+    def __init__(self,
+                 attribute=None,
+                 nuggets=None,
+                 currently_highlighted_nugget=None,
+                 best_guess=None):
+        EmbeddingVisualizer.__init__(self, attribute, nuggets, currently_highlighted_nugget, best_guess)
+        QMainWindow.__init__(self)
 
         self.setWindowTitle("3D Grid Visualizer")
         self.setGeometry(100, 100, WINDOW_WIDTH, WINDOW_HEIGHT)
@@ -141,76 +262,34 @@ class EmbeddingVisualizerWindow(QMainWindow):
         self.fullscreen_layout = QVBoxLayout()
         central_widget.setLayout(self.fullscreen_layout)
 
-        self.fullscreen_gl_widget = GLViewWidget()
-        self.fullscreen_layout.addWidget(self.fullscreen_gl_widget)
+        self.fullscreen_layout.addWidget(self._gl_widget)
 
-        add_grids(self.fullscreen_gl_widget)
+        self._add_grids()
 
         if (attribute is not None and
                 nuggets is not None and
                 currently_highlighted_nugget is not None and
                 best_guess is not None):
-            self.update_grid(attribute, nuggets, currently_highlighted_nugget, best_guess)
+            self.update_and_display_params(attribute, nuggets, currently_highlighted_nugget, best_guess)
         else:
             self.setVisible(False)
 
     def closeEvent(self, event):
         event.accept()
 
-    def copy_state(self, attribute, nuggets):
-        update_grid(self.fullscreen_gl_widget,
-                    [attribute[PCADimensionReducedLabelEmbeddingSignal]],
-                    RED,
-                    attribute.name)
 
-        for nugget in nuggets:
-            nugget_embedding: np.ndarray = np.array([nugget[PCADimensionReducedTextEmbeddingSignal]])
-            scatter, annotation = update_grid(self.fullscreen_gl_widget, nugget_embedding, GREEN,
-                                              build_annotation_text(nugget))
-            self.nugget_to_displayed_items[nugget] = (scatter, annotation)
-
-    def highlight_selected_nugget(self, nugget):
-        highlight_selected_nugget(nugget, self.currently_highlighted_nugget, self.best_guess,
-                                  self.nugget_to_displayed_items)
-
-        self.currently_highlighted_nugget = nugget
-
-    def display_other_best_guesses(self, other_best_guesses):
-        for other_best_guess in other_best_guesses:
-            add_other_best_guess(self.fullscreen_gl_widget, other_best_guess, self.nugget_to_displayed_items)
-
-    def remove_other_best_guesses(self, other_best_guesses):
-        remove_nuggets_from_widget(other_best_guesses, self.nugget_to_displayed_items, self.fullscreen_gl_widget)
-
-    def update_grid(self, attribute, nuggets, currently_highlighted_nugget, best_guess):
-        self.reset()
-
-        self.copy_state(attribute, nuggets)
-        highlight_best_guess(best_guess, currently_highlighted_nugget, self.nugget_to_displayed_items)
-        self.highlight_selected_nugget(currently_highlighted_nugget)
-
-    def reset(self):
-        for scatter, annotation in self.nugget_to_displayed_items.values():
-            self.fullscreen_gl_widget.removeItem(scatter)
-            self.fullscreen_gl_widget.removeItem(annotation)
-
-        self.nugget_to_displayed_items = {}
-        self.currently_highlighted_nugget = None
-        self.best_guess = None
-
-
-class EmbeddingVisualizerWidget(QWidget):
+class EmbeddingVisualizerWidget(EmbeddingVisualizer, QWidget):
     def __init__(self):
-        super(EmbeddingVisualizerWidget, self).__init__()
+        EmbeddingVisualizer.__init__(self)
+        QWidget.__init__(self)
 
         self.layout = QVBoxLayout()
         self.layout.setContentsMargins(0, 0, 0, 0)
         self.layout.setSpacing(0)
         self.setLayout(self.layout)
 
-        self.gl_widget = GLViewWidget()
-        self.gl_widget.setMinimumHeight(300)  # Set the initial height of the grid to 200
-        self.layout.addWidget(self.gl_widget)
+        self._gl_widget.setMinimumHeight(300)  # Set the initial height of the grid to 200
+        self.layout.addWidget(self._gl_widget)
 
         self.best_guesses_widget = QWidget()
         self.best_guesses_widget_layout = QHBoxLayout(self.best_guesses_widget)
@@ -220,98 +299,70 @@ class EmbeddingVisualizerWidget(QWidget):
         self.fullscreen_button.clicked.connect(self._show_embedding_visualizer_window)
         self.best_guesses_widget_layout.addWidget(self.fullscreen_button)
         self.show_other_best_guesses_button = QPushButton("Show best guesses from other documents")
-        self.show_other_best_guesses_button.clicked.connect(self._display_other_best_guesses)
+        self.show_other_best_guesses_button.clicked.connect(self._handle_show_other_best_guesses_clicked)
         self.best_guesses_widget_layout.addWidget(self.show_other_best_guesses_button)
         self.remove_other_best_guesses_button = QPushButton("Stop showing best guesses from other documents")
         self.remove_other_best_guesses_button.setEnabled(False)
-        self.remove_other_best_guesses_button.clicked.connect(self._remove_other_best_guesses)
+        self.remove_other_best_guesses_button.clicked.connect(self._handle_remove_other_best_guesses_clicked)
         self.best_guesses_widget_layout.addWidget(self.remove_other_best_guesses_button)
         self.layout.addWidget(self.best_guesses_widget)
 
-        add_grids(self.gl_widget)
+        self._add_grids()
 
         self.fullscreen_window = None
-        self.attribute = None
-        self.nugget_to_displayed_items = {}
-        self.currently_highlighted_nugget = None
-        self.best_guess = None
         self.other_best_guesses = None
 
     def _show_embedding_visualizer_window(self):
         if self.fullscreen_window is None:
-            self.fullscreen_window = EmbeddingVisualizerWindow(attribute=self.attribute,
-                                                               nuggets=self.nugget_to_displayed_items.keys(),
-                                                               currently_highlighted_nugget=self.currently_highlighted_nugget,
-                                                               best_guess=self.best_guess)
+            self.fullscreen_window = EmbeddingVisualizerWindow(attribute=self._attribute,
+                                                               nuggets=list(self._nugget_to_displayed_items.keys()),
+                                                               currently_highlighted_nugget=self._currently_highlighted_nugget,
+                                                               best_guess=self._best_guess)
         self.fullscreen_window.show()
 
     def return_from_embedding_visualizer_window(self):
         self.fullscreen_window.close()
         self.fullscreen_window = None
 
-    def display_attribute_embedding(self, attribute):
-        attribute_embedding = np.array([attribute[PCADimensionReducedLabelEmbeddingSignal]])
-        update_grid(self.gl_widget, attribute_embedding, RED, attribute.name)
-        self.attribute = attribute  # save for later use
-
-    def display_nugget_embedding(self, nuggets):
-        for nugget in nuggets:
-            self._add_nugget_embedding(nugget)
-
-    def _display_other_best_guesses(self):
-        for other_best_guess in self.other_best_guesses:
-            add_other_best_guess(self.gl_widget, other_best_guess, self.nugget_to_displayed_items)
-
-        self.show_other_best_guesses_button.setEnabled(False)
-        self.remove_other_best_guesses_button.setEnabled(True)
-
-        if self.fullscreen_window is not None:
-            self.fullscreen_window.display_other_best_guesses(self.other_best_guesses)
-
-    def _remove_other_best_guesses(self):
-        remove_nuggets_from_widget(self.other_best_guesses, self.nugget_to_displayed_items, self.gl_widget)
-
-        self.show_other_best_guesses_button.setEnabled(True)
-        self.remove_other_best_guesses_button.setEnabled(False)
-
-        if self.fullscreen_window is not None:
-            self.fullscreen_window.remove_other_best_guesses(self.other_best_guesses)
-
     def update_other_best_guesses(self, other_best_guesses):
         self.other_best_guesses = other_best_guesses
 
-    def _add_nugget_embedding(self, nugget):
-        nugget_embedding: np.ndarray = np.array([nugget[PCADimensionReducedTextEmbeddingSignal]])
-        scatter, annotation = update_grid(self.gl_widget, nugget_embedding, GREEN, build_annotation_text(nugget))
-        self.nugget_to_displayed_items[nugget] = (scatter, annotation)
-
     def highlight_selected_nugget(self, nugget):
-        highlight_selected_nugget(nugget, self.currently_highlighted_nugget, self.best_guess,
-                                  self.nugget_to_displayed_items)
+        super().highlight_selected_nugget(nugget)
 
         if self.fullscreen_window is not None:
             self.fullscreen_window.highlight_selected_nugget(nugget)
 
-        self.currently_highlighted_nugget = nugget
+    def highlight_best_guess(self, best_guess: InformationNugget):
+        super().highlight_best_guess(best_guess)
 
-    def highlight_best_guess(self, nugget):
-        self.best_guess = nugget
-
-        highlight_best_guess(nugget, self.currently_highlighted_nugget, self.nugget_to_displayed_items)
+        if self.fullscreen_window is not None:
+            self.fullscreen_window.highlight_best_guess(best_guess)
 
     def reset(self):
-        for scatter, annotation in self.nugget_to_displayed_items.values():
-            self.gl_widget.removeItem(scatter)
-            self.gl_widget.removeItem(annotation)
+        super().reset()
 
         self.fullscreen_window = None
-        self.nugget_to_displayed_items = {}
-        self.currently_highlighted_nugget = None
-        self.best_guess = None
         self.other_best_guesses = None
 
         self.show_other_best_guesses_button.setEnabled(True)
         self.remove_other_best_guesses_button.setEnabled(False)
+
+    def _handle_show_other_best_guesses_clicked(self):
+        self.show_other_best_guesses_button.setEnabled(False)
+        self.remove_other_best_guesses_button.setEnabled(True)
+
+        self.display_other_best_guesses(self.other_best_guesses)
+        if self.fullscreen_window is not None:
+            self.fullscreen_window.display_other_best_guesses(self.other_best_guesses)
+
+    def _handle_remove_other_best_guesses_clicked(self):
+        self.show_other_best_guesses_button.setEnabled(True)
+        self.remove_other_best_guesses_button.setEnabled(False)
+
+        self.remove_nuggets_from_widget(self.other_best_guesses)
+        if self.fullscreen_window is not None:
+            self.fullscreen_window.remove_nuggets_from_widget(self.other_best_guesses)
 
 
 class BarChartVisualizerWidget(QWidget):
@@ -362,13 +413,13 @@ class BarChartVisualizerWidget(QWidget):
             height = rect.get_height()
             ax.text(
                 rect.get_x() + rect.get_width() / 2,
-                height/2,
+                height / 2,
                 f'{texts[idx]}',
                 ha='center',
                 va='center',
                 rotation=90,  # Rotate text by 90 degrees
                 fontsize=12,
-                color='white'# fontcolors[idx]# Optional: Adjust font size
+                color='white'  # fontcolors[idx]# Optional: Adjust font size
             )
 
         self.bar_chart_canvas = FigureCanvas(fig)
@@ -422,6 +473,7 @@ class BarChartVisualizerWidget(QWidget):
                 self.annotation.set_visible(True)
                 self.current_annotation_index = index
             self.bar_chart_canvas.draw_idle()
+
     def clear_data(self):
         self.data = []
         self.bar = None
