@@ -131,6 +131,7 @@ class RankingBasedMatcher(BaseMatcher):
             logger.info(f"Matching attribute '{attribute.name}'.")
             start_matching: float = time.time()
             self._max_distance = self._default_max_distance
+            self._max_distance_change = 0
             attribute[CurrentThresholdSignal] = CurrentThresholdSignal(self._max_distance)
             statistics[attribute.name]["max_distances"] = [self._max_distance]
             statistics[attribute.name]["feedback_durations"] = []
@@ -180,6 +181,7 @@ class RankingBasedMatcher(BaseMatcher):
             tik: float = time.time()
             num_feedback: int = 0
             continue_matching: bool = True
+            old_feedback_nuggets: List[InformationNugget] = []
             while continue_matching and num_feedback < self._max_num_feedback and remaining_documents != []:
                 # sort remaining documents by distance
                 _sort_remaining_documents()
@@ -269,16 +271,21 @@ class RankingBasedMatcher(BaseMatcher):
                     self.identifier,
                     {
                         "max-distance": self._max_distance,
+                        "max-distance-change": self._max_distance_change,
                         "nuggets": feedback_nuggets,
+                        "new-nuggets": [nugget for nugget in feedback_nuggets if nugget not in old_feedback_nuggets],
                         "all-guessed-nugget-matches": all_guessed_nugget_matches,
                         "attribute": attribute,
                         "num-feedback": num_feedback,
                         "num-nuggets-above": num_nuggets_above,
-                        "num-nuggets-below": num_nuggets_below
+                        "num-nuggets-below": num_nuggets_below,
+                        "sampling-mode": self._sampling_mode
                     }
                 )
                 t1 = time.time()
                 statistics[attribute.name]["feedback_durations"].append(t1 - t0)
+
+                old_feedback_nuggets = feedback_nuggets
 
                 if feedback_result["message"] == "stop-interactive-matching":
                     statistics[attribute.name]["stopped_matching_by_hand"] = True
@@ -312,6 +319,7 @@ class RankingBasedMatcher(BaseMatcher):
                                     if feedback_nuggets_old_cached_distances[ix] < self._max_distance:
                                         min_dist = min(min_dist, feedback_nuggets[ix][CachedDistanceSignal])
                                 if min_dist < self._max_distance:
+                                    self._max_distance_change = min_dist - self._max_distance
                                     self._max_distance = min_dist
                                     attribute[CurrentThresholdSignal] = CurrentThresholdSignal(min_dist)
                                     statistics[attribute.name]["max_distances"].append(min_dist)
@@ -483,6 +491,7 @@ class RankingBasedMatcher(BaseMatcher):
                                         if feedback_nuggets_old_cached_distances[ix] > self._max_distance:
                                             max_dist = max(max_dist, feedback_nuggets[ix][CachedDistanceSignal])
                                     if max_dist > self._max_distance:
+                                        self._max_distance_change = max_dist - self._max_distance
                                         self._max_distance = max_dist
                                         attribute[CurrentThresholdSignal] = CurrentThresholdSignal(max_dist)
                                         statistics[attribute.name]["max_distances"].append(max_dist)

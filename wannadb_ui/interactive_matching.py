@@ -5,13 +5,13 @@ from PyQt6 import QtGui
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QIcon, QTextCursor
 from PyQt6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QTextEdit, QVBoxLayout, QWidget, QGridLayout, QSizePolicy, \
-    QBoxLayout
+    QSpacerItem
 
 from wannadb.data.signals import CachedContextSentenceSignal, CachedDistanceSignal, \
     PCADimensionReducedLabelEmbeddingSignal, PCADimensionReducedTextEmbeddingSignal, \
     TSNEDimensionReducedLabelEmbeddingSignal
 from wannadb_ui.common import BUTTON_FONT, CODE_FONT, CODE_FONT_BOLD, LABEL_FONT, MainWindowContent, \
-    CustomScrollableList, CustomScrollableListItem, WHITE, LIGHT_YELLOW, YELLOW, SUBHEADER_FONT
+    CustomScrollableList, CustomScrollableListItem, WHITE, LIGHT_YELLOW, YELLOW
 from wannadb_ui.visualizations import EmbeddingVisualizerWidget, BarChartVisualizerWidget, ScatterPlotVisualizerWidget, \
     EmbeddingVisualizerWindow
 
@@ -87,17 +87,26 @@ class NuggetListWidget(QWidget):
         self.layout.setContentsMargins(0, 0, 0, 0)
         self.layout.setSpacing(10)
 
-        self.current_threshold_label = QLabel()
-        self.current_threshold_label.setFont(SUBHEADER_FONT)
-        self.layout.addWidget(self.current_threshold_label)
+        self.threshold_label = QLabel()
+        self.threshold_label.setFont(LABEL_FONT)
+        self.threshold_label.setText("Current Threshold: ")
+        self.threshold_label.setVisible(False)
+        self.threshold_value_label = QLabel()
+        self.threshold_value_label.setFont(LABEL_FONT)
+        self.threshold_change_label = QLabel()
+        self.threshold_change_label.setFont(LABEL_FONT)
+        self.threshold_hbox = QHBoxLayout()
+        self.threshold_hbox.setContentsMargins(0, 0, 0, 0)
+        self.threshold_hbox.setSpacing(0)
+        self.threshold_hbox.addWidget(self.threshold_label)
+        self.threshold_hbox.addWidget(self.threshold_value_label)
+        self.threshold_hbox.addWidget(self.threshold_change_label)
+        self.threshold_hbox.addItem(QSpacerItem(40, 20, QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum))
+        self.layout.addLayout(self.threshold_hbox)
 
         self.description = QLabel("Please wait while WannaDB prepares the interactive table population.")
         self.description.setFont(LABEL_FONT)
         self.layout.addWidget(self.description)
-
-        self.likely_nuggets = QLabel("")
-        self.likely_nuggets.setFont(LABEL_FONT)
-        self.layout.addWidget(self.likely_nuggets)
 
         # suggestion visualizer
         self.suggestion_visualizer = EmbeddingVisualizerWindow()
@@ -133,21 +142,22 @@ class NuggetListWidget(QWidget):
         all_guessed_nugget_matches = feedback_request["all-guessed-nugget-matches"]
         attribute = feedback_request["attribute"]
         current_threshold = feedback_request["max-distance"]
+        threshold_change = feedback_request["max-distance-change"]
 
         self.description.setText(
             "Please confirm or edit the cell value guesses displayed below until you are satisfied with the guessed values, at which point you may continue with the next attribute."
             "\nWannaDB will use your feedback to continuously update its guesses. Note that the cells with low confidence (low confidence bar, light yellow highlights) will be left empty.")
-        self.current_threshold_label.setText(f"Current Threshold: {round(current_threshold, 4)}")
+        self._update_threshold_value_label(current_threshold, threshold_change)
 
         params = {
             "max_start_chars": max([nugget[CachedContextSentenceSignal]["start_char"] for nugget in feedback_nuggets]),
             "max_distance": current_threshold,
-            "other_best_guesses": feedback_nuggets
+            "other_best_guesses": feedback_nuggets,
+            "new-nuggets": feedback_request["new-nuggets"],
+            "num-feedback": feedback_request["num-feedback"]
         }
 
         self.suggestion_visualizer_button.setVisible(True)
-
-        self._process_likely_nuggets_label(feedback_nuggets, current_threshold)
 
         self.nugget_list.update_item_list(feedback_nuggets, params)
         if len(feedback_nuggets) > 0:
@@ -168,15 +178,6 @@ class NuggetListWidget(QWidget):
         else:
             self.num_nuggets_below_label.setText("")
 
-    def _process_likely_nuggets_label(self, nuggets, current_threshold):
-        TOP_NUGGETS = 5
-        nuggets_to_add = [nugget for nugget in nuggets if current_threshold < nugget[CachedDistanceSignal]]
-        if nuggets_to_add:
-            top_nuggets = ', '.join(map(str, nuggets_to_add[:TOP_NUGGETS]))
-            self.likely_nuggets.setText(f"Based upon your last choice, the top most likely choices are {top_nuggets}.")
-        else:
-            self.likely_nuggets.setText("")
-
     def enable_input(self):
         self.nugget_list.enable_input()
 
@@ -186,6 +187,18 @@ class NuggetListWidget(QWidget):
     def _show_suggestion_visualizer(self):
         self.suggestion_visualizer.setVisible(True)
 
+    def _update_threshold_value_label(self, new_threshold_value, threshold_value_change):
+        if round(threshold_value_change, 4) != 0:
+            self.threshold_value_label.setStyleSheet("color: yellow;")
+            change_text = f'(+{round(threshold_value_change, 4)})' if threshold_value_change > 0 else f'{round(threshold_value_change, 4)})'
+            self.threshold_change_label.setText(change_text)
+        else:
+            self.threshold_value_label.setStyleSheet("")
+            self.threshold_change_label.setText("")
+
+        self.threshold_value_label.setText(f"{round(new_threshold_value, 4)} ")
+        self.threshold_label.setVisible(True)
+
 
 class NuggetListItemWidget(CustomScrollableListItem):
     def __init__(self, nugget_list_widget):
@@ -193,10 +206,11 @@ class NuggetListItemWidget(CustomScrollableListItem):
         self.nugget_list_widget = nugget_list_widget
         self.nugget = None
         self.other_best_guesses = None
+        self._default_style_sheet = "QWidget#nuggetListItemWidget { background-color: white}"
 
         self.setFixedHeight(45)
         self.setObjectName("nuggetListItemWidget")
-        self.setStyleSheet("QWidget#nuggetListItemWidget { background-color: white}")
+        self.setStyleSheet(self._default_style_sheet)
 
         self.layout = QHBoxLayout(self)
         self.layout.setContentsMargins(20, 0, 20, 0)
@@ -261,12 +275,23 @@ class NuggetListItemWidget(CustomScrollableListItem):
         if max_distance < self.nugget[CachedDistanceSignal]:
             color = LIGHT_YELLOW
             self.confidence_button.setIcon(ICON_LOW_CONFIDENCE)
-            self.confidence_button.setToolTip("Low confidence in this match, will not be included in result.")
+            self.confidence_button.setToolTip(
+                f"Low confidence in this match (Distance: {round(self.nugget[CachedDistanceSignal], 4)}), "
+                f"will not be included in result.")
         else:
             color = YELLOW
             self.confidence_button.setIcon(ICON_HIGH_CONFIDENCE)
-            self.confidence_button.setToolTip("High confidence in this match, will be included in result.")
-        self.text_edit.setStyleSheet(f"color: black; background-color: {WHITE}")
+            self.confidence_button.setToolTip(
+                f"High confidence in this match (Distance: {round(self.nugget[CachedDistanceSignal], 4)}), "
+                f"will be included in result.")
+
+        if self.nugget in params["new-nuggets"]:
+            self._handle_item_is_new(params["num-feedback"] == 1)
+        else:
+            self.text_edit.setStyleSheet(f"color: black; background-color: {WHITE}")
+            self.setStyleSheet(self._default_style_sheet)
+            self.setToolTip("")
+
 
         self.text_edit.setText("")
         formatted_text = (
@@ -318,6 +343,29 @@ class NuggetListItemWidget(CustomScrollableListItem):
     def disable_input(self):
         self.match_button.setDisabled(True)
         self.fix_button.setDisabled(True)
+
+    def _handle_item_is_new(self, initial_selection):
+        old_threshold = -1
+        new_threshold = -1
+        old_distance = -1
+        new_distance = -1
+
+        if initial_selection:
+            tooltip_text = (f'Item was added to the list as it belongs to the initial selection of items for the list. '
+                            'The initial distance of its best match is within the considered range around the threshold.')
+
+        else:
+            tooltip_text = (
+                f'Item was newly added to the list as the distance of its best match is now within the considered '
+                f'range around the current threshold.\n'
+                f'Old Threshold: {old_threshold} -> New Threshold: {new_threshold}\n'
+                f'Old Distance: {old_distance} -> New Distance: {new_distance}')
+
+        self.setToolTip(tooltip_text)
+
+        self.text_edit.setStyleSheet(f"color: black; background-color: {'#e7ffe6'}")
+        self.setStyleSheet(f"QFrame {{ background-color: {'#e7ffe6'}; }}\n"
+                           f"QToolTip {{ background-color: {WHITE}; }}")
 
 
 class DocumentWidget(QWidget):
