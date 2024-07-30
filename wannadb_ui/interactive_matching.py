@@ -1,4 +1,7 @@
 import logging
+from collections import Counter
+import random
+from typing import List
 
 import numpy as np
 from PyQt6 import QtGui
@@ -11,7 +14,8 @@ from wannadb.data.signals import CachedContextSentenceSignal, CachedDistanceSign
     PCADimensionReducedLabelEmbeddingSignal, PCADimensionReducedTextEmbeddingSignal, \
     TSNEDimensionReducedLabelEmbeddingSignal
 from wannadb_ui.common import BUTTON_FONT, CODE_FONT, CODE_FONT_BOLD, LABEL_FONT, MainWindowContent, \
-    CustomScrollableList, CustomScrollableListItem, WHITE, LIGHT_YELLOW, YELLOW
+    CustomScrollableList, CustomScrollableListItem, WHITE, LIGHT_YELLOW, YELLOW, LABEL_FONT_BOLD, SUBHEADER_FONT, \
+    BestMatchUpdate
 from wannadb_ui.visualizations import EmbeddingVisualizerWidget, BarChartVisualizerWidget, ScatterPlotVisualizerWidget, \
     EmbeddingVisualizerWindow
 
@@ -87,39 +91,14 @@ class NuggetListWidget(QWidget):
         self.layout.setContentsMargins(0, 0, 0, 0)
         self.layout.setSpacing(10)
 
-        self.threshold_label = QLabel()
-        self.threshold_label.setFont(LABEL_FONT)
-        self.threshold_label.setText("Current Threshold: ")
-        self.threshold_label.setVisible(False)
-        self.threshold_value_label = QLabel()
-        self.threshold_value_label.setFont(LABEL_FONT)
-        self.threshold_change_label = QLabel()
-        self.threshold_change_label.setFont(LABEL_FONT)
-        self.threshold_hbox = QHBoxLayout()
-        self.threshold_hbox.setContentsMargins(0, 0, 0, 0)
-        self.threshold_hbox.setSpacing(0)
-        self.threshold_hbox.addWidget(self.threshold_label)
-        self.threshold_hbox.addWidget(self.threshold_value_label)
-        self.threshold_hbox.addWidget(self.threshold_change_label)
-        self.threshold_hbox.addItem(QSpacerItem(40, 20, QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum))
-        self.layout.addLayout(self.threshold_hbox)
-
         self.description = QLabel("Please wait while WannaDB prepares the interactive table population.")
         self.description.setFont(LABEL_FONT)
         self.layout.addWidget(self.description)
 
         # suggestion visualizer
-        self.suggestion_visualizer = EmbeddingVisualizerWindow()
-        self.suggestion_visualizer_button = QPushButton("Show Suggestions In 3D-Grid")
-        self.suggestion_visualizer_button.setFont(BUTTON_FONT)
-        self.suggestion_visualizer_button.setMaximumWidth(240)
-        self.suggestion_visualizer_button.setVisible(False)
-        self.suggestion_visualizer_button.clicked.connect(self._show_suggestion_visualizer)
-        self.suggestion_visualizer_layout = QHBoxLayout()
-        self.suggestion_visualizer_layout.setContentsMargins(0, 0, 0, 0)
-        self.suggestion_visualizer_layout.setSpacing(10)
-        self.suggestion_visualizer_layout.addWidget(self.suggestion_visualizer_button, 0, Qt.AlignmentFlag.AlignRight)
-        self.layout.addLayout(self.suggestion_visualizer_layout)
+        self.visualize_area = VisualizationArea()
+        self.layout.addWidget(self.visualize_area)
+        self.visualize_area.setVisible(False)
 
         # nugget list
         self.num_nuggets_above_label = QLabel("")
@@ -144,10 +123,12 @@ class NuggetListWidget(QWidget):
         current_threshold = feedback_request["max-distance"]
         threshold_change = feedback_request["max-distance-change"]
 
+
         self.description.setText(
             "Please confirm or edit the cell value guesses displayed below until you are satisfied with the guessed values, at which point you may continue with the next attribute."
             "\nWannaDB will use your feedback to continuously update its guesses. Note that the cells with low confidence (low confidence bar, light yellow highlights) will be left empty.")
-        self._update_threshold_value_label(current_threshold, threshold_change)
+        self.visualize_area.update_threshold_value_label(current_threshold, threshold_change)
+        self.visualize_area.update_best_match_list(feedback_request["new-best-matches"])
 
         params = {
             "max_start_chars": max([nugget[CachedContextSentenceSignal]["start_char"] for nugget in feedback_nuggets]),
@@ -157,15 +138,15 @@ class NuggetListWidget(QWidget):
             "num-feedback": feedback_request["num-feedback"]
         }
 
-        self.suggestion_visualizer_button.setVisible(True)
+        self.visualize_area.setVisible(True)
 
         self.nugget_list.update_item_list(feedback_nuggets, params)
         if len(feedback_nuggets) > 0:
-            self.suggestion_visualizer.update_and_display_params(attribute=attribute,
-                                                                 nuggets=feedback_nuggets + all_guessed_nugget_matches,
-                                                                 currently_highlighted_nugget=None,
-                                                                 best_guess=feedback_nuggets[0],
-                                                                 other_best_guesses=feedback_nuggets)
+            self.visualize_area.suggestion_visualizer.update_and_display_params(attribute=attribute,
+                                                                                nuggets=feedback_nuggets + all_guessed_nugget_matches,
+                                                                                currently_highlighted_nugget=None,
+                                                                                best_guess=feedback_nuggets[0],
+                                                                                other_best_guesses=feedback_nuggets)
 
         if feedback_request["num-nuggets-above"] > 0:
             self.num_nuggets_above_label.setText(
@@ -183,21 +164,6 @@ class NuggetListWidget(QWidget):
 
     def disable_input(self):
         self.nugget_list.disable_input()
-
-    def _show_suggestion_visualizer(self):
-        self.suggestion_visualizer.setVisible(True)
-
-    def _update_threshold_value_label(self, new_threshold_value, threshold_value_change):
-        if round(threshold_value_change, 4) != 0:
-            self.threshold_value_label.setStyleSheet("color: yellow;")
-            change_text = f'(+{round(threshold_value_change, 4)})' if threshold_value_change > 0 else f'{round(threshold_value_change, 4)})'
-            self.threshold_change_label.setText(change_text)
-        else:
-            self.threshold_value_label.setStyleSheet("")
-            self.threshold_change_label.setText("")
-
-        self.threshold_value_label.setText(f"{round(new_threshold_value, 4)} ")
-        self.threshold_label.setVisible(True)
 
 
 class NuggetListItemWidget(CustomScrollableListItem):
@@ -291,7 +257,6 @@ class NuggetListItemWidget(CustomScrollableListItem):
             self.text_edit.setStyleSheet(f"color: black; background-color: {WHITE}")
             self.setStyleSheet(self._default_style_sheet)
             self.setToolTip("")
-
 
         self.text_edit.setText("")
         formatted_text = (
@@ -740,3 +705,107 @@ class CustomSelectionItemWidget(QWidget):
 
     def disable_input(self):
         pass
+
+
+class VisualizationArea(QWidget):
+    def __init__(self):
+        super(VisualizationArea, self).__init__()
+
+        self.layout = QVBoxLayout(self)
+        self.layout.setSpacing(0)
+        self.layout.setContentsMargins(0, 0, 0, 0)
+
+        self.title_label = QLabel("Data Insights")
+        self.title_label.setFont(SUBHEADER_FONT)
+        self.title_label.setContentsMargins(0, 5, 0, 5)
+        self.layout.addWidget(self.title_label)
+
+        self.threshold_label = QLabel()
+        self.threshold_label.setFont(LABEL_FONT)
+        self.threshold_label.setText("Current Threshold: ")
+        self.threshold_value_label = QLabel()
+        self.threshold_value_label.setFont(LABEL_FONT)
+        self.threshold_change_label = QLabel()
+        self.threshold_change_label.setFont(LABEL_FONT)
+        self.threshold_hbox = QHBoxLayout()
+        self.threshold_hbox.setContentsMargins(0, 0, 0, 0)
+        self.threshold_hbox.setSpacing(0)
+        self.threshold_hbox.addWidget(self.threshold_label)
+        self.threshold_hbox.addWidget(self.threshold_value_label)
+        self.threshold_hbox.addWidget(self.threshold_change_label)
+        self.threshold_hbox.addItem(QSpacerItem(40, 20, QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum))
+        self.layout.addLayout(self.threshold_hbox)
+
+        self.visualizer_hbox = QHBoxLayout()
+        self.visualizer_hbox.setContentsMargins(0, 0, 0, 0)
+        self.visualizer_hbox.setSpacing(10)
+
+        self.suggestion_visualizer = EmbeddingVisualizerWindow()
+        self.suggestion_visualizer_button = QPushButton("Show Suggestions In 3D-Grid")
+        self.suggestion_visualizer_button.setFont(BUTTON_FONT)
+        self.suggestion_visualizer_button.setMaximumWidth(240)
+        self.suggestion_visualizer_button.clicked.connect(self._show_suggestion_visualizer)
+
+        self.changes_best_matches_list = ChangedBestMatchDocumentsList()
+
+        self.visualizer_hbox.addWidget(self.changes_best_matches_list)
+        self.visualizer_hbox.addItem(QSpacerItem(40, 20, QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum))
+        self.visualizer_hbox.addWidget(self.suggestion_visualizer_button)
+
+        self.layout.addLayout(self.visualizer_hbox)
+
+    def _show_suggestion_visualizer(self):
+        self.suggestion_visualizer.setVisible(True)
+
+    def update_threshold_value_label(self, new_threshold_value, threshold_value_change):
+        if round(threshold_value_change, 4) != 0:
+            self.threshold_value_label.setStyleSheet("color: yellow;")
+            change_text = f'(+{round(threshold_value_change, 4)})' if threshold_value_change > 0 else f'{round(threshold_value_change, 4)})'
+            self.threshold_change_label.setText(change_text)
+        else:
+            self.threshold_value_label.setStyleSheet("")
+            self.threshold_change_label.setText("")
+
+        self.threshold_value_label.setText(f"{round(new_threshold_value, 4)} ")
+        self.threshold_label.setVisible(True)
+
+    def update_best_match_list(self, new_best_matches: Counter[str]):
+        self.changes_best_matches_list.update_list(new_best_matches)
+
+
+class ChangedBestMatchDocumentsList(QWidget):
+    def __init__(self):
+        super(ChangedBestMatchDocumentsList, self).__init__()
+
+        self.layout = QHBoxLayout(self)
+        self.layout.setSpacing(0)
+        self.layout.setContentsMargins(0, 0, 0, 0)
+
+        self._info_label = QLabel("Changed best matches:")
+        self._info_label.setContentsMargins(0, 0, 5, 0)
+        self._list_labels = []
+        self.layout.addWidget(self._info_label)
+
+    def update_list(self, best_match_updates: List[BestMatchUpdate]):
+        self._reset_list()
+
+        if len(best_match_updates) == 0:
+            no_changes_label = QLabel("<No Changes>")
+            self.layout.addWidget(no_changes_label)
+            self._list_labels.append(no_changes_label)
+            return
+
+        for best_match_update in random.choices(best_match_updates, k=min(5, len(best_match_updates))):
+            label_text = f"{best_match_update.new_best_match} ({best_match_update.count}), "
+            label = QLabel(label_text)
+            label.setToolTip(f"Previous best match was: {best_match_update.old_best_match}\n"
+                             f"Changes to token \"{best_match_update.new_best_match}\": {best_match_update.count}")
+            self.layout.addWidget(label)
+            self._list_labels.append(label)
+
+    def _reset_list(self):
+        for list_label in self._list_labels:
+            self.layout.removeWidget(list_label)
+
+        self._list_labels = []
+
