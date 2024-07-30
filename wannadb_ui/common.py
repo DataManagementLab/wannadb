@@ -1,8 +1,12 @@
 import abc
+from enum import Enum
+from typing import Union
 
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QFont
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QLabel, QScrollArea, QFrame, QHBoxLayout, QDialog, QPushButton
+
+from wannadb.data.data import InformationNugget
 
 # fonts
 HEADER_FONT = QFont("Segoe UI", pointSize=20, weight=QFont.Weight.Bold)
@@ -212,6 +216,19 @@ def show_confirmation_dialog(parent, title_text, explanation_text, accept_text, 
     return dialog.exec()
 
 
+class AddedReason(Enum):
+    MOST_UNCERTAIN = "The documents match belongs to the considered most uncertain matches."
+    INTERESTING_ADDITIONAL_EXTRACTION = "The document recently got interesting additional extraction to the list."
+    AT_THRESHOLD = "The distance of the guessed match is within the considered range around the threshold."
+
+    def __init__(self, corresponding_tooltip_text: str):
+        self._corresponding_tooltip_text = corresponding_tooltip_text
+
+    @property
+    def corresponding_tooltip_text(self):
+        return self._corresponding_tooltip_text
+
+
 class BestMatchUpdate:
     def __init__(self, old_best_match, new_best_match, count):
         self._old_best_match = old_best_match
@@ -229,3 +246,31 @@ class BestMatchUpdate:
     @property
     def count(self):
         return self._count
+
+
+class NewlyAddedNuggetContext:
+    def __init__(self, nugget: InformationNugget,
+                 old_distance: Union[float, None],
+                 new_distance: float,
+                 added_reason: AddedReason):
+        self._nugget = nugget
+        self._old_distance = old_distance
+        self._new_distance = new_distance
+        self._added_reason = added_reason
+
+    @property
+    def nugget(self):
+        return self._nugget
+
+    @property
+    def old_distance(self):
+        return self._old_distance
+
+    @property
+    def new_distance(self):
+        return self._new_distance
+
+    @property
+    def added_reason(self):
+        return self._added_reason
+

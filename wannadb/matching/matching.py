@@ -15,7 +15,7 @@ from wannadb.matching.custom_match_extraction import BaseCustomMatchExtractor
 from wannadb.matching.distance import BaseDistance
 from wannadb.statistics import Statistics
 from wannadb.status import BaseStatusCallback
-from wannadb_ui.common import BestMatchUpdate
+from wannadb_ui.common import BestMatchUpdate, AddedReason, NewlyAddedNuggetContext
 
 logger: logging.Logger = logging.getLogger(__name__)
 
@@ -180,11 +180,13 @@ class RankingBasedMatcher(BaseMatcher):
             # iterative user interactions
             logger.info("Execute interactive matching.")
             tik: float = time.time()
+            self._old_feedback_nuggets: List[InformationNugget] = []
+            self._new_nugget_contexts: List[NewlyAddedNuggetContext] = []
             num_feedback: int = 0
             continue_matching: bool = True
-            old_feedback_nuggets: List[InformationNugget] = []
             new_best_matches: Counter[str] = Counter[str]()
             new_to_old_match: Dict[str, str] = {}
+            old_distances: Dict[InformationNugget, float] = {}
             while continue_matching and num_feedback < self._max_num_feedback and remaining_documents != []:
                 # sort remaining documents by distance
                 _sort_remaining_documents()
@@ -238,8 +240,10 @@ class RankingBasedMatcher(BaseMatcher):
                     # Add additional documents (most uncertain)...
                     if self.num_bad_docs > 0 and num_nuggets_above > 0:
                         k = min(self.num_bad_docs, num_nuggets_above)
-                        selected_documents.extend(random.choices(remaining_documents[:num_nuggets_above], k=k))
+                        new_docs = random.choices(remaining_documents[:num_nuggets_above], k=k)
+                        selected_documents.extend(new_docs)
                         num_nuggets_above -= k
+                        self._update_new_nugget_contexts(new_docs, AddedReason.MOST_UNCERTAIN, old_distances)
                     # ...  and those that recently got interesting additional extractions to the list
                     if self.num_recent_docs > 0 and len(docs_with_added_nuggets) > 0:
                         # Create a list up to double the size wanted and then sample from that instead of only taking the same most promising documents potentially over and over again
@@ -247,10 +251,16 @@ class RankingBasedMatcher(BaseMatcher):
                         if len(selected_docs_with_added_nuggets) > self.num_recent_docs:
                             selected_docs_with_added_nuggets = random.choices(selected_docs_with_added_nuggets, k=self.num_recent_docs)
                         selected_documents.extend(selected_docs_with_added_nuggets)
+                        self._update_new_nugget_contexts(selected_docs_with_added_nuggets,
+                                                         AddedReason.INTERESTING_ADDITIONAL_EXTRACTION,
+                                                         old_distances)
                     selected_docs_with_added_nuggets = set(selected_docs_with_added_nuggets)
 
                     # Now fill the list with documents at threshold
-                    selected_documents.extend(doc for doc in remaining_documents[higher_left:lower_right] if doc not in selected_docs_with_added_nuggets)
+                    docs_at_threshold_to_add = [doc for doc in remaining_documents[higher_left:lower_right] if
+                                                doc not in selected_docs_with_added_nuggets]
+                    selected_documents.extend(docs_at_threshold_to_add)
+                    self._update_new_nugget_contexts(docs_at_threshold_to_add, AddedReason.AT_THRESHOLD, old_distances)
 
                     # Sort to unify the order across the different three sources
                     selected_documents.sort(key=lambda x: x.nuggets[x[CurrentMatchIndexSignal]][CachedDistanceSignal], reverse=True)
@@ -276,7 +286,7 @@ class RankingBasedMatcher(BaseMatcher):
                         "max-distance": self._max_distance,
                         "max-distance-change": self._max_distance_change,
                         "nuggets": feedback_nuggets,
-                        "new-nuggets": [nugget for nugget in feedback_nuggets if nugget not in old_feedback_nuggets],
+                        "new-nuggets": self._new_nugget_contexts,
                         "new-best-matches": [BestMatchUpdate(new_to_old_match[new_best_match],
                                                              new_best_match,
                                                              new_best_matches[new_best_match])
@@ -292,7 +302,9 @@ class RankingBasedMatcher(BaseMatcher):
                 t1 = time.time()
                 statistics[attribute.name]["feedback_durations"].append(t1 - t0)
 
-                old_feedback_nuggets = feedback_nuggets
+                self._old_feedback_nuggets = feedback_nuggets
+                self._new_nugget_contexts.clear()
+                old_distances = {nugget: nugget[CachedDistanceSignal] for nugget in document_base.nuggets}
                 new_best_matches.clear()
                 new_to_old_match.clear()
 
@@ -561,6 +573,17 @@ class RankingBasedMatcher(BaseMatcher):
             logger.info(f"Updated remaining documents in {tak - tik} seconds.")
 
             statistics[attribute.name]["runtime"] = tak - start_matching
+
+    def _update_new_nugget_contexts(self, new_docs: List[Document], added_reason: AddedReason,
+                                    old_distances: Dict[InformationNugget, float]):
+        best_matches: List[InformationNugget] = [new_doc.nuggets[new_doc[CurrentMatchIndexSignal]] for new_doc in
+                                                 new_docs]
+
+        self._new_nugget_contexts.extend([NewlyAddedNuggetContext(nugget,
+                                                                  old_distances[nugget] if nugget in old_distances else None,
+                                                                  nugget[CachedDistanceSignal],
+                                                                  added_reason)
+                                          for nugget in best_matches if nugget not in self._old_feedback_nuggets])
 
     def to_config(self) -> Dict[str, Any]:
         return {

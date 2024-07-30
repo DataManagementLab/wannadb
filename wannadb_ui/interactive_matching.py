@@ -15,7 +15,7 @@ from wannadb.data.signals import CachedContextSentenceSignal, CachedDistanceSign
     TSNEDimensionReducedLabelEmbeddingSignal
 from wannadb_ui.common import BUTTON_FONT, CODE_FONT, CODE_FONT_BOLD, LABEL_FONT, MainWindowContent, \
     CustomScrollableList, CustomScrollableListItem, WHITE, LIGHT_YELLOW, YELLOW, LABEL_FONT_BOLD, SUBHEADER_FONT, \
-    BestMatchUpdate
+    BestMatchUpdate, NewlyAddedNuggetContext
 from wannadb_ui.visualizations import EmbeddingVisualizerWidget, BarChartVisualizerWidget, ScatterPlotVisualizerWidget, \
     EmbeddingVisualizerWindow
 
@@ -251,8 +251,10 @@ class NuggetListItemWidget(CustomScrollableListItem):
                 f"High confidence in this match (Distance: {round(self.nugget[CachedDistanceSignal], 4)}), "
                 f"will be included in result.")
 
-        if self.nugget in params["new-nuggets"]:
-            self._handle_item_is_new(params["num-feedback"] == 1)
+        new_nugget_contexts: List = params["new-nuggets"]
+
+        if self.nugget in map(lambda context: context.nugget, new_nugget_contexts):
+            self._handle_item_is_new(self._extract_matching_context(new_nugget_contexts))
         else:
             self.text_edit.setStyleSheet(f"color: black; background-color: {WHITE}")
             self.setStyleSheet(self._default_style_sheet)
@@ -309,28 +311,24 @@ class NuggetListItemWidget(CustomScrollableListItem):
         self.match_button.setDisabled(True)
         self.fix_button.setDisabled(True)
 
-    def _handle_item_is_new(self, initial_selection):
-        old_threshold = -1
-        new_threshold = -1
-        old_distance = -1
-        new_distance = -1
-
-        if initial_selection:
-            tooltip_text = (f'Item was added to the list as it belongs to the initial selection of items for the list. '
-                            'The initial distance of its best match is within the considered range around the threshold.')
-
-        else:
-            tooltip_text = (
-                f'Item was newly added to the list as the distance of its best match is now within the considered '
-                f'range around the current threshold.\n'
-                f'Old Threshold: {old_threshold} -> New Threshold: {new_threshold}\n'
-                f'Old Distance: {old_distance} -> New Distance: {new_distance}')
+    def _handle_item_is_new(self, newly_added_nugget_context):
+        tooltip_text = (
+            f'{newly_added_nugget_context.added_reason.corresponding_tooltip_text}\n'
+            f'Old Distance: {round(newly_added_nugget_context.old_distance, 4) if newly_added_nugget_context.old_distance is not None else "<Unavailable>"} -> '
+            f'New Distance: {round(newly_added_nugget_context.new_distance, 4)}')
 
         self.setToolTip(tooltip_text)
 
         self.text_edit.setStyleSheet(f"color: black; background-color: {'#e7ffe6'}")
         self.setStyleSheet(f"QFrame {{ background-color: {'#e7ffe6'}; }}\n"
                            f"QToolTip {{ background-color: {WHITE}; }}")
+
+    def _extract_matching_context(self, contexts: List[NewlyAddedNuggetContext]):
+        for context in contexts:
+            if context.nugget == self.nugget:
+                return context
+
+        raise ValueError(f"Own nugget ({self.nugget}) not in given list: {contexts}")
 
 
 class DocumentWidget(QWidget):
@@ -796,12 +794,18 @@ class ChangedBestMatchDocumentsList(QWidget):
             return
 
         for best_match_update in random.choices(best_match_updates, k=min(5, len(best_match_updates))):
-            label_text = f"{best_match_update.new_best_match} ({best_match_update.count}), "
+            label_text = f"{best_match_update.new_best_match} ({best_match_update.count})"
             label = QLabel(label_text)
+            label.setContentsMargins(0, 0, 5, 0)
             label.setToolTip(f"Previous best match was: {best_match_update.old_best_match}\n"
                              f"Changes to token \"{best_match_update.new_best_match}\": {best_match_update.count}")
             self.layout.addWidget(label)
             self._list_labels.append(label)
+
+        if len(best_match_updates) > 5:
+            last_label = QLabel(f"... and {len(best_match_updates) - 5} more.")
+            self.layout.addWidget(last_label)
+            self._list_labels.append(last_label)
 
     def _reset_list(self):
         for list_label in self._list_labels:
