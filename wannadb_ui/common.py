@@ -210,3 +210,22 @@ def show_confirmation_dialog(parent, title_text, explanation_text, accept_text, 
     no_button.setFocus()
 
     return dialog.exec()
+
+
+class BestMatchUpdate:
+    def __init__(self, old_best_match, new_best_match, count):
+        self._old_best_match = old_best_match
+        self._new_best_match = new_best_match
+        self._count = count
+
+    @property
+    def old_best_match(self):
+        return self._old_best_match
+
+    @property
+    def new_best_match(self):
+        return self._new_best_match
+
+    @property
+    def count(self):
+        return self._count

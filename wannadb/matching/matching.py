@@ -15,6 +15,7 @@ from wannadb.matching.custom_match_extraction import BaseCustomMatchExtractor
 from wannadb.matching.distance import BaseDistance
 from wannadb.statistics import Statistics
 from wannadb.status import BaseStatusCallback
+from wannadb_ui.common import BestMatchUpdate
 
 logger: logging.Logger = logging.getLogger(__name__)
 
@@ -182,6 +183,8 @@ class RankingBasedMatcher(BaseMatcher):
             num_feedback: int = 0
             continue_matching: bool = True
             old_feedback_nuggets: List[InformationNugget] = []
+            new_best_matches: Counter[str] = Counter[str]()
+            new_to_old_match: Dict[str, str] = {}
             while continue_matching and num_feedback < self._max_num_feedback and remaining_documents != []:
                 # sort remaining documents by distance
                 _sort_remaining_documents()
@@ -274,6 +277,10 @@ class RankingBasedMatcher(BaseMatcher):
                         "max-distance-change": self._max_distance_change,
                         "nuggets": feedback_nuggets,
                         "new-nuggets": [nugget for nugget in feedback_nuggets if nugget not in old_feedback_nuggets],
+                        "new-best-matches": [BestMatchUpdate(new_to_old_match[new_best_match],
+                                                             new_best_match,
+                                                             new_best_matches[new_best_match])
+                                             for new_best_match in new_best_matches.keys()],
                         "all-guessed-nugget-matches": all_guessed_nugget_matches,
                         "attribute": attribute,
                         "num-feedback": num_feedback,
@@ -286,6 +293,8 @@ class RankingBasedMatcher(BaseMatcher):
                 statistics[attribute.name]["feedback_durations"].append(t1 - t0)
 
                 old_feedback_nuggets = feedback_nuggets
+                new_best_matches.clear()
+                new_to_old_match.clear()
 
                 if feedback_result["message"] == "stop-interactive-matching":
                     statistics[attribute.name]["stopped_matching_by_hand"] = True
@@ -386,6 +395,9 @@ class RankingBasedMatcher(BaseMatcher):
                             current_guess: InformationNugget = document.nuggets[document[CurrentMatchIndexSignal]]
                             if nugget[CachedDistanceSignal] < current_guess[CachedDistanceSignal]:
                                 document[CurrentMatchIndexSignal] = ix
+                                if nugget.text != current_guess.text:
+                                    new_best_matches.update([nugget.text])
+                                    new_to_old_match[nugget.text] = current_guess.text
                     distances_based_on_label = False
 
                     # Find more nuggets that are similar to this match
@@ -470,6 +482,9 @@ class RankingBasedMatcher(BaseMatcher):
                             current_guess: InformationNugget = document.nuggets[document[CurrentMatchIndexSignal]]
                             if nugget[CachedDistanceSignal] < current_guess[CachedDistanceSignal]:
                                 document[CurrentMatchIndexSignal] = ix
+                                if nugget.text != current_guess.text:
+                                    new_best_matches.update([nugget.text])
+                                    new_to_old_match[nugget.text] = current_guess.text
                     distances_based_on_label = False
 
                     if self._adjust_threshold:
