@@ -143,10 +143,10 @@ class NuggetListWidget(QWidget):
         self.nugget_list.update_item_list(feedback_nuggets, params)
         if len(feedback_nuggets) > 0:
             self.visualize_area.suggestion_visualizer.update_and_display_params(attribute=attribute,
-                                                                                nuggets=feedback_nuggets + all_guessed_nugget_matches,
+                                                                                nuggets=all_guessed_nugget_matches,
                                                                                 currently_highlighted_nugget=None,
-                                                                                best_guess=feedback_nuggets[0],
-                                                                                other_best_guesses=feedback_nuggets)
+                                                                                best_guess=None,
+                                                                                other_best_guesses=[])
 
         if feedback_request["num-nuggets-above"] > 0:
             self.num_nuggets_above_label.setText(
