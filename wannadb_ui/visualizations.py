@@ -142,8 +142,6 @@ class EmbeddingVisualizer:
             self._nugget_to_displayed_items[item_to_display] = (scatter, annotation)
             self._nugget_to_similar_nugget[item_to_display] = None
 
-        return scatter, annotation
-
     def highlight_best_guess(self, best_guess: InformationNugget):
         self._best_guess = best_guess
 
