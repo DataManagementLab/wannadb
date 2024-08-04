@@ -16,6 +16,8 @@ from spacy.language import Language
 from stanza import Pipeline
 from transformers import BertModel, BertTokenizer, BertTokenizerFast
 
+from wannadb_ui.study import Tracker
+
 logger: logging.Logger = logging.getLogger(__name__)
 
 RESOURCES: Dict[str, Type["BaseResource"]] = {}
@@ -104,6 +106,7 @@ class ResourceManager:
         for resource_identifier in list(self._resources.keys()):
             self.unload(resource_identifier)
 
+        Tracker().dump_report()
         tack: float = time.time()
         logger.info(f"Unloaded all resources in {tack - tick} seconds.")
         logger.info("Exited the resource manager.")
