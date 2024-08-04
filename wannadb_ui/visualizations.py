@@ -21,9 +21,9 @@ from pyqtgraph.opengl import GLViewWidget, GLScatterPlotItem, GLTextItem
 from wannadb.data.data import InformationNugget, Attribute
 from wannadb.data.signals import PCADimensionReducedTextEmbeddingSignal, PCADimensionReducedLabelEmbeddingSignal, \
     CachedDistanceSignal, CurrentThresholdSignal
+from wannadb_ui.study import Tracker, track_button_click
 
 logger: logging.Logger = logging.getLogger(__name__)
-
 RED = pg.mkColor('red')
 BLUE = pg.mkColor('blue')
 GREEN = pg.mkColor('green')
@@ -318,11 +318,18 @@ class EmbeddingVisualizerWindow(EmbeddingVisualizer, QMainWindow):
         else:
             self.setVisible(False)
 
+    def showEvent(self, event):
+        super().showEvent(event)
+        Tracker().start_timer(str(self.__class__))
+
     def closeEvent(self, event):
+        Tracker().stop_timer(str(self.__class__))
         event.accept()
 
 
 class EmbeddingVisualizerWidget(EmbeddingVisualizer, QWidget):
+    tracker: Tracker = Tracker()
+
     def __init__(self):
         EmbeddingVisualizer.__init__(self)
         QWidget.__init__(self)
@@ -356,6 +363,7 @@ class EmbeddingVisualizerWidget(EmbeddingVisualizer, QWidget):
         self._fullscreen_window = None
         self._other_best_guesses = None
 
+    @track_button_click("fullscreen_button")
     def _show_embedding_visualizer_window(self):
         if self._fullscreen_window is None:
             self._fullscreen_window = EmbeddingVisualizerWindow(attribute=self._attribute,
@@ -392,6 +400,7 @@ class EmbeddingVisualizerWidget(EmbeddingVisualizer, QWidget):
         self.show_other_best_guesses_button.setEnabled(True)
         self.remove_other_best_guesses_button.setEnabled(False)
 
+    @track_button_click(button_name="show_other_best_guesses")
     def _handle_show_other_best_guesses_clicked(self):
         if self._other_best_guesses is None:
             logger.warning("Can not display best guesses from other documents as these best guesses have not been "
