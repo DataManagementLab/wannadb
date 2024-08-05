@@ -411,12 +411,6 @@ class DocumentWidget(QWidget):
         self.match_button.clicked.connect(self._match_button_clicked)
         self.buttons_widget_layout.addWidget(self.match_button)
 
-    def update_barchart(self, data):
-        self.cosine_barchart.append_data(data)
-
-    def update_scatter_plot(self, data):
-        self.scatter_plot_widget.append_data(data)
-
     def _match_button_clicked(self):
         if self.current_nugget is None:
             logger.info("Confirm custom nugget!")
@@ -576,6 +570,9 @@ class DocumentWidget(QWidget):
                                                       currently_highlighted_nugget=nugget,
                                                       best_guess=self.nuggets_sorted_by_distance[0],
                                                       other_best_guesses=other_best_guesses)
+            self.cosine_barchart.update_data(self.nuggets_sorted_by_distance)
+            self.scatter_plot_widget.update_data(self.nuggets_sorted_by_distance)
+
         else:
             self.idx_mapper = {}
             for idx in range(len(self.document.text)):
@@ -590,14 +587,6 @@ class DocumentWidget(QWidget):
         scroll_cursor.setPosition(nugget.start_char)
         self.text_edit.setTextCursor(scroll_cursor)
         self.text_edit.ensureCursorVisible()
-        # Clear bar chart data when updating document
-        self.clear_barchart_data()
-
-        # Clear scatter plot data when updating document
-        self.clear_scatter_plot_data()
-
-    def clear_barchart_data(self):
-        self.cosine_barchart.clear_data()
 
     def clear_scatter_plot_data(self):
         self.scatter_plot_widget.clear_data()
@@ -650,7 +639,8 @@ class SuggestionListItemWidget(CustomScrollableListItem):
 
     def update_item(self, item, params=None):
         self.nugget = item
-        sanitized_text, distance = self.get_nugget_data()
+        sanitized_text = self.nugget.text.replace("\n", " ")
+        distance = np.round(self.nugget[CachedDistanceSignal], 3)
         self.text_label.setText(sanitized_text)
         self.distance_label.setText(str(distance))
 
@@ -661,21 +651,12 @@ class SuggestionListItemWidget(CustomScrollableListItem):
             )
         else:
             self.setStyleSheet(f"background-color: {LIGHT_YELLOW}")
-        self.suggestion_list_widget.interactive_matching_widget.document_widget.update_barchart(self.get_nugget_data())
-        self.suggestion_list_widget.interactive_matching_widget.document_widget.update_scatter_plot(
-            self.get_nugget_data())
 
     def enable_input(self):
         pass
 
     def disable_input(self):
         pass
-
-    def get_nugget_data(self):
-        sanitized_text = self.nugget.text
-        sanitized_text = sanitized_text.replace("\n", " ")
-        distance = np.round(self.nugget[CachedDistanceSignal], 3)
-        return sanitized_text, distance
 
 
 class CustomSelectionItemWidget(QWidget):

@@ -60,6 +60,10 @@ def build_nuggets_annotation_text(nugget) -> str:
     return f"{nugget.text}: {round(nugget[CachedDistanceSignal], 3)}"
 
 
+def create_sanitized_text(nugget):
+    return nugget.text.replace("\n", " ")
+
+
 class EmbeddingVisualizer:
     def __init__(self,
                  attribute: Attribute = None,
@@ -435,9 +439,14 @@ class BarChartVisualizerWidget(QWidget):
         self.button.clicked.connect(self.show_bar_chart)
         self.window = None
         self.current_annotation_index = None
+        self.bar = None
 
-    def append_data(self, data_tuple):
-        self.data.append(data_tuple)
+    def update_data(self, nuggets):
+        self.reset()
+
+        self.data = [(create_sanitized_text(nugget),
+                      np.round(nugget[CachedDistanceSignal], 3))
+                     for nugget in nuggets]
 
     @track_button_click("show bar chart")
     def show_bar_chart(self):
@@ -534,7 +543,7 @@ class BarChartVisualizerWidget(QWidget):
                 self.current_annotation_index = index
             self.bar_chart_canvas.draw_idle()
 
-    def clear_data(self):
+    def reset(self):
         self.data = []
         self.bar = None
 
@@ -565,10 +574,14 @@ class ScatterPlotVisualizerWidget(QWidget):
         self.y = None
         self.scatter = None
 
-    def append_data(self, data_tuple):
-        self.data.append(data_tuple)
+    def update_data(self, nuggets):
+        self.reset()
 
-    def clear_data(self):
+        self.data = [(create_sanitized_text(nugget),
+                      np.round(nugget[CachedDistanceSignal], 3))
+                     for nugget in nuggets]
+
+    def reset(self):
         self.data = []
         self.texts = None
         self.distances = None
