@@ -90,7 +90,17 @@ class MainWindowContentSection(QWidget):
         self.layout.addWidget(self.sub_header)
 
 
-class CustomScrollableList(QWidget):
+class VisualizationsProvidingItem:
+    @abc.abstractmethod
+    def show_visualizations(self):
+        raise NotImplementedError
+
+    @abc.abstractmethod
+    def hide_visualizations(self):
+        raise NotImplementedError
+
+
+class CustomScrollableList(QWidget, VisualizationsProvidingItem):
 
     def __init__(self, parent, item_type, floating_widget=None, orientation="vertical", above_widget=None):
         super(CustomScrollableList, self).__init__()
@@ -168,6 +178,16 @@ class CustomScrollableList(QWidget):
     def disable_input(self):
         for item_widget in self.item_widgets:
             item_widget.disable_input()
+
+    def show_visualizations(self):
+        for item_widget in self.item_widgets:
+            if isinstance(item_widget, VisualizationsProvidingItem):
+                item_widget.show_visualizations()
+
+    def hide_visualizations(self):
+        for item_widget in self.item_widgets:
+            if isinstance(item_widget, VisualizationsProvidingItem):
+                item_widget.hide_visualizations()
 
 
 class CustomScrollableListItem(QFrame):
@@ -273,4 +293,3 @@ class NewlyAddedNuggetContext:
     @property
     def added_reason(self):
         return self._added_reason
-

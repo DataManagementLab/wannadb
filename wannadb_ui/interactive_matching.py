@@ -1,4 +1,5 @@
 import logging
+from abc import ABC
 from collections import Counter
 import random
 from typing import List
@@ -15,7 +16,7 @@ from wannadb.data.signals import CachedContextSentenceSignal, CachedDistanceSign
     TSNEDimensionReducedLabelEmbeddingSignal
 from wannadb_ui.common import BUTTON_FONT, CODE_FONT, CODE_FONT_BOLD, LABEL_FONT, MainWindowContent, \
     CustomScrollableList, CustomScrollableListItem, WHITE, LIGHT_YELLOW, YELLOW, LABEL_FONT_BOLD, SUBHEADER_FONT, \
-    BestMatchUpdate, NewlyAddedNuggetContext
+    BestMatchUpdate, NewlyAddedNuggetContext, VisualizationsProvidingItem
 from wannadb_ui.visualizations import EmbeddingVisualizerWidget, BarChartVisualizerWidget, ScatterPlotVisualizerWidget, \
     EmbeddingVisualizerWindow
 
@@ -77,12 +78,20 @@ class InteractiveMatchingWidget(MainWindowContent):
         self.layout.addWidget(self.document_widget)
         self.stop_button.hide()
 
+    def enable_visualizations(self):
+        self.document_widget.show_visualizations()
+        self.nugget_list_widget.show_visualizations()
+
+    def disable_visualizations(self):
+        self.document_widget.hide_visualizations()
+        self.nugget_list_widget.hide_visualizations()
+
     def _stop_button_clicked(self):
         self.show_nugget_list_widget()
         self.main_window.give_feedback_task({"message": "stop-interactive-matching"})
 
 
-class NuggetListWidget(QWidget):
+class NuggetListWidget(QWidget, VisualizationsProvidingItem):
     def __init__(self, interactive_matching_widget):
         super(NuggetListWidget, self).__init__(interactive_matching_widget)
         self.interactive_matching_widget = interactive_matching_widget
@@ -99,6 +108,7 @@ class NuggetListWidget(QWidget):
         self.visualize_area = VisualizationArea()
         self.layout.addWidget(self.visualize_area)
         self.visualize_area.setVisible(False)
+        self.visualizations = True
 
         # nugget list
         self.num_nuggets_above_label = QLabel("")
@@ -123,7 +133,6 @@ class NuggetListWidget(QWidget):
         current_threshold = feedback_request["max-distance"]
         threshold_change = feedback_request["max-distance-change"]
 
-
         self.description.setText(
             "Please confirm or edit the cell value guesses displayed below until you are satisfied with the guessed values, at which point you may continue with the next attribute."
             "\nWannaDB will use your feedback to continuously update its guesses. Note that the cells with low confidence (low confidence bar, light yellow highlights) will be left empty.")
@@ -138,7 +147,7 @@ class NuggetListWidget(QWidget):
             "num-feedback": feedback_request["num-feedback"]
         }
 
-        self.visualize_area.setVisible(True)
+        self.visualize_area.setVisible(self.visualizations)
 
         self.nugget_list.update_item_list(feedback_nuggets, params)
         if len(feedback_nuggets) > 0:
@@ -165,18 +174,32 @@ class NuggetListWidget(QWidget):
     def disable_input(self):
         self.nugget_list.disable_input()
 
+    def show_visualizations(self):
+        self.visualizations = True
 
-class NuggetListItemWidget(CustomScrollableListItem):
+        self.visualize_area.show()
+        self.nugget_list.show_visualizations()
+
+    def hide_visualizations(self):
+        self.visualizations = False
+
+        self.visualize_area.hide()
+        self.nugget_list.hide_visualizations()
+
+
+class NuggetListItemWidget(CustomScrollableListItem, VisualizationsProvidingItem):
     def __init__(self, nugget_list_widget):
         super(NuggetListItemWidget, self).__init__(nugget_list_widget)
         self.nugget_list_widget = nugget_list_widget
         self.nugget = None
         self.other_best_guesses = None
-        self._default_style_sheet = "QWidget#nuggetListItemWidget { background-color: white}"
+        self._default_stylesheet = "QWidget#nuggetListItemWidget { background-color: white}"
+        self._tooltip_text = ""
+        self._visualizations = True
 
         self.setFixedHeight(45)
         self.setObjectName("nuggetListItemWidget")
-        self.setStyleSheet(self._default_style_sheet)
+        self.setStyleSheet(self._default_stylesheet)
 
         self.layout = QHBoxLayout(self)
         self.layout.setContentsMargins(20, 0, 20, 0)
@@ -241,14 +264,15 @@ class NuggetListItemWidget(CustomScrollableListItem):
         if max_distance < self.nugget[CachedDistanceSignal]:
             color = LIGHT_YELLOW
             self.confidence_button.setIcon(ICON_LOW_CONFIDENCE)
+
             self.confidence_button.setToolTip(
-                f"Low confidence in this match (Distance: {round(self.nugget[CachedDistanceSignal], 4)}), "
+                f"Low confidence in this match {self._build_distance_text() if self._visualizations else ''}, "
                 f"will not be included in result.")
         else:
             color = YELLOW
             self.confidence_button.setIcon(ICON_HIGH_CONFIDENCE)
             self.confidence_button.setToolTip(
-                f"High confidence in this match (Distance: {round(self.nugget[CachedDistanceSignal], 4)}), "
+                f"High confidence in this match {self._build_distance_text() if self._visualizations else ''}, "
                 f"will be included in result.")
 
         new_nugget_contexts: List = params["new-nuggets"]
@@ -256,9 +280,9 @@ class NuggetListItemWidget(CustomScrollableListItem):
         if self.nugget in map(lambda context: context.nugget, new_nugget_contexts):
             self._handle_item_is_new(self._extract_matching_context(new_nugget_contexts))
         else:
-            self.text_edit.setStyleSheet(f"color: black; background-color: {WHITE}")
-            self.setStyleSheet(self._default_style_sheet)
-            self.setToolTip("")
+            self._update_stylesheets(False)
+            self._tooltip_text = ""
+            self.setToolTip(self._tooltip_text)
 
         self.text_edit.setText("")
         formatted_text = (
@@ -311,17 +335,34 @@ class NuggetListItemWidget(CustomScrollableListItem):
         self.match_button.setDisabled(True)
         self.fix_button.setDisabled(True)
 
+    def show_visualizations(self):
+        self._visualizations = True
+
+        if self._tooltip_text != "":
+            self.setToolTip(self._tooltip_text)
+        self.confidence_button.setToolTip(
+            f"Low confidence in this match {self._build_distance_text()}, will not be included in result.")
+        self._update_stylesheets(item_is_new=self._tooltip_text != "")
+
+    def hide_visualizations(self):
+        self._visualizations = False
+
+        self.setToolTip("")
+        self.confidence_button.setToolTip(
+            f"Low confidence in this match, will not be included in result.")
+        self._update_stylesheets(False)
+
     def _handle_item_is_new(self, newly_added_nugget_context):
-        tooltip_text = (
+        self._tooltip_text = (
             f'{newly_added_nugget_context.added_reason.corresponding_tooltip_text}\n'
             f'Old Distance: {round(newly_added_nugget_context.old_distance, 4) if newly_added_nugget_context.old_distance is not None else "<Unavailable>"} -> '
             f'New Distance: {round(newly_added_nugget_context.new_distance, 4)}')
 
-        self.setToolTip(tooltip_text)
+        if not self._visualizations:
+            return
 
-        self.text_edit.setStyleSheet(f"color: black; background-color: {'#e7ffe6'}")
-        self.setStyleSheet(f"QFrame {{ background-color: {'#e7ffe6'}; }}\n"
-                           f"QToolTip {{ background-color: {WHITE}; }}")
+        self.setToolTip(self._tooltip_text)
+        self._update_stylesheets(True)
 
     def _extract_matching_context(self, contexts: List[NewlyAddedNuggetContext]):
         for context in contexts:
@@ -330,8 +371,20 @@ class NuggetListItemWidget(CustomScrollableListItem):
 
         raise ValueError(f"Own nugget ({self.nugget}) not in given list: {contexts}")
 
+    def _build_distance_text(self):
+        return f"(Distance: {round(self.nugget[CachedDistanceSignal], 4)})" if self._visualizations else ""
 
-class DocumentWidget(QWidget):
+    def _update_stylesheets(self, item_is_new):
+        if item_is_new:
+            self.setStyleSheet((f"QFrame {{ background-color: {'#e7ffe6'}; }}\n"
+                                f"QToolTip {{ background-color: {WHITE}; }}"))
+            self.text_edit.setStyleSheet(f"color: black; background-color: {'#e7ffe6'}")
+        else:
+            self.setStyleSheet(self._default_stylesheet)
+            self.text_edit.setStyleSheet(f"color: black; background-color: {WHITE}")
+
+
+class DocumentWidget(QWidget, VisualizationsProvidingItem):
     def __init__(self, interactive_matching_widget):
         super(DocumentWidget, self).__init__(interactive_matching_widget)
         self.interactive_matching_widget = interactive_matching_widget
@@ -604,6 +657,16 @@ class DocumentWidget(QWidget):
     def update_attribute(self, attribute):
         self.current_attribute = attribute
 
+    def show_visualizations(self):
+        self.upper_buttons_widget.show()
+        self.visualizer.show()
+        self.suggestion_list.show_visualizations()
+
+    def hide_visualizations(self):
+        self.upper_buttons_widget.hide()
+        self.visualizer.hide()
+        self.suggestion_list.hide_visualizations()
+
     def _highlight_best_guess(self, best_guess):
         if best_guess is None:
             return
@@ -611,7 +674,7 @@ class DocumentWidget(QWidget):
         self.visualizer.highlight_best_guess(best_guess)
 
 
-class SuggestionListItemWidget(CustomScrollableListItem):
+class SuggestionListItemWidget(CustomScrollableListItem, VisualizationsProvidingItem):
 
     def __init__(self, suggestion_list_widget):
         super(SuggestionListItemWidget, self).__init__(suggestion_list_widget)
@@ -651,6 +714,12 @@ class SuggestionListItemWidget(CustomScrollableListItem):
             )
         else:
             self.setStyleSheet(f"background-color: {LIGHT_YELLOW}")
+
+    def show_visualizations(self):
+        self.distance_label.show()
+
+    def hide_visualizations(self):
+        self.distance_label.hide()
 
     def enable_input(self):
         pass
@@ -751,6 +820,10 @@ class VisualizationArea(QWidget):
     def update_best_match_list(self, new_best_matches: Counter[str]):
         self.changes_best_matches_list.update_list(new_best_matches)
 
+    def hide(self):
+        super().hide()
+        self.suggestion_visualizer.hide()
+
 
 class ChangedBestMatchDocumentsList(QWidget):
     def __init__(self):
@@ -793,4 +866,3 @@ class ChangedBestMatchDocumentsList(QWidget):
             self.layout.removeWidget(list_label)
 
         self._list_labels = []
-

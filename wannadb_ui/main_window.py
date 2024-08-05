@@ -237,6 +237,24 @@ class MainWindow(QMainWindow):
                 # noinspection PyUnresolvedReferences
                 self.save_statistics_to_json.emit(path, self.statistics)
 
+    def enable_visualizations_task(self):
+        logger.info("Execute task 'enable_visualizations_task'.")
+
+        self.visualizations = True
+
+        self.interactive_matching_widget.enable_visualizations()
+        self.enable_visualizations_action.setEnabled(False)
+        self.disable_visualizations_action.setEnabled(True)
+
+    def disable_visualizations_task(self):
+        logger.info("Execute task 'disable_visualizations_task'.")
+
+        self.visualizations = False
+
+        self.interactive_matching_widget.disable_visualizations()
+        self.enable_visualizations_action.setEnabled(True)
+        self.disable_visualizations_action.setEnabled(False)
+
     def show_document_base_creator_widget_task(self):
         logger.info("Execute task 'show_document_base_creator_widget_task'.")
 
@@ -280,6 +298,8 @@ class MainWindow(QMainWindow):
         self.disable_global_input()
         self.api.feedback = feedback
         self.feedback_cond.wakeAll()
+
+        self._enable_visualization_settings()
 
     def interactive_table_population_task(self):
         logger.info("Execute task 'interactive_table_population_task'.")
@@ -335,6 +355,8 @@ class MainWindow(QMainWindow):
         else:
             self.enable_collect_statistics_action.setEnabled(True)
 
+        self._enable_visualization_settings()
+
         self.central_widget_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.document_base_viewer_widget.hide()
         self.document_base_creator_widget.hide()
@@ -366,6 +388,8 @@ class MainWindow(QMainWindow):
         else:
             self.enable_collect_statistics_action.setEnabled(True)
 
+        self._enable_visualization_settings()
+
         self.central_widget_layout.setAlignment(Qt.AlignmentFlag.AlignLeft)
         self.start_menu_widget.hide()
         self.document_base_creation_widget.hide()
@@ -385,6 +409,8 @@ class MainWindow(QMainWindow):
         self.application_state = ApplicationState.CREATING_DOCUMENT_BASE
 
         self.disable_global_input()
+
+        self._enable_visualization_settings()
 
         self.central_widget_layout.setAlignment(Qt.AlignmentFlag.AlignLeft)
         self.start_menu_widget.hide()
@@ -429,6 +455,8 @@ class MainWindow(QMainWindow):
         else:
             self.enable_collect_statistics_action.setEnabled(True)
 
+        self._enable_visualization_settings()
+
         self.document_base_viewer_widget.enable_input()
 
         self.central_widget_layout.setAlignment(Qt.AlignmentFlag.AlignLeft)
@@ -458,6 +486,8 @@ class MainWindow(QMainWindow):
         else:
             self.enable_collect_statistics_action.setEnabled(True)
 
+        self._enable_visualization_settings()
+
         self.central_widget_layout.setAlignment(Qt.AlignmentFlag.AlignLeft)
         self.start_menu_widget.hide()
         self.document_base_viewer_widget.hide()
@@ -472,6 +502,10 @@ class MainWindow(QMainWindow):
         self.interactive_matching_widget.show()
         self.central_widget_layout.update()
 
+    def _enable_visualization_settings(self):
+        self.enable_visualizations_action.setEnabled(not self.visualizations)
+        self.disable_visualizations_action.setEnabled(self.visualizations)
+
     # noinspection PyUnresolvedReferences
     def __init__(self) -> None:
         super(MainWindow, self).__init__()
@@ -482,6 +516,7 @@ class MainWindow(QMainWindow):
         self.document_base = None
         self.statistics = None
         self.collect_statistics = True
+        self.visualizations = True
         self.attributes_to_match = None
         self.cache_db = None
 
@@ -610,6 +645,16 @@ class MainWindow(QMainWindow):
         self.save_statistics_to_json_action.triggered.connect(self.save_statistics_to_json_task)
         self._all_actions.append(self.save_statistics_to_json_action)
 
+        self.enable_visualizations_action = QAction("&Enable visualizations", self)
+        self.enable_visualizations_action.setStatusTip("Enable visualization widgets.")
+        self.enable_visualizations_action.triggered.connect(self.enable_visualizations_task)
+        self._all_actions.append(self.enable_visualizations_action)
+
+        self.disable_visualizations_action = QAction("&Disable visualizations", self)
+        self.disable_visualizations_action.setStatusTip("Disable visualization widgets.")
+        self.disable_visualizations_action.triggered.connect(self.disable_visualizations_task)
+        self._all_actions.append(self.disable_visualizations_action)
+
         # set up the menu bar
         self.menubar = self.menuBar()
         self.menubar.setFont(MENU_FONT)
@@ -635,12 +680,20 @@ class MainWindow(QMainWindow):
         self.population_menu.addAction(self.forget_matches_for_attribute_action)
         self.population_menu.addAction(self.forget_matches_action)
 
-        self.statistics_menu = self.menubar.addMenu("&Statistics")
+        self.settings_menu = self.menubar.addMenu("&Settings")
+        self.settings_menu.setFont(MENU_FONT)
+
+        self.statistics_menu = self.settings_menu.addMenu("&Statistics")
         self.statistics_menu.setFont(MENU_FONT)
         self.statistics_menu.addAction(self.enable_collect_statistics_action)
         self.statistics_menu.addAction(self.disable_collect_statistics_action)
         self.statistics_menu.addSeparator()
         self.statistics_menu.addAction(self.save_statistics_to_json_action)
+
+        self.visualizations_menu = self.settings_menu.addMenu("&Visualizations")
+        self.visualizations_menu.setFont(MENU_FONT)
+        self.visualizations_menu.addAction(self.enable_visualizations_action)
+        self.visualizations_menu.addAction(self.disable_visualizations_action)
 
         # main UI
         self.central_widget = QWidget(self)
