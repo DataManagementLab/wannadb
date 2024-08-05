@@ -396,6 +396,11 @@ class EmbeddingVisualizerWidget(EmbeddingVisualizer, QWidget):
         self.show_other_best_guesses_button.setEnabled(True)
         self.remove_other_best_guesses_button.setEnabled(False)
 
+    def hide(self):
+        super().hide()
+        if self._fullscreen_window is not None:
+            self._fullscreen_window.close()
+
     def _handle_show_other_best_guesses_clicked(self):
         if self._other_best_guesses is None:
             logger.warning("Can not display best guesses from other documents as these best guesses have not been "
