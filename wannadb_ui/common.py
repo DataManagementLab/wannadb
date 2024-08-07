@@ -1,6 +1,6 @@
 import abc
 from enum import Enum
-from typing import Union
+from typing import Union, List, Optional
 
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QFont
@@ -249,22 +249,64 @@ class AddedReason(Enum):
         return self._corresponding_tooltip_text
 
 
+class ThresholdPosition(Enum):
+    ABOVE = 1
+    BELOW = 2
+
+
 class BestMatchUpdate:
-    def __init__(self, old_best_match, new_best_match, count):
-        self._old_best_match = old_best_match
-        self._new_best_match = new_best_match
-        self._count = count
+    def __init__(self, old_best_match: str, new_best_match: str, count: int):
+        self._old_best_match: str = old_best_match
+        self._new_best_match: str = new_best_match
+        self._count: int = count
 
     @property
-    def old_best_match(self):
+    def old_best_match(self) -> str:
         return self._old_best_match
 
     @property
-    def new_best_match(self):
+    def new_best_match(self) -> str:
         return self._new_best_match
 
     @property
-    def count(self):
+    def count(self) -> int:
+        return self._count
+
+
+class ThresholdPositionUpdate:
+    def __init__(self, best_guess: str,
+                 old_position: Optional[ThresholdPosition], new_position: ThresholdPosition,
+                 old_distance: Optional[float], new_distance: float,
+                 count: int):
+        self._best_guess: str = best_guess
+        self._old_position: Optional[ThresholdPosition] = old_position
+        self._new_position: ThresholdPosition = new_position
+        self._old_distance: float = old_distance
+        self._new_distance: float = new_distance
+        self._count: int = count
+
+    @property
+    def best_guess(self) -> str:
+        return self._best_guess
+
+    @property
+    def old_position(self) -> Optional[ThresholdPosition]:
+        return self._old_position
+
+    @property
+    def new_position(self) -> ThresholdPosition:
+        return self._new_position
+
+    @property
+    def old_distance(self) -> Optional[float]:
+        return self._old_distance
+
+    @property
+    def new_distance(self) -> float:
+        return self._new_distance
+
+    @property
+    def count(self) -> int:
         return self._count
 
 
@@ -293,3 +335,31 @@ class NewlyAddedNuggetContext:
     @property
     def added_reason(self):
         return self._added_reason
+
+
+class NuggetUpdateType(Enum):
+    NEWLY_ADDED = 1
+    THRESHOLD_POSITION_UPDATE = 2
+    BEST_MATCH_UPDATE = 3
+
+
+class NuggetUpdatesContext:
+    def __init__(self,
+                 newly_added_nugget_contexts: List[NewlyAddedNuggetContext],
+                 best_match_updates: List[BestMatchUpdate],
+                 threshold_position_updates: List[ThresholdPositionUpdate]):
+        self._newly_added_nugget_contexts: List[NewlyAddedNuggetContext] = newly_added_nugget_contexts
+        self._best_match_updates: List[BestMatchUpdate] = best_match_updates
+        self._threshold_position_updates: List[ThresholdPositionUpdate] = threshold_position_updates
+
+    @property
+    def newly_added_nugget_contexts(self) -> List[NewlyAddedNuggetContext]:
+        return self._newly_added_nugget_contexts
+
+    @property
+    def best_match_updates(self) -> List[BestMatchUpdate]:
+        return self._best_match_updates
+
+    @property
+    def threshold_position_updates(self) -> List[ThresholdPositionUpdate]:
+        return self._threshold_position_updates
