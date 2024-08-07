@@ -60,6 +60,10 @@ def build_nuggets_annotation_text(nugget) -> str:
     return f"{nugget.text}: {round(nugget[CachedDistanceSignal], 3)}"
 
 
+def create_sanitized_text(nugget):
+    return nugget.text.replace("\n", " ")
+
+
 class EmbeddingVisualizer:
     def __init__(self,
                  attribute: Attribute = None,
@@ -328,8 +332,6 @@ class EmbeddingVisualizerWindow(EmbeddingVisualizer, QMainWindow):
 
 
 class EmbeddingVisualizerWidget(EmbeddingVisualizer, QWidget):
-    tracker: Tracker = Tracker()
-
     def __init__(self):
         EmbeddingVisualizer.__init__(self)
         QWidget.__init__(self)
@@ -400,6 +402,11 @@ class EmbeddingVisualizerWidget(EmbeddingVisualizer, QWidget):
         self.show_other_best_guesses_button.setEnabled(True)
         self.remove_other_best_guesses_button.setEnabled(False)
 
+    def hide(self):
+        super().hide()
+        if self._fullscreen_window is not None:
+            self._fullscreen_window.close()
+
     @track_button_click(button_name="show other best guesses from other documents")
     def _handle_show_other_best_guesses_clicked(self):
         if self._other_best_guesses is None:
@@ -435,9 +442,14 @@ class BarChartVisualizerWidget(QWidget):
         self.button.clicked.connect(self.show_bar_chart)
         self.window = None
         self.current_annotation_index = None
+        self.bar = None
 
-    def append_data(self, data_tuple):
-        self.data.append(data_tuple)
+    def update_data(self, nuggets):
+        self.reset()
+
+        self.data = [(create_sanitized_text(nugget),
+                      np.round(nugget[CachedDistanceSignal], 3))
+                     for nugget in nuggets]
 
     @track_button_click("show bar chart")
     def show_bar_chart(self):
@@ -534,7 +546,7 @@ class BarChartVisualizerWidget(QWidget):
                 self.current_annotation_index = index
             self.bar_chart_canvas.draw_idle()
 
-    def clear_data(self):
+    def reset(self):
         self.data = []
         self.bar = None
 
@@ -567,6 +579,13 @@ class ScatterPlotVisualizerWidget(QWidget):
 
     def append_data(self, data_tuple):
         self.data.append(data_tuple)
+
+    def update_data(self, nuggets):
+        self.reset()
+
+        self.data = [(create_sanitized_text(nugget),
+                      np.round(nugget[CachedDistanceSignal], 3))
+                     for nugget in nuggets]
 
     def clear_data(self):
         self.data = []
@@ -684,3 +703,7 @@ class ScatterPlotVisualizerWidget(QWidget):
         self.annotation.set_text(text)
         self.annotation.set_visible(True)
         self.scatter_plot_canvas.draw_idle()
+
+    def reset(self):
+        self.data = []
+        self.bar = None

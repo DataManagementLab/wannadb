@@ -1,23 +1,21 @@
 import logging
-from collections import Counter
-import random
+
 from typing import List
 
 import numpy as np
 from PyQt6 import QtGui
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QIcon, QTextCursor
-from PyQt6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QTextEdit, QVBoxLayout, QWidget, QGridLayout, QSizePolicy, \
-    QSpacerItem
+from PyQt6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QTextEdit, QVBoxLayout, QWidget, QGridLayout, QSizePolicy
 
 from wannadb.data.signals import CachedContextSentenceSignal, CachedDistanceSignal, \
     PCADimensionReducedLabelEmbeddingSignal, PCADimensionReducedTextEmbeddingSignal, \
     TSNEDimensionReducedLabelEmbeddingSignal
 from wannadb_ui.common import BUTTON_FONT, CODE_FONT, CODE_FONT_BOLD, LABEL_FONT, MainWindowContent, \
-    CustomScrollableList, CustomScrollableListItem, WHITE, LIGHT_YELLOW, YELLOW, LABEL_FONT_BOLD, SUBHEADER_FONT, \
-    BestMatchUpdate, NewlyAddedNuggetContext
-from wannadb_ui.visualizations import EmbeddingVisualizerWidget, BarChartVisualizerWidget, ScatterPlotVisualizerWidget, \
-    EmbeddingVisualizerWindow
+    CustomScrollableList, CustomScrollableListItem, WHITE, LIGHT_YELLOW, YELLOW, NewlyAddedNuggetContext, \
+    VisualizationsProvidingItem
+from wannadb_ui.data_insights import DataInsightsArea
+from wannadb_ui.visualizations import EmbeddingVisualizerWidget, BarChartVisualizerWidget, ScatterPlotVisualizerWidget
 
 logger = logging.getLogger(__name__)
 
@@ -77,12 +75,20 @@ class InteractiveMatchingWidget(MainWindowContent):
         self.layout.addWidget(self.document_widget)
         self.stop_button.hide()
 
+    def enable_visualizations(self):
+        self.document_widget.show_visualizations()
+        self.nugget_list_widget.show_visualizations()
+
+    def disable_visualizations(self):
+        self.document_widget.hide_visualizations()
+        self.nugget_list_widget.hide_visualizations()
+
     def _stop_button_clicked(self):
         self.show_nugget_list_widget()
         self.main_window.give_feedback_task({"message": "stop-interactive-matching"})
 
 
-class NuggetListWidget(QWidget):
+class NuggetListWidget(QWidget, VisualizationsProvidingItem):
     def __init__(self, interactive_matching_widget):
         super(NuggetListWidget, self).__init__(interactive_matching_widget)
         self.interactive_matching_widget = interactive_matching_widget
@@ -96,9 +102,10 @@ class NuggetListWidget(QWidget):
         self.layout.addWidget(self.description)
 
         # suggestion visualizer
-        self.visualize_area = VisualizationArea()
+        self.visualize_area = DataInsightsArea()
         self.layout.addWidget(self.visualize_area)
         self.visualize_area.setVisible(False)
+        self.visualizations = True
 
         # nugget list
         self.num_nuggets_above_label = QLabel("")
@@ -122,23 +129,24 @@ class NuggetListWidget(QWidget):
         attribute = feedback_request["attribute"]
         current_threshold = feedback_request["max-distance"]
         threshold_change = feedback_request["max-distance-change"]
-
+        nugget_updates_context = feedback_request["nugget-updates-context"]
 
         self.description.setText(
             "Please confirm or edit the cell value guesses displayed below until you are satisfied with the guessed values, at which point you may continue with the next attribute."
             "\nWannaDB will use your feedback to continuously update its guesses. Note that the cells with low confidence (low confidence bar, light yellow highlights) will be left empty.")
         self.visualize_area.update_threshold_value_label(current_threshold, threshold_change)
-        self.visualize_area.update_best_match_list(feedback_request["new-best-matches"])
+        self.visualize_area.update_best_match_list(nugget_updates_context.best_match_updates)
+        self.visualize_area.update_threshold_position_lists(nugget_updates_context.threshold_position_updates)
 
         params = {
             "max_start_chars": max([nugget[CachedContextSentenceSignal]["start_char"] for nugget in feedback_nuggets]),
             "max_distance": current_threshold,
             "other_best_guesses": feedback_nuggets,
-            "new-nuggets": feedback_request["new-nuggets"],
+            "new-nuggets": nugget_updates_context.newly_added_nugget_contexts,
             "num-feedback": feedback_request["num-feedback"]
         }
 
-        self.visualize_area.setVisible(True)
+        self.visualize_area.setVisible(self.visualizations)
 
         self.nugget_list.update_item_list(feedback_nuggets, params)
         if len(feedback_nuggets) > 0:
@@ -165,18 +173,32 @@ class NuggetListWidget(QWidget):
     def disable_input(self):
         self.nugget_list.disable_input()
 
+    def show_visualizations(self):
+        self.visualizations = True
 
-class NuggetListItemWidget(CustomScrollableListItem):
+        self.visualize_area.show()
+        self.nugget_list.show_visualizations()
+
+    def hide_visualizations(self):
+        self.visualizations = False
+
+        self.visualize_area.hide()
+        self.nugget_list.hide_visualizations()
+
+
+class NuggetListItemWidget(CustomScrollableListItem, VisualizationsProvidingItem):
     def __init__(self, nugget_list_widget):
         super(NuggetListItemWidget, self).__init__(nugget_list_widget)
         self.nugget_list_widget = nugget_list_widget
         self.nugget = None
         self.other_best_guesses = None
-        self._default_style_sheet = "QWidget#nuggetListItemWidget { background-color: white}"
+        self._default_stylesheet = "QWidget#nuggetListItemWidget { background-color: white}"
+        self._tooltip_text = ""
+        self._visualizations = True
 
         self.setFixedHeight(45)
         self.setObjectName("nuggetListItemWidget")
-        self.setStyleSheet(self._default_style_sheet)
+        self.setStyleSheet(self._default_stylesheet)
 
         self.layout = QHBoxLayout(self)
         self.layout.setContentsMargins(20, 0, 20, 0)
@@ -241,14 +263,15 @@ class NuggetListItemWidget(CustomScrollableListItem):
         if max_distance < self.nugget[CachedDistanceSignal]:
             color = LIGHT_YELLOW
             self.confidence_button.setIcon(ICON_LOW_CONFIDENCE)
+
             self.confidence_button.setToolTip(
-                f"Low confidence in this match (Distance: {round(self.nugget[CachedDistanceSignal], 4)}), "
+                f"Low confidence in this match {self._build_distance_text() if self._visualizations else ''}, "
                 f"will not be included in result.")
         else:
             color = YELLOW
             self.confidence_button.setIcon(ICON_HIGH_CONFIDENCE)
             self.confidence_button.setToolTip(
-                f"High confidence in this match (Distance: {round(self.nugget[CachedDistanceSignal], 4)}), "
+                f"High confidence in this match {self._build_distance_text() if self._visualizations else ''}, "
                 f"will be included in result.")
 
         new_nugget_contexts: List = params["new-nuggets"]
@@ -256,9 +279,9 @@ class NuggetListItemWidget(CustomScrollableListItem):
         if self.nugget in map(lambda context: context.nugget, new_nugget_contexts):
             self._handle_item_is_new(self._extract_matching_context(new_nugget_contexts))
         else:
-            self.text_edit.setStyleSheet(f"color: black; background-color: {WHITE}")
-            self.setStyleSheet(self._default_style_sheet)
-            self.setToolTip("")
+            self._update_stylesheets(False)
+            self._tooltip_text = ""
+            self.setToolTip(self._tooltip_text)
 
         self.text_edit.setText("")
         formatted_text = (
@@ -311,17 +334,34 @@ class NuggetListItemWidget(CustomScrollableListItem):
         self.match_button.setDisabled(True)
         self.fix_button.setDisabled(True)
 
+    def show_visualizations(self):
+        self._visualizations = True
+
+        if self._tooltip_text != "":
+            self.setToolTip(self._tooltip_text)
+        self.confidence_button.setToolTip(
+            f"Low confidence in this match {self._build_distance_text()}, will not be included in result.")
+        self._update_stylesheets(item_is_new=self._tooltip_text != "")
+
+    def hide_visualizations(self):
+        self._visualizations = False
+
+        self.setToolTip("")
+        self.confidence_button.setToolTip(
+            f"Low confidence in this match, will not be included in result.")
+        self._update_stylesheets(False)
+
     def _handle_item_is_new(self, newly_added_nugget_context):
-        tooltip_text = (
+        self._tooltip_text = (
             f'{newly_added_nugget_context.added_reason.corresponding_tooltip_text}\n'
             f'Old Distance: {round(newly_added_nugget_context.old_distance, 4) if newly_added_nugget_context.old_distance is not None else "<Unavailable>"} -> '
             f'New Distance: {round(newly_added_nugget_context.new_distance, 4)}')
 
-        self.setToolTip(tooltip_text)
+        if not self._visualizations:
+            return
 
-        self.text_edit.setStyleSheet(f"color: black; background-color: {'#e7ffe6'}")
-        self.setStyleSheet(f"QFrame {{ background-color: {'#e7ffe6'}; }}\n"
-                           f"QToolTip {{ background-color: {WHITE}; }}")
+        self.setToolTip(self._tooltip_text)
+        self._update_stylesheets(True)
 
     def _extract_matching_context(self, contexts: List[NewlyAddedNuggetContext]):
         for context in contexts:
@@ -330,8 +370,20 @@ class NuggetListItemWidget(CustomScrollableListItem):
 
         raise ValueError(f"Own nugget ({self.nugget}) not in given list: {contexts}")
 
+    def _build_distance_text(self):
+        return f"(Distance: {round(self.nugget[CachedDistanceSignal], 4)})" if self._visualizations else ""
 
-class DocumentWidget(QWidget):
+    def _update_stylesheets(self, item_is_new):
+        if item_is_new:
+            self.setStyleSheet((f"QFrame {{ background-color: {'#e7ffe6'}; }}\n"
+                                f"QToolTip {{ background-color: {WHITE}; }}"))
+            self.text_edit.setStyleSheet(f"color: black; background-color: {'#e7ffe6'}")
+        else:
+            self.setStyleSheet(self._default_stylesheet)
+            self.text_edit.setStyleSheet(f"color: black; background-color: {WHITE}")
+
+
+class DocumentWidget(QWidget, VisualizationsProvidingItem):
     def __init__(self, interactive_matching_widget):
         super(DocumentWidget, self).__init__(interactive_matching_widget)
         self.interactive_matching_widget = interactive_matching_widget
@@ -410,12 +462,6 @@ class DocumentWidget(QWidget):
         self.match_button.setFont(BUTTON_FONT)
         self.match_button.clicked.connect(self._match_button_clicked)
         self.buttons_widget_layout.addWidget(self.match_button)
-
-    def update_barchart(self, data):
-        self.cosine_barchart.append_data(data)
-
-    def update_scatter_plot(self, data):
-        self.scatter_plot_widget.append_data(data)
 
     def _match_button_clicked(self):
         if self.current_nugget is None:
@@ -576,6 +622,9 @@ class DocumentWidget(QWidget):
                                                       currently_highlighted_nugget=nugget,
                                                       best_guess=self.nuggets_sorted_by_distance[0],
                                                       other_best_guesses=other_best_guesses)
+            self.cosine_barchart.update_data(self.nuggets_sorted_by_distance)
+            self.scatter_plot_widget.update_data(self.nuggets_sorted_by_distance)
+
         else:
             self.idx_mapper = {}
             for idx in range(len(self.document.text)):
@@ -590,14 +639,6 @@ class DocumentWidget(QWidget):
         scroll_cursor.setPosition(nugget.start_char)
         self.text_edit.setTextCursor(scroll_cursor)
         self.text_edit.ensureCursorVisible()
-        # Clear bar chart data when updating document
-        self.clear_barchart_data()
-
-        # Clear scatter plot data when updating document
-        self.clear_scatter_plot_data()
-
-    def clear_barchart_data(self):
-        self.cosine_barchart.clear_data()
 
     def clear_scatter_plot_data(self):
         self.scatter_plot_widget.clear_data()
@@ -615,6 +656,16 @@ class DocumentWidget(QWidget):
     def update_attribute(self, attribute):
         self.current_attribute = attribute
 
+    def show_visualizations(self):
+        self.upper_buttons_widget.show()
+        self.visualizer.show()
+        self.suggestion_list.show_visualizations()
+
+    def hide_visualizations(self):
+        self.upper_buttons_widget.hide()
+        self.visualizer.hide()
+        self.suggestion_list.hide_visualizations()
+
     def _highlight_best_guess(self, best_guess):
         if best_guess is None:
             return
@@ -622,7 +673,7 @@ class DocumentWidget(QWidget):
         self.visualizer.highlight_best_guess(best_guess)
 
 
-class SuggestionListItemWidget(CustomScrollableListItem):
+class SuggestionListItemWidget(CustomScrollableListItem, VisualizationsProvidingItem):
 
     def __init__(self, suggestion_list_widget):
         super(SuggestionListItemWidget, self).__init__(suggestion_list_widget)
@@ -650,7 +701,8 @@ class SuggestionListItemWidget(CustomScrollableListItem):
 
     def update_item(self, item, params=None):
         self.nugget = item
-        sanitized_text, distance = self.get_nugget_data()
+        sanitized_text = self.nugget.text.replace("\n", " ")
+        distance = np.round(self.nugget[CachedDistanceSignal], 3)
         self.text_label.setText(sanitized_text)
         self.distance_label.setText(str(distance))
 
@@ -661,21 +713,18 @@ class SuggestionListItemWidget(CustomScrollableListItem):
             )
         else:
             self.setStyleSheet(f"background-color: {LIGHT_YELLOW}")
-        self.suggestion_list_widget.interactive_matching_widget.document_widget.update_barchart(self.get_nugget_data())
-        self.suggestion_list_widget.interactive_matching_widget.document_widget.update_scatter_plot(
-            self.get_nugget_data())
+
+    def show_visualizations(self):
+        self.distance_label.show()
+
+    def hide_visualizations(self):
+        self.distance_label.hide()
 
     def enable_input(self):
         pass
 
     def disable_input(self):
         pass
-
-    def get_nugget_data(self):
-        sanitized_text = self.nugget.text
-        sanitized_text = sanitized_text.replace("\n", " ")
-        distance = np.round(self.nugget[CachedDistanceSignal], 3)
-        return sanitized_text, distance
 
 
 class CustomSelectionItemWidget(QWidget):
@@ -703,113 +752,3 @@ class CustomSelectionItemWidget(QWidget):
 
     def disable_input(self):
         pass
-
-
-class VisualizationArea(QWidget):
-    def __init__(self):
-        super(VisualizationArea, self).__init__()
-
-        self.layout = QVBoxLayout(self)
-        self.layout.setSpacing(0)
-        self.layout.setContentsMargins(0, 0, 0, 0)
-
-        self.title_label = QLabel("Data Insights")
-        self.title_label.setFont(SUBHEADER_FONT)
-        self.title_label.setContentsMargins(0, 5, 0, 5)
-        self.layout.addWidget(self.title_label)
-
-        self.threshold_label = QLabel()
-        self.threshold_label.setFont(LABEL_FONT)
-        self.threshold_label.setText("Current Threshold: ")
-        self.threshold_value_label = QLabel()
-        self.threshold_value_label.setFont(LABEL_FONT)
-        self.threshold_change_label = QLabel()
-        self.threshold_change_label.setFont(LABEL_FONT)
-        self.threshold_hbox = QHBoxLayout()
-        self.threshold_hbox.setContentsMargins(0, 0, 0, 0)
-        self.threshold_hbox.setSpacing(0)
-        self.threshold_hbox.addWidget(self.threshold_label)
-        self.threshold_hbox.addWidget(self.threshold_value_label)
-        self.threshold_hbox.addWidget(self.threshold_change_label)
-        self.threshold_hbox.addItem(QSpacerItem(40, 20, QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum))
-        self.layout.addLayout(self.threshold_hbox)
-
-        self.visualizer_hbox = QHBoxLayout()
-        self.visualizer_hbox.setContentsMargins(0, 0, 0, 0)
-        self.visualizer_hbox.setSpacing(10)
-
-        self.suggestion_visualizer = EmbeddingVisualizerWindow()
-        self.suggestion_visualizer_button = QPushButton("Show Suggestions In 3D-Grid")
-        self.suggestion_visualizer_button.setFont(BUTTON_FONT)
-        self.suggestion_visualizer_button.setMaximumWidth(240)
-        self.suggestion_visualizer_button.clicked.connect(self._show_suggestion_visualizer)
-
-        self.changes_best_matches_list = ChangedBestMatchDocumentsList()
-
-        self.visualizer_hbox.addWidget(self.changes_best_matches_list)
-        self.visualizer_hbox.addItem(QSpacerItem(40, 20, QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum))
-        self.visualizer_hbox.addWidget(self.suggestion_visualizer_button)
-
-        self.layout.addLayout(self.visualizer_hbox)
-
-    def _show_suggestion_visualizer(self):
-        self.suggestion_visualizer.setVisible(True)
-
-    def update_threshold_value_label(self, new_threshold_value, threshold_value_change):
-        if round(threshold_value_change, 4) != 0:
-            self.threshold_value_label.setStyleSheet("color: yellow;")
-            change_text = f'(+{round(threshold_value_change, 4)})' if threshold_value_change > 0 else f'{round(threshold_value_change, 4)})'
-            self.threshold_change_label.setText(change_text)
-        else:
-            self.threshold_value_label.setStyleSheet("")
-            self.threshold_change_label.setText("")
-
-        self.threshold_value_label.setText(f"{round(new_threshold_value, 4)} ")
-        self.threshold_label.setVisible(True)
-
-    def update_best_match_list(self, new_best_matches: Counter[str]):
-        self.changes_best_matches_list.update_list(new_best_matches)
-
-
-class ChangedBestMatchDocumentsList(QWidget):
-    def __init__(self):
-        super(ChangedBestMatchDocumentsList, self).__init__()
-
-        self.layout = QHBoxLayout(self)
-        self.layout.setSpacing(0)
-        self.layout.setContentsMargins(0, 0, 0, 0)
-
-        self._info_label = QLabel("Changed best matches:")
-        self._info_label.setContentsMargins(0, 0, 5, 0)
-        self._list_labels = []
-        self.layout.addWidget(self._info_label)
-
-    def update_list(self, best_match_updates: List[BestMatchUpdate]):
-        self._reset_list()
-
-        if len(best_match_updates) == 0:
-            no_changes_label = QLabel("<No Changes>")
-            self.layout.addWidget(no_changes_label)
-            self._list_labels.append(no_changes_label)
-            return
-
-        for best_match_update in random.choices(best_match_updates, k=min(5, len(best_match_updates))):
-            label_text = f"{best_match_update.new_best_match} ({best_match_update.count})"
-            label = QLabel(label_text)
-            label.setContentsMargins(0, 0, 5, 0)
-            label.setToolTip(f"Previous best match was: {best_match_update.old_best_match}\n"
-                             f"Changes to token \"{best_match_update.new_best_match}\": {best_match_update.count}")
-            self.layout.addWidget(label)
-            self._list_labels.append(label)
-
-        if len(best_match_updates) > 5:
-            last_label = QLabel(f"... and {len(best_match_updates) - 5} more.")
-            self.layout.addWidget(last_label)
-            self._list_labels.append(last_label)
-
-    def _reset_list(self):
-        for list_label in self._list_labels:
-            self.layout.removeWidget(list_label)
-
-        self._list_labels = []
-
