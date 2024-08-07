@@ -27,6 +27,7 @@ class Tracker(QObject):
             self.timer = QTimer()
             self.timer.timeout.connect(self.calculate_time_spent)
             self.button_click_counts: Dict[str, int] = {}
+            self.total_window_open_time = {}
             self._initialized = True
             self.log = ''
 
@@ -38,15 +39,24 @@ class Tracker(QObject):
         os.makedirs(log_directory, exist_ok=True)
         with open(log_file, 'w') as file:
             file.write(self.log)
+            file.write("\nTotal Statistics:\n")
+            file.write(f"\nButton information:\n")
+            for button_name, number_of_clicks in self.button_click_counts.items():
+                file.write(f"\t'{button_name}' button has been clicked {number_of_clicks} times\n")
+            file.write(f"Window Information:\n")
+            for window_name, time_open_in_sec in self.total_window_open_time.items():
+                file.write(f"\t{window_name} was open for a total of {time_open_in_sec} seconds\n")
         tack: float = time.time()
         logger.info(f"Writing the report in {round(tick - tack, 2)} seconds")
 
     def start_timer(self, window_name: str):
         self.window_open_time = QDateTime.currentDateTime()
         self.timer.start(1000)
+        self.log += f"{window_name} was opened"
 
     def stop_timer(self, window_name: str):
         self.timer.stop()
+        logger.debug(f"window_name = {window_name}")
         self.calculate_time_spent(window_name)
 
     def calculate_time_spent(self, window_name: str):
@@ -55,6 +65,10 @@ class Tracker(QObject):
             time_spent = self.window_open_time.msecsTo(current_time) / 1000.0  # Convert to seconds
             self.time_spent_signal.emit(window_name, time_spent)
             self.window_open_time = None
+            if window_name in self.total_window_open_time:
+                self.total_window_open_time[window_name] += time_spent
+            else:
+                self.total_window_open_time[window_name] = time_spent
             self.log += f'Time spent in {window_name} : {round(time_spent, 2)} seconds.\n'
 
     def track_button_click(self, button_name: str):
@@ -62,7 +76,7 @@ class Tracker(QObject):
             self.button_click_counts[button_name] += 1
         else:
             self.button_click_counts[button_name] = 1
-        self.log += f'{button_name} has already been clicked {self.button_click_counts[button_name]} times.\n'
+        self.log += f'{button_name} was clicked.\n'
 
     def get_button_click_count(self, button_name: str) -> int:
         return self.button_click_counts.get(button_name, 0)
