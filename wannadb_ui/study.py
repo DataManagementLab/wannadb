@@ -49,6 +49,8 @@ class Tracker(QObject):
         tack: float = time.time()
         logger.info(f"Writing the report in {round(tick - tack, 2)} seconds")
 
+    #todo 1 timer works for many windows (not just for one)
+    #todo 2 timer works for many windows simultaneously
     def start_timer(self, window_name: str):
         self.window_open_time = QDateTime.currentDateTime()
         self.timer.start(1000)
@@ -69,7 +71,7 @@ class Tracker(QObject):
                 self.total_window_open_time[window_name] += time_spent
             else:
                 self.total_window_open_time[window_name] = time_spent
-            self.log += f'Time spent in {window_name} : {round(time_spent, 2)} seconds.\n'
+            self.log += f'{window_name} was closed. Time spent in {window_name} : {round(time_spent, 2)} seconds.\n'
 
     def track_button_click(self, button_name: str):
         if button_name in self.button_click_counts:
