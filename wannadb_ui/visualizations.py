@@ -363,7 +363,7 @@ class EmbeddingVisualizerWidget(EmbeddingVisualizer, QWidget):
         self._fullscreen_window = None
         self._other_best_guesses = None
 
-    @track_button_click("fullscreen_button")
+    @track_button_click("fullscreen embedding visualizer")
     def _show_embedding_visualizer_window(self):
         if self._fullscreen_window is None:
             self._fullscreen_window = EmbeddingVisualizerWindow(attribute=self._attribute,
@@ -400,7 +400,7 @@ class EmbeddingVisualizerWidget(EmbeddingVisualizer, QWidget):
         self.show_other_best_guesses_button.setEnabled(True)
         self.remove_other_best_guesses_button.setEnabled(False)
 
-    @track_button_click(button_name="show_other_best_guesses")
+    @track_button_click(button_name="show other best guesses from other documents")
     def _handle_show_other_best_guesses_clicked(self):
         if self._other_best_guesses is None:
             logger.warning("Can not display best guesses from other documents as these best guesses have not been "
@@ -414,6 +414,7 @@ class EmbeddingVisualizerWidget(EmbeddingVisualizer, QWidget):
         if self._fullscreen_window is not None:
             self._fullscreen_window.display_other_best_guesses(self._other_best_guesses)
 
+    @track_button_click(button_name="stop showing other best guesses from other documents")
     def _handle_remove_other_best_guesses_clicked(self):
         self.show_other_best_guesses_button.setEnabled(True)
         self.remove_other_best_guesses_button.setEnabled(False)
@@ -438,6 +439,7 @@ class BarChartVisualizerWidget(QWidget):
     def append_data(self, data_tuple):
         self.data.append(data_tuple)
 
+    @track_button_click("show bar chart")
     def show_bar_chart(self):
         if not self.data:
             return
@@ -535,6 +537,14 @@ class BarChartVisualizerWidget(QWidget):
     def clear_data(self):
         self.data = []
         self.bar = None
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        Tracker().start_timer(str(self.__class__))
+
+    def closeEvent(self, event):
+        Tracker().stop_timer(str(self.__class__))
+        event.accept()
 
 
 class ScatterPlotVisualizerWidget(QWidget):

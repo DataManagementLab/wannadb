@@ -1,6 +1,0 @@
-fullscreen_button has already been clicked 1 times.
-show_other_best_guesses has already been clicked 1 times.
-Time spent in <class 'wannadb_ui.visualizations.EmbeddingVisualizerWindow'> : 1.53 seconds.
-show_other_best_guesses has already been clicked 2 times.
-fullscreen_button has already been clicked 2 times.
-Time spent in <class 'wannadb_ui.visualizations.EmbeddingVisualizerWindow'> : 5.33 seconds.
