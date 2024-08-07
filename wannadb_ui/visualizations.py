@@ -440,7 +440,7 @@ class BarChartVisualizerWidget(QWidget):
         self.layout.addWidget(self.button)
         self.data = []
         self.button.clicked.connect(self.show_bar_chart)
-        self.window = None
+        self.window : QMainWindow = None
         self.current_annotation_index = None
         self.bar = None
 
@@ -506,6 +506,9 @@ class BarChartVisualizerWidget(QWidget):
         scroll_area.setFrameShape(QFrame.Shape.NoFrame)
 
         self.window = QMainWindow()
+        self.window.closeEvent = self.closeWindowEvent
+        self.window.showEvent = self.showWindowEvent
+
         self.window.setWindowTitle("Bar Chart")
         self.window.setGeometry(100, 100, WINDOW_WIDTH, WINDOW_HEIGHT)
         self.window.setCentralWidget(scroll_area)
@@ -550,13 +553,13 @@ class BarChartVisualizerWidget(QWidget):
         self.data = []
         self.bar = None
 
-    def showEvent(self, event):
+    def showWindowEvent(self, event):
         super().showEvent(event)
         Tracker().start_timer(str(self.__class__))
 
-    def closeEvent(self, event):
-        Tracker().stop_timer(str(self.__class__))
+    def closeWindowEvent(self, event):
         event.accept()
+        Tracker().stop_timer(str(self.__class__))
 
 
 class ScatterPlotVisualizerWidget(QWidget):
@@ -600,6 +603,7 @@ class ScatterPlotVisualizerWidget(QWidget):
         self.window = None
         self.annotation = None
 
+    @track_button_click("show scatter plot")
     def show_scatter_plot(self):
         if not self.data:
             return
@@ -660,7 +664,10 @@ class ScatterPlotVisualizerWidget(QWidget):
 
         # Create a new window for the plot
         self.window = QMainWindow()
+        self.window.closeEvent = self.closeWindowEvent
+        self.window.showEvent = self.showWindowEvent
         self.window.setWindowTitle("Scatter Plot")
+
         self.window.setGeometry(100, 100, WINDOW_WIDTH, WINDOW_HEIGHT)
 
         # Set the central widget of the window to the canvas
@@ -707,3 +714,11 @@ class ScatterPlotVisualizerWidget(QWidget):
     def reset(self):
         self.data = []
         self.bar = None
+
+    def showWindowEvent(self, event):
+        super().showEvent(event)
+        Tracker().start_timer(str(self.__class__))
+
+    def closeWindowEvent(self, event):
+        event.accept()
+        Tracker().stop_timer(str(self.__class__))
