@@ -73,7 +73,7 @@ class ChangedBestMatchDocumentsList(ChangesList[BestMatchUpdate]):
         super(ChangedBestMatchDocumentsList, self).__init__("Changed best guesses:", tooltip_text)
 
     def _create_label_and_tooltip_text(self, update: BestMatchUpdate) -> Tuple[str, str]:
-        label_text = f"{update.new_best_match} ({update.count})"
+        label_text = f"{update.new_best_match} {'(' + str(update.count) + ')' if update.count > 1 else ''}"
         tooltip_text = (f"Previous best match was: {update.old_best_match}\n"
                         f"Changes to token \"{update.new_best_match}\": {update.count}")
 

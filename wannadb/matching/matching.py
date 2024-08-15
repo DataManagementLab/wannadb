@@ -561,6 +561,9 @@ class RankingBasedMatcher(BaseMatcher):
                                 best_guesses.append((document.name, None))
                     statistics[attribute.name]["best_guesses"].append((num_feedback, best_guesses))
 
+                if self._old_max_distance == -1:
+                    self._old_max_distance = self._max_distance
+
             tak: float = time.time()
             logger.info(f"Executed interactive matching in {tak - tik} seconds.")
 
