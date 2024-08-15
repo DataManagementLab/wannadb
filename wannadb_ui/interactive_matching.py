@@ -16,6 +16,8 @@ from wannadb_ui.common import BUTTON_FONT, CODE_FONT, CODE_FONT_BOLD, LABEL_FONT
     VisualizationsProvidingItem
 from wannadb_ui.data_insights import DataInsightsArea
 from wannadb_ui.visualizations import EmbeddingVisualizerWidget, BarChartVisualizerWidget, ScatterPlotVisualizerWidget
+from wannadb_ui.study import Tracker, track_button_click
+
 
 logger = logging.getLogger(__name__)
 
@@ -299,6 +301,7 @@ class NuggetListItemWidget(CustomScrollableListItem, VisualizationsProvidingItem
 
         # self.info_button.setText(f"{str(round(self.nugget[CachedDistanceSignal], 2)).ljust(4)}")
 
+    @track_button_click(button_name= "nugget_list_match_button")
     def _match_button_clicked(self):
         self.nugget_list_widget.interactive_matching_widget.main_window.give_feedback_task({
             "message": "is-match",
@@ -463,6 +466,7 @@ class DocumentWidget(QWidget, VisualizationsProvidingItem):
         self.match_button.clicked.connect(self._match_button_clicked)
         self.buttons_widget_layout.addWidget(self.match_button)
 
+    @track_button_click(button_name= "document_match_button")
     def _match_button_clicked(self):
         if self.current_nugget is None:
             logger.info("Confirm custom nugget!")
@@ -480,6 +484,7 @@ class DocumentWidget(QWidget, VisualizationsProvidingItem):
                 "not-a-match": None if self.current_nugget is self.original_nugget else self.original_nugget
             })
 
+    @track_button_click(button_name= "document_no_match_button")
     def _no_match_button_clicked(self):
         self.interactive_matching_widget.main_window.give_feedback_task({
             "message": "no-match-in-document",
