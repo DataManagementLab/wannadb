@@ -2,10 +2,11 @@ import abc
 import random
 from typing import Generic, TypeVar, List, Tuple
 
+from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QWidget, QHBoxLayout, QLabel, QVBoxLayout, QSpacerItem, QSizePolicy, QPushButton
 
 from wannadb_ui.common import BestMatchUpdate, ThresholdPositionUpdate, ThresholdPosition, SUBHEADER_FONT, LABEL_FONT, \
-    BUTTON_FONT
+    BUTTON_FONT, VisualizationProvidingItem, AvailableVisualizationsLevel
 from wannadb_ui.visualizations import EmbeddingVisualizerWindow
 
 UPDATE_TYPE = TypeVar("UPDATE_TYPE")
@@ -134,9 +135,38 @@ class ChangedThresholdPositionToBelowList(ChangedThresholdPositionList):
                            threshold_updates))
 
 
-class DataInsightsArea(QWidget):
+class DataInsightsArea:
     def __init__(self):
-        super(DataInsightsArea, self).__init__()
+        self.suggestion_visualizer = EmbeddingVisualizerWindow()
+
+        self.suggestion_visualizer_button = QPushButton("Show Suggestions In 3D-Grid")
+        self.suggestion_visualizer_button.setContentsMargins(0, 0, 0, 0)
+        self.suggestion_visualizer_button.setFont(BUTTON_FONT)
+        self.suggestion_visualizer_button.setMaximumWidth(240)
+        self.suggestion_visualizer_button.clicked.connect(self._show_suggestion_visualizer)
+
+    def _show_suggestion_visualizer(self):
+        self.suggestion_visualizer.setVisible(True)
+
+
+class SimpleDataInsightsArea(QWidget, DataInsightsArea):
+    def __init__(self):
+        QWidget.__init__(self)
+        DataInsightsArea.__init__(self)
+
+        self.layout = QHBoxLayout(self)
+        self.layout.setContentsMargins(0, 0, 0, 0)
+        self.layout.setSpacing(0)
+
+        self.layout.addWidget(self.suggestion_visualizer_button, 0, Qt.AlignmentFlag.AlignRight)
+
+        self.setVisible(False)
+
+
+class ExtendedDataInsightsArea(QWidget, DataInsightsArea):
+    def __init__(self):
+        QWidget.__init__(self)
+        DataInsightsArea.__init__(self)
 
         self.layout = QVBoxLayout(self)
         self.layout.setSpacing(0)
