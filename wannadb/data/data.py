@@ -6,7 +6,8 @@ from typing import Any, Dict, List, Optional, Type, Union, Tuple
 import bson
 
 from wannadb.data import signals
-from wannadb.data.signals import BaseSignal, ValueSignal
+from wannadb.data.signals import BaseSignal, ValueSignal, TextEmbeddingSignal, CurrentMatchIndexSignal
+from wannadb.utils import embeddings_equal, get_possible_duplicate
 
 logger: logging.Logger = logging.getLogger(__name__)
 
@@ -130,6 +131,19 @@ class InformationNugget:
             self._signals[signal_identifier].value = value
         else:  # signal not already set and value is not a signal object ==> get signal class by id and create object
             self._signals[signal_identifier] = signals.SIGNALS[signal_identifier](value)
+
+    def duplicates(self, other) -> bool:
+        if not isinstance(other, InformationNugget):
+            return False
+
+        if (TextEmbeddingSignal.identifier not in self._signals or
+                TextEmbeddingSignal.identifier not in other._signals):
+            return False
+
+        return (self.document.name == other.document.name and
+                self._start_char == other._start_char and
+                self._end_char == other._end_char and
+                embeddings_equal(self[TextEmbeddingSignal], other[TextEmbeddingSignal]))
 
 
 class Attribute:
@@ -275,6 +289,10 @@ class Document:
         """Nuggets obtained from the document."""
         return self._nuggets
 
+    @nuggets.setter
+    def nuggets(self, nuggets: List[InformationNugget]) -> None:
+        self._nuggets = nuggets
+
     @property
     def attribute_mappings(self) -> Dict[str, List[InformationNugget]]:
         """Mappings between attribute names and lists of nuggets associated with them."""
@@ -298,7 +316,8 @@ class Document:
     def sentence(self, idx: int) -> tuple[int, int, str]:
         """Sentence of the document at the given index."""
         start_char = self['SentenceStartCharsSignal'][idx]
-        end_char = self['SentenceStartCharsSignal'][idx + 1] if idx + 1 < len(self['SentenceStartCharsSignal']) else len(self.text)
+        end_char = self['SentenceStartCharsSignal'][idx + 1] if idx + 1 < len(
+            self['SentenceStartCharsSignal']) else len(self.text)
         return start_char, end_char, self.text[start_char:end_char]
 
     def __getitem__(self, item: Union[str, Type[BaseSignal]]) -> Any:
@@ -685,6 +704,8 @@ class DocumentBase:
             # deserialize the document
             document: Document = Document(name=serialized_document["name"], text=serialized_document["text"])
 
+            old_to_new_index: Dict[int, int] = dict()
+            old_index = 0
             for serialized_nugget in serialized_document["nuggets"]:
                 # deserialize the nugget
                 nugget: InformationNugget = InformationNugget(
@@ -698,15 +719,28 @@ class DocumentBase:
                     signal: BaseSignal = BaseSignal.from_serializable(serialized_signal, signal_identifier)
                     nugget.signals[signal_identifier] = signal
 
-                document.nuggets.append(nugget)
+                possible_duplicate, idx = get_possible_duplicate(nugget, document.nuggets)
+                if possible_duplicate is None:
+                    old_to_new_index[old_index] = len(document.nuggets)
+                    document.nuggets.append(nugget)
+                else:
+                    old_to_new_index[old_index] = idx
+
+                old_index += 1
 
             # deserialize the attribute mappings
             for name, indices in serialized_document["attribute_mappings"].items():
-                document.attribute_mappings[name] = [document.nuggets[idx] for idx in indices]
+                document.attribute_mappings[name] = [document.nuggets[old_to_new_index[idx]] for idx in indices]
 
             # deserialize the signals
             for signal_identifier, serialized_signal in serialized_document["signals"].items():
                 signal: BaseSignal = BaseSignal.from_serializable(serialized_signal, signal_identifier)
+                if signal_identifier == CurrentMatchIndexSignal.identifier:
+                    # As this an index related signal and the original indices changed due to removing duplicated
+                    # nuggets, we need to adapt this signals value to the new indices
+                    old_index = signal.value
+                    signal = CurrentMatchIndexSignal(old_to_new_index[old_index])
+
                 document.signals[signal_identifier] = signal
 
             document_base.documents.append(document)

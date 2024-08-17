@@ -127,6 +127,7 @@ class WannaDBAPI(QObject):
                 BERTContextSentenceEmbedder("BertLargeCasedResource"),
                 SBERTDocumentSentenceEmbedder("SBERTBertLargeNliMeanTokensResource"),
                 RelativePositionEmbedder(),
+                DuplicatedNuggetsCleaner(),
                 PCAReducer(),
                 TSNEReducer()
             ])

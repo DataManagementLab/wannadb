@@ -52,15 +52,6 @@ def get_colors(distances, color_start='red', color_end='blue'):
     return colors
 
 
-def positions_equal(pos1: np.ndarray, pos2: np.ndarray) -> bool:
-    if pos1.shape != (1, 3) or pos2.shape != (1, 3):
-        return False
-
-    return (math.isclose(pos1[0][0], pos2[0][0], rel_tol=1e-05, abs_tol=1e-05) and
-            math.isclose(pos1[0][1], pos2[0][1], rel_tol=1e-05, abs_tol=1e-05) and
-            math.isclose(pos1[0][2], pos2[0][2], rel_tol=1e-05, abs_tol=1e-05))
-
-
 def build_nuggets_annotation_text(nugget) -> str:
     return f"{nugget.text}: {round(nugget[CachedDistanceSignal], 3)}"
 
@@ -83,7 +74,6 @@ class EmbeddingVisualizer:
         self._best_guess: InformationNugget = best_guess
         self._other_best_guesses: List[InformationNugget] = other_best_guesses
         self._nugget_to_displayed_items: Dict[InformationNugget, Tuple[GLScatterPlotItem, GLTextItem]] = dict()
-        self._nugget_to_similar_nugget: Dict[InformationNugget, Union[InformationNugget, None]] = dict()
         self._gl_widget = GLViewWidget()
         self.accessible_color_palette = accessible_color_palette
 
@@ -135,17 +125,6 @@ class EmbeddingVisualizer:
                                                                                                      InformationNugget) \
             else np.array([item_to_display[PCADimensionReducedLabelEmbeddingSignal]])
 
-        # Check for already existing scatter at the same position representing same nugget.
-        # This can happen due to usage of different extractors.
-        for nugget, (scatter, annotation) in self._nugget_to_displayed_items.items():
-            if positions_equal(scatter.pos, position) and nugget.text == item_to_display.text:
-                logger.info(
-                    f"{item_to_display} is already shown in the grid - probably it was extracted by multiple extractors"
-                    f" - will not add again to grid.")
-                self._nugget_to_displayed_items[item_to_display] = (scatter, annotation)
-                self._nugget_to_similar_nugget[item_to_display] = nugget
-                return
-
         scatter = GLScatterPlotItem(pos=position, color=color, size=size, pxMode=True)
         annotation = GLTextItem(pos=[position[0][0], position[0][1], position[0][2]],
                                 color=WHITE,
@@ -157,7 +136,6 @@ class EmbeddingVisualizer:
 
         if isinstance(item_to_display, InformationNugget):
             self._nugget_to_displayed_items[item_to_display] = (scatter, annotation)
-            self._nugget_to_similar_nugget[item_to_display] = None
 
     def highlight_best_guess(self, best_guess: InformationNugget):
         self._best_guess = best_guess
@@ -206,11 +184,6 @@ class EmbeddingVisualizer:
         for nugget in nuggets_to_remove:
             scatter, annotation = self._nugget_to_displayed_items.pop(nugget)
 
-            if nugget in self._nugget_to_similar_nugget and self._nugget_to_similar_nugget[nugget] is not None:
-                # This nugget is represented by same items as another nugget.
-                # Once this other nugget is processed, the corresponding items will be removed from grid
-                continue
-
             self._gl_widget.removeItem(scatter)
             self._gl_widget.removeItem(annotation)
 
@@ -225,27 +198,18 @@ class EmbeddingVisualizer:
 
     def reset(self):
         for nugget, (scatter, annotation) in self._nugget_to_displayed_items.items():
-            if nugget in self._nugget_to_similar_nugget and self._nugget_to_similar_nugget[nugget] is not None:
-                # Corresponding items will be removed once processing similar nugget
-                continue
             self._gl_widget.removeItem(scatter)
             self._gl_widget.removeItem(annotation)
 
         self._nugget_to_displayed_items = {}
-        self._nugget_to_similar_nugget = {}
         self._currently_highlighted_nugget = None
         self._best_guess = None
 
     def _determine_update_values(self, previously_selected_nugget, newly_selected_nugget) -> (
             (int, Color), (int, Color)):
-        similar_prev_selected_nugget = self._nugget_to_similar_nugget[previously_selected_nugget] \
-            if previously_selected_nugget in self._nugget_to_similar_nugget else None
-        similar_newly_selected_nugget = self._nugget_to_similar_nugget[newly_selected_nugget] \
-            if previously_selected_nugget in self._nugget_to_similar_nugget else None
 
         highlight_color = ACC_BLUE if self.accessible_color_palette else BLUE
-        highlight_size = 15 if newly_selected_nugget == self._best_guess or similar_newly_selected_nugget == self._best_guess \
-            else 10
+        highlight_size = 15 if newly_selected_nugget == self._best_guess else 10
 
         if previously_selected_nugget is None:
             reset_color = WHITE
@@ -254,7 +218,7 @@ class EmbeddingVisualizer:
               similar_prev_selected_nugget in self._attribute.confirmed_matches):
             reset_color = ACC_GREEN if self.accessible_color_palette else GREEN
             reset_size = DEFAULT_NUGGET_SIZE
-        elif previously_selected_nugget == self._best_guess or similar_prev_selected_nugget == self._best_guess:
+        elif previously_selected_nugget == self._best_guess:
             reset_color = WHITE
             reset_size = 15
         else:
