@@ -182,6 +182,7 @@ class DataInsightsArea(QWidget):
         self.suggestion_visualizer = EmbeddingVisualizerWindow()
         self.suggestion_visualizer_button = QPushButton("Show Suggestions In 3D-Grid")
         self.suggestion_visualizer_button.setContentsMargins(0, 0, 0, 0)
+        self.accessible_color_palette = False
         self.suggestion_visualizer_button.setFont(BUTTON_FONT)
         self.suggestion_visualizer_button.setMaximumWidth(240)
         self.suggestion_visualizer_button.clicked.connect(self._show_suggestion_visualizer)
@@ -198,6 +199,14 @@ class DataInsightsArea(QWidget):
 
     def _show_suggestion_visualizer(self):
         self.suggestion_visualizer.setVisible(True)
+    
+    def enable_accessible_color_palette(self):
+        self.accessible_color_palette = True
+        self.suggestion_visualizer.enable_accessible_color_palette_()
+    
+    def disable_accessible_color_palette(self):
+        self.accessible_color_palette = False
+        self.suggestion_visualizer.disable_accessible_color_palette_()
 
     def update_threshold_value_label(self, new_threshold_value, threshold_value_change):
         if round(threshold_value_change, 4) != 0:

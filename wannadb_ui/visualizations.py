@@ -25,11 +25,16 @@ from wannadb_ui.study import Tracker, track_button_click
 
 logger: logging.Logger = logging.getLogger(__name__)
 RED = pg.mkColor('red')
+ACC_RED = pg.mkColor(220, 38, 127)
 BLUE = pg.mkColor('blue')
+ACC_BLUE = pg.mkColor(100, 143, 255)
 GREEN = pg.mkColor('green')
+ACC_GREEN = pg.mkColor(255, 176, 0)
 WHITE = pg.mkColor('white')
 YELLOW = pg.mkColor('yellow')
+ACC_YELLOW = pg.mkColor(254, 97, 0)
 PURPLE = pg.mkColor('purple')
+ACC_PURPLE = pg.mkColor(120,94,240)
 EMBEDDING_ANNOTATION_FONT = QFont('Helvetica', 10)
 DEFAULT_NUGGET_SIZE = 7
 
@@ -70,7 +75,8 @@ class EmbeddingVisualizer:
                  nuggets: List[InformationNugget] = None,
                  currently_highlighted_nugget: InformationNugget = None,
                  best_guess: InformationNugget = None,
-                 other_best_guesses: List[InformationNugget] = None):
+                 other_best_guesses: List[InformationNugget] = None,
+                 accessible_color_palette: bool = False):
         self._attribute: Attribute = attribute
         self._nuggets: List[InformationNugget] = nuggets
         self._currently_highlighted_nugget: InformationNugget = currently_highlighted_nugget
@@ -79,6 +85,13 @@ class EmbeddingVisualizer:
         self._nugget_to_displayed_items: Dict[InformationNugget, Tuple[GLScatterPlotItem, GLTextItem]] = dict()
         self._nugget_to_similar_nugget: Dict[InformationNugget, Union[InformationNugget, None]] = dict()
         self._gl_widget = GLViewWidget()
+        self.accessible_color_palette = accessible_color_palette
+
+    def enable_accessible_color_palette_(self):
+        self.accessible_color_palette = True
+    
+    def disable_accessible_color_palette_(self):
+        self.accessible_color_palette = False
 
     def update_and_display_params(self,
                                   attribute: Attribute,
@@ -150,7 +163,7 @@ class EmbeddingVisualizer:
         self._best_guess = best_guess
 
         if self._best_guess == self._currently_highlighted_nugget:
-            self._highlight_nugget(self._best_guess, BLUE, 15)
+            self._highlight_nugget(self._best_guess, ACC_BLUE if self.accessible_color_palette else BLUE, 15)
             return
 
         self._highlight_nugget(self._best_guess, WHITE, 15)
@@ -185,7 +198,7 @@ class EmbeddingVisualizer:
                                   annotation_text=build_nuggets_annotation_text(nugget))
 
     def display_attribute_embedding(self, attribute):
-        self.add_item_to_grid(nugget_to_display_context=(attribute, RED),
+        self.add_item_to_grid(nugget_to_display_context=(attribute, ACC_RED if self.accessible_color_palette else RED),
                               annotation_text=attribute.name)
         self._attribute = attribute  # save for later use
 
@@ -208,7 +221,7 @@ class EmbeddingVisualizer:
 
         for confirmed_match in self._attribute.confirmed_matches:
             if confirmed_match in self._nugget_to_displayed_items:
-                self._highlight_nugget(confirmed_match, GREEN, DEFAULT_NUGGET_SIZE)
+                self._highlight_nugget(confirmed_match, ACC_GREEN if self.accessible_color_palette else GREEN, DEFAULT_NUGGET_SIZE)
 
     def reset(self):
         for nugget, (scatter, annotation) in self._nugget_to_displayed_items.items():
@@ -230,7 +243,7 @@ class EmbeddingVisualizer:
         similar_newly_selected_nugget = self._nugget_to_similar_nugget[newly_selected_nugget] \
             if previously_selected_nugget in self._nugget_to_similar_nugget else None
 
-        highlight_color = BLUE
+        highlight_color = ACC_BLUE if self.accessible_color_palette else BLUE
         highlight_size = 15 if newly_selected_nugget == self._best_guess or similar_newly_selected_nugget == self._best_guess \
             else 10
 
@@ -239,7 +252,7 @@ class EmbeddingVisualizer:
             reset_size = DEFAULT_NUGGET_SIZE
         elif (previously_selected_nugget in self._attribute.confirmed_matches or
               similar_prev_selected_nugget in self._attribute.confirmed_matches):
-            reset_color = GREEN
+            reset_color = ACC_GREEN if self.accessible_color_palette else GREEN
             reset_size = DEFAULT_NUGGET_SIZE
         elif previously_selected_nugget == self._best_guess or similar_prev_selected_nugget == self._best_guess:
             reset_color = WHITE
@@ -255,14 +268,14 @@ class EmbeddingVisualizer:
                 CurrentThresholdSignal.identifier not in self._attribute.signals):
             logger.warning(f"Could not determine nuggets color from given attribute: {self._attribute}. "
                            f"Will return purple as color highlighting nuggets with this issue.")
-            return PURPLE
+            return ACC_PURPLE if self.accessible_color_palette else PURPLE
 
         similar_nugget = self._nugget_to_similar_nugget[nugget] if nugget in self._nugget_to_similar_nugget else None
 
         return (WHITE if nugget[CachedDistanceSignal] < self._attribute[CurrentThresholdSignal] or
                          (similar_nugget is not None and similar_nugget[CachedDistanceSignal] < self._attribute[
                              CurrentThresholdSignal])
-                else RED)
+                else ACC_RED if self.accessible_color_palette else RED)
 
     def _add_grids(self):
         grid_xy = gl.GLGridItem()
@@ -286,7 +299,7 @@ class EmbeddingVisualizer:
         scatter_to_highlight.setData(color=new_color, size=new_size)
 
     def _add_other_best_guess(self, other_best_guess):
-        self.add_item_to_grid(nugget_to_display_context=(other_best_guess, YELLOW),
+        self.add_item_to_grid(nugget_to_display_context=(other_best_guess, ACC_YELLOW if self.accessible_color_palette else YELLOW),
                               annotation_text=build_nuggets_annotation_text(other_best_guess),
                               size=15)
 
@@ -297,9 +310,11 @@ class EmbeddingVisualizerWindow(EmbeddingVisualizer, QMainWindow):
                  nuggets: List[InformationNugget] = None,
                  currently_highlighted_nugget: InformationNugget = None,
                  best_guess: InformationNugget = None,
-                 other_best_guesses: List[InformationNugget] = None):
-        EmbeddingVisualizer.__init__(self, attribute, nuggets, currently_highlighted_nugget, best_guess)
+                 other_best_guesses: List[InformationNugget] = None,
+                 accessible_color_palette: bool = False):
+        EmbeddingVisualizer.__init__(self, attribute, nuggets, currently_highlighted_nugget, best_guess, accessible_color_palette)
         QMainWindow.__init__(self)
+        self.accessible_color_palette = accessible_color_palette
 
         self.setWindowTitle("3D Grid Visualizer")
         self.setGeometry(100, 100, WINDOW_WIDTH, WINDOW_HEIGHT)
@@ -326,6 +341,14 @@ class EmbeddingVisualizerWindow(EmbeddingVisualizer, QMainWindow):
         super().showEvent(event)
         Tracker().start_timer(str(self.__class__))
 
+    def _enable_accessible_color_palette(self):
+        self.accessible_color_palette = True
+        self.enable_accessible_color_palette_()
+        
+    def _disable_accessible_color_palette(self):
+        self.accessible_color_palette = False
+        self.disable_accessible_color_palette_()
+    
     def closeEvent(self, event):
         Tracker().stop_timer(str(self.__class__))
         event.accept()
@@ -359,6 +382,7 @@ class EmbeddingVisualizerWidget(EmbeddingVisualizer, QWidget):
         self.remove_other_best_guesses_button.clicked.connect(self._handle_remove_other_best_guesses_clicked)
         self.best_guesses_widget_layout.addWidget(self.remove_other_best_guesses_button)
         self.layout.addWidget(self.best_guesses_widget)
+        self.accessible_color_palette = False
 
         self._add_grids()
 
@@ -374,6 +398,20 @@ class EmbeddingVisualizerWidget(EmbeddingVisualizer, QWidget):
                                                                 best_guess=self._best_guess)
         self._fullscreen_window.show()
 
+    def enable_accessible_color_palette(self):
+        self.accessible_color_palette = True
+        if self._fullscreen_window is None:
+            pass
+        else:
+            self._fullscreen_window.enable_accessible_color_palette_()
+    
+    def disable_accessible_color_palette(self):
+        self.accessible_color_palette = False
+        if self._fullscreen_window is None:
+            pass
+        else:
+            self._fullscreen_window.disable_accessible_color_palette_()
+    
     def return_from_embedding_visualizer_window(self):
         self._fullscreen_window.close()
         self._fullscreen_window = None
@@ -576,6 +614,13 @@ class ScatterPlotVisualizerWidget(QWidget):
         self.distances = None
         self.y = None
         self.scatter = None
+        self.accessible_color_palette = False
+        
+    def enable_accessible_color_palette(self):
+        self.accessible_color_palette = True
+    
+    def disable_accessible_color_palette(self):
+        self.accessible_color_palette = False
 
     def append_data(self, data_tuple):
         self.data.append(data_tuple)
