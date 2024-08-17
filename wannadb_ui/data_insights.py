@@ -92,9 +92,11 @@ class ChangedThresholdPositionList(ChangesList[ThresholdPositionUpdate]):
     def _create_label_and_tooltip_text(self, update: ThresholdPositionUpdate) -> Tuple[str, str]:
         moving_direction = update.new_position.name.lower()
 
-        label_text = f"{update.best_guess} ({update.count})"
+        label_text = f"{update.best_guess} {'(' + str(update.count) + ')' if update.count > 1 else ''}"
+        distance_change_text = f"Old distance: {round(update.old_distance, 4)} -> New distance: {round(update.new_distance, 4)}\n" if update.old_distance is not None \
+            else f"Initial distance: {round(update.new_distance, 4)}\n"
         tooltip_text = (f"Due to your last feedback {update.best_guess} moved {moving_direction} the threshold.\n"
-                        f"Old distance: {round(update.old_distance, 4) if update.old_distance is not None else '<Unavailable>'} -> New distance: {round(update.new_distance, 4)}\n"
+                        f"{distance_change_text}"
                         f"This happened for {update.count - 1} similar nuggets as well.")
 
         return label_text, tooltip_text

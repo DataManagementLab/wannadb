@@ -355,10 +355,14 @@ class NuggetListItemWidget(CustomScrollableListItem, VisualizationsProvidingItem
         self._update_stylesheets(False)
 
     def _handle_item_is_new(self, newly_added_nugget_context):
+        distance_change_text = (f"Old distance: {round(newly_added_nugget_context.old_distance, 4)} -> "
+                                    f"New distance: {round(newly_added_nugget_context.new_distance, 4)}") \
+                                if newly_added_nugget_context.old_distance is not None \
+                                else f"Initial distance: {round(newly_added_nugget_context.new_distance, 4)}"
         self._tooltip_text = (
-            f'{newly_added_nugget_context.added_reason.corresponding_tooltip_text}\n'
-            f'Old Distance: {round(newly_added_nugget_context.old_distance, 4) if newly_added_nugget_context.old_distance is not None else "<Unavailable>"} -> '
-            f'New Distance: {round(newly_added_nugget_context.new_distance, 4)}')
+            f'Reason for the item to be newly added:\n'
+            f'{newly_added_nugget_context.added_reason.corresponding_tooltip_text}\n\n'
+            f'{distance_change_text}')
 
         if not self._visualizations:
             return

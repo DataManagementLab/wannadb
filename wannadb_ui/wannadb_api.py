@@ -21,7 +21,7 @@ from wannadb.preprocessing.extraction import StanzaNERExtractor, SpacyNERExtract
 from wannadb.preprocessing.label_paraphrasing import OntoNotesLabelParaphraser, \
     SplitAttributeNameLabelParaphraser
 from wannadb.preprocessing.normalization import CopyNormalizer
-from wannadb.preprocessing.other_processing import ContextSentenceCacher
+from wannadb.preprocessing.other_processing import ContextSentenceCacher, DuplicatedNuggetsCleaner
 from wannadb.statistics import Statistics
 from wannadb.status import StatusCallback
 from wannadb_parsql.cache_db import SQLiteCacheDB
@@ -129,7 +129,7 @@ class WannaDBAPI(QObject):
                 RelativePositionEmbedder(),
                 DuplicatedNuggetsCleaner(),
                 PCAReducer(),
-                TSNEReducer()
+                #TSNEReducer()
             ])
 
             # run preprocessing phase
@@ -356,7 +356,7 @@ class WannaDBAPI(QObject):
                     SBERTLabelEmbedder("SBERTBertLargeNliMeanTokensResource"),
                     SBERTDocumentSentenceEmbedder("SBERTBertLargeNliMeanTokensResource"),
                     PCAReducer(),
-                    TSNEReducer(),
+                    #TSNEReducer(),
                     RankingBasedMatcher(
                         distance=SignalsMeanDistance(
                             signal_identifiers=[
@@ -383,7 +383,7 @@ class WannaDBAPI(QObject):
                                 BERTContextSentenceEmbedder("BertLargeCasedResource"),
                                 RelativePositionEmbedder(),
                                 PCAReducer(),
-                                TSNEReducer()
+                                #TSNEReducer()
                             ]
                         ),
                         find_additional_nuggets=FaissSentenceSimilarityExtractor(num_similar_sentences=20, num_phrases_per_sentence=3),
