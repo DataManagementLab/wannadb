@@ -77,6 +77,14 @@ class InteractiveMatchingWidget(MainWindowContent):
         self.layout.addWidget(self.document_widget)
         self.stop_button.hide()
 
+    def enable_accessible_color_palette(self):
+        self.document_widget.enable_accessible_color_palette()
+        self.nugget_list_widget.enable_accessible_color_palette()
+        
+    def disable_accessible_color_palette(self):
+        self.document_widget.disable_accessible_color_palette()
+        self.nugget_list_widget.disable_accessible_color_palette()
+
     def enable_visualizations(self):
         self.document_widget.show_visualizations()
         self.nugget_list_widget.show_visualizations()
@@ -108,6 +116,7 @@ class NuggetListWidget(QWidget, VisualizationsProvidingItem):
         self.layout.addWidget(self.visualize_area)
         self.visualize_area.setVisible(False)
         self.visualizations = True
+        self.accessible_color_palette = False
 
         # nugget list
         self.num_nuggets_above_label = QLabel("")
@@ -171,6 +180,14 @@ class NuggetListWidget(QWidget, VisualizationsProvidingItem):
 
     def enable_input(self):
         self.nugget_list.enable_input()
+ 
+    def enable_accessible_color_palette(self):
+        self.accessible_color_palette = True
+        self.visualize_area.enable_accessible_color_palette()
+    
+    def disable_accessible_color_palette(self):
+        self.accessible_color_palette = False
+        self.visualize_area.disable_accessible_color_palette()
 
     def disable_input(self):
         self.nugget_list.disable_input()
@@ -661,6 +678,12 @@ class DocumentWidget(QWidget, VisualizationsProvidingItem):
     def update_attribute(self, attribute):
         self.current_attribute = attribute
 
+    def enable_accessible_color_palette(self):
+        self.visualizer.enable_accessible_color_palette()
+    
+    def disable_accessible_color_palette(self):
+        self.visualizer.enable_accessible_color_palette()
+    
     def show_visualizations(self):
         self.upper_buttons_widget.show()
         self.visualizer.show()
