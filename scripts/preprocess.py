@@ -11,7 +11,7 @@ from wannadb.preprocessing.embedding import BERTContextSentenceEmbedder, Relativ
 from wannadb.preprocessing.extraction import StanzaNERExtractor, SpacyNERExtractor
 from wannadb.preprocessing.label_paraphrasing import OntoNotesLabelParaphraser, SplitAttributeNameLabelParaphraser
 from wannadb.preprocessing.normalization import CopyNormalizer
-from wannadb.preprocessing.other_processing import ContextSentenceCacher
+from wannadb.preprocessing.other_processing import ContextSentenceCacher, DuplicatedNuggetsCleaner
 from wannadb.resources import ResourceManager
 from wannadb.statistics import Statistics
 from wannadb.status import EmptyStatusCallback
@@ -70,6 +70,7 @@ def main() -> None:
             SBERTTextEmbedder("SBERTBertLargeNliMeanTokensResource"),
             BERTContextSentenceEmbedder("BertLargeCasedResource"),
             RelativePositionEmbedder(),
+            DuplicatedNuggetsCleaner(),
             PCAReducer()
         ])
 
