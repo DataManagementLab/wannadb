@@ -176,30 +176,30 @@ The GUI implementation can be found in the `wannadb_ui` package. `wannadb_api.py
 
 ---
 
-# Start the Web-Backend docker build
+# Start the Web-Backend Docker Build
 
-to build/start the production
+To build and start the production environment, use the following commands:
 
-```
+```shell
 docker compose -f "docker-compose-prod.yaml" build
 docker compose -f "docker-compose-prod.yaml" up
 ```
 
-for developers use
+For development purposes, use the following commands:
 
-```
+```shell
 docker compose build
 docker compose up
 ```
 
-the flask and other services start automaticly.
-for more information click [here](https://github.com/lw86ruwo/wannadbBackend/blob/main/WEBSERVER_STRUCTURE.md)
+Flask and other services will start automatically.
 
-so see all the routes and the structure of the webserver click [here](https://github.com/lw86ruwo/wannadbBackend/blob/main/ROUTES.md)  
+For more information on the structure of the web server, click [here](https://github.com/lw86ruwo/wannadbBackend/blob/main/WEBSERVER_STRUCTURE.md).
 
-you can use `code` to attach the container and then work in docker
+To view the available routes and the structure of the web server, refer to the documentation [here](https://github.com/lw86ruwo/wannadbBackend/blob/main/ROUTES.md).
 
-git only works when you install gh and make gh auth
-then you can work as usual
+To attach to the container and work within the Docker environment, use the `code` command.
 
-a docker rebuild is only necessary if dependencies have changed
+Please note that Git operations require the `gh` command to be installed and authenticated using `gh auth`. Once authenticated, you can work with Git as usual.
+
+A Docker rebuild is only necessary if there have been changes to the dependencies.
