@@ -43,10 +43,14 @@
 └── .env
    └── .dev
 ```
-this contains the entrypoint for the webserver, a utility file for general functionality for the whole project,
-and a .env file for environment configuration.
-a .prod should be added for production environment configuration if tis is needed.
-for these changes needs also be done in the Dockerfile
+This section contains the following files:
+- `entrypoint.sh`: This is the entrypoint for the webserver.
+- `util.py`: This file provides general functionality for the entire project.
+- `__init__.py`: This is an initialization file.
+- `.env`: This file is used for environment configuration.
+- `.dev`: This file is specific to the development environment.
+
+If a production environment configuration is needed, a `.prod` file should be added. Please make sure to update the Dockerfile accordingly to reflect these changes.
 
 ### Postgres
 ```
@@ -57,7 +61,7 @@ Postgres
 └── __init__.py
 ```
 Directory related to PostgresSQL database functionality.
-This is an abstraction layer for the database connection and queries.
+This section provides an abstraction layer for the database connection and queries.
 
 ### Redis
 ```
@@ -67,8 +71,7 @@ Redis
 └── __init__.py
 ```
 Directory related to Redis cache functionality.
-This is an abstraction layer for the Redis cache. 
-It also scopes the cache to a specific namespace for the users.
+This section provides an abstraction layer for the Redis cache, allowing for efficient caching of data. It also ensures that the cache is scoped to a specific namespace for the users, preventing any conflicts or data leakage.
 
 ### Routing
 ```
@@ -79,11 +82,12 @@ routing
 ├── user.py
 └── __init__.py
 ```
-Directory related to routing functionality for the flask webserver.
-- core.py: contains the routes for the main application routes.
-- dev.py: contains the routes for developers.
-- files.py: contains the routes for file uploads and downloads.
-- user.py: contains the routes for user authentication and management.
+Directory related to routing functionality for the Flask web server.
+
+- `core.py`: Contains the routes for the main application routes.
+- `dev.py`: Contains the routes for developers.
+- `files.py`: Contains the routes for file uploads and downloads.
+- `user.py`: Contains the routes for user authentication and management.
 
 
 ### SQLite
@@ -94,8 +98,8 @@ SQLite
 │   └── __init__.py
 ```
 Directory related to SQLite database functionality.
-This is an abstraction layer for the database connection and queries.
-It also scopes the DB to a specific namespace for the users.
+
+This section provides an abstraction layer for the database connection and queries. It also ensures that the database is scoped to a specific namespace for the users, improving data organization and security.
 
 
 ### Worker
@@ -107,8 +111,9 @@ worker
     ├── Web_API.py
     └── __init__.py
 ```
-Directory related to worker functionality, background tasks and asynchronous processing.
-- data.py: contains all altert or new types.
-- tasks.py: contains all the tasks that are to be run in the background.
-- util.py: contains utility functions for the worker.
-- Web_API.py: contains the API for the worker to communicate with the core.
+Directory related to worker functionality, background tasks, and asynchronous processing.
+
+- `data.py`: Contains all alert or new types.
+- `tasks.py`: Contains all the tasks that are to be run in the background.
+- `util.py`: Contains utility functions for the worker.
+- `Web_API.py`: Contains the API for the worker to communicate with the core.
