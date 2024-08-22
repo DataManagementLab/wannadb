@@ -6,6 +6,9 @@
 .python-version
 
 /models/
+
+1_:memory:
+
 /cache/
 /build/
 /executables/
