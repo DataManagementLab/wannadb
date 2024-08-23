@@ -19,7 +19,7 @@ annotated-types==0.7.0
 attrs==24.2.0
     # via aiohttp
 blis==0.7.11
-    # via thinc
+    # via thinc (requires blis<0.8.0,>=0.7.8)
 catalogue==2.0.10
     # via
     #   spacy
