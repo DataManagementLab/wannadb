@@ -7,7 +7,7 @@
 annotated-types==0.7.0
     # via pydantic
 blis==0.7.11
-    # via thinc
+    # via thinc (requires blis<0.8.0,>=0.7.8)
 catalogue==2.0.10
     # via
     #   spacy
@@ -108,7 +108,7 @@ numpy==1.26.4
     # via
     #   blis
     #   contourpy
-    #   faiss-cpu
+    #   faiss-cpu (requires numpy<2.0,>=1.0)
     #   matplotlib
     #   pandas
     #   scikit-learn
@@ -117,7 +117,7 @@ numpy==1.26.4
     #   sentence-transformers
     #   spacy
     #   stanza
-    #   thinc
+    #   thinc (requires numpy<2.0,>=1.19.0)
     #   transformers
     #   wannadb (pyproject.toml)
 packaging==24.1
