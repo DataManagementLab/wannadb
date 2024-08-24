@@ -92,12 +92,11 @@ class Tracker(QObject):
         self.sequence_number += 1
         self.json_data.append({'type': 'button', 'identifier': button_name})
 
-    def track_tooltip_activation(self, tooltip_information: str):
-        tooltip_information_key = tooltip_information[:15]
-        self.tooltips_hovered_counts[tooltip_information_key] += 1
-        self.log += f'{self.sequence_number}. The following tooltip was activated:\n {tooltip_information} \n'
+    def track_tooltip_activation(self, tooltip_object: str):
+        self.tooltips_hovered_counts[tooltip_object] += 1
+        self.log += f'{self.sequence_number}. The following tooltip was activated:\n {tooltip_object} \n'
         self.sequence_number += 1
-        self.json_data.append({'type': 'tooltip', 'identifier': tooltip_information_key})
+        self.json_data.append({'type': 'tooltip', 'identifier': tooltip_object})
 
 
 def track_button_click(button_name: str):
