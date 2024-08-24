@@ -214,7 +214,7 @@ class NuggetListItemWidget(CustomScrollableListItem, VisualizationProvidingItem)
         self.layout.setSpacing(10)
 
         self.confidence_button = QPushButton()
-        self.confidence_button.event = lambda e: self.handle_tooltip_event(self.confidence_button, e)
+        self.confidence_button.event = lambda e: self.handle_tooltip_event(self.confidence_button, e, "NuggetListItemWidget.confidence_button")
         self.confidence_button.setFlat(True)
         self.confidence_button.setIcon(ICON_LOW_CONFIDENCE)
         self.confidence_button.setToolTip("Confidence in this match.")
@@ -233,14 +233,14 @@ class NuggetListItemWidget(CustomScrollableListItem, VisualizationProvidingItem)
         self.layout.addWidget(self.text_edit)
 
         self.match_button = QPushButton()
-        self.match_button.event = lambda e: self.handle_tooltip_event(self.match_button, e)
+        self.match_button.event = lambda e: self.handle_tooltip_event(self.match_button, e, "NuggetListItemWidget.match_button")
         self.match_button.setIcon(QIcon("wannadb_ui/resources/correct.svg"))
         self.match_button.setToolTip("Confirm this value.")
         self.match_button.clicked.connect(self._match_button_clicked)
         self.layout.addWidget(self.match_button)
 
         self.fix_button = QPushButton()
-        self.fix_button.event = lambda e: self.handle_tooltip_event(self.fix_button, e)
+        self.fix_button.event = lambda e: self.handle_tooltip_event(self.fix_button, e, "NuggetListItemWidget.fix_button")
         self.fix_button.setIcon(QIcon("wannadb_ui/resources/pencil.svg"))
         self.fix_button.setToolTip("Edit this value.")
         self.fix_button.clicked.connect(self._fix_button_clicked)
@@ -394,13 +394,13 @@ class NuggetListItemWidget(CustomScrollableListItem, VisualizationProvidingItem)
             self.text_edit.setStyleSheet(f"color: black; background-color: {WHITE}")
 
     def event(self, e):
-        return self.handle_tooltip_event(self, e)
+        return self.handle_tooltip_event(self, e, "NuggetListItemWidget")
 
-    def handle_tooltip_event(self, widget, e):
+    def handle_tooltip_event(self, widget, e, identifier_name):
         if e.type() == QEvent.Type.ToolTip:
             tooltip_text = widget.toolTip()  # Extract the tooltip text
             if self.last_tooltip_text_passed != tooltip_text:
-                Tracker().track_tooltip_activation(tooltip_text)
+                Tracker().track_tooltip_activation(identifier_name)
                 self.last_tooltip_text_passed = tooltip_text
         return super(widget.__class__, widget).event(e)
 
