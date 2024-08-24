@@ -7,6 +7,7 @@ from PyQt6.QtWidgets import QWidget, QHBoxLayout, QLabel, QVBoxLayout, QSpacerIt
 
 from wannadb_ui.common import BestMatchUpdate, ThresholdPositionUpdate, ThresholdPosition, SUBHEADER_FONT, LABEL_FONT, \
     BUTTON_FONT, VisualizationProvidingItem, AvailableVisualizationsLevel
+from wannadb_ui.study import track_button_click
 from wannadb_ui.visualizations import EmbeddingVisualizerWindow
 
 UPDATE_TYPE = TypeVar("UPDATE_TYPE")
@@ -145,6 +146,7 @@ class DataInsightsArea:
         self.suggestion_visualizer_button.setMaximumWidth(240)
         self.suggestion_visualizer_button.clicked.connect(self._show_suggestion_visualizer)
 
+    @track_button_click("Show Suggestions In 3D-Grid")
     def _show_suggestion_visualizer(self):
         self.suggestion_visualizer.setVisible(True)
 
