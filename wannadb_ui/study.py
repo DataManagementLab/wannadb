@@ -1,6 +1,7 @@
 import logging
 import os
 import time
+from collections import defaultdict
 from functools import wraps
 
 from PyQt6.QtCore import QObject, QTimer, QDateTime, pyqtSignal
@@ -25,8 +26,8 @@ class Tracker(QObject):
             super().__init__()  # Call the QObject initializer
             self.window_open_times = {}
             self.timer = QTimer()
-            #self.timer.timeout.connect(self.calculate_time_spent)
-            self.button_click_counts: Dict[str, int] = {}
+            self.button_click_counts = defaultdict(int)
+            self.tooltips_hovered_counts = defaultdict(int)
             self.total_window_open_times = {}
             self._initialized = True
             self.log = ''
@@ -50,8 +51,6 @@ class Tracker(QObject):
         tack: float = time.time()
         logger.info(f"Writing the report in {round(tick - tack, 2)} seconds")
 
-    #todo 1 timer works for many windows (not just for one)
-    #todo 2 timer works for many windows simultaneously
     def start_timer(self, window_name: str):
         self.window_open_times[window_name] = QDateTime.currentDateTime()
         self.timer.start(1000)
@@ -78,11 +77,14 @@ class Tracker(QObject):
             self.sequence_number += 1
 
     def track_button_click(self, button_name: str):
-        if button_name in self.button_click_counts:
-            self.button_click_counts[button_name] += 1
-        else:
-            self.button_click_counts[button_name] = 1
+        self.button_click_counts[button_name] += 1
         self.log += f'{self.sequence_number}. {button_name} was clicked.\n'
+        self.sequence_number += 1
+
+    def track_tooltip_activation(self, tooltip_information: str):
+        tooltip_information_key = tooltip_information[:15]
+        self.tooltips_hovered_counts[tooltip_information_key] += 1
+        self.log += f'{self.sequence_number}. The following tooltip was activated:\n {tooltip_information} \n'
         self.sequence_number += 1
 
     def get_button_click_count(self, button_name: str) -> int:
@@ -99,5 +101,4 @@ def track_button_click(button_name: str):
             return func(self, *args, **kwargs)
 
         return wrapper
-
     return decorator
