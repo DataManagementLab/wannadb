@@ -683,5 +683,24 @@ This module defines Flask routes for the 'core' functionality of the WannaDB UI.
         {"task_id": "task_id"}
         ```
 
+#### Confirm Multi Match
 
-
+-   Method: `POST`
+-   URL: `/core/document_base/confirm/nugget/multi_match`
+-   Form
+    -   `authorization`: Your authorization token.
+    -   `organisationId`: Your organization ID.
+    -   `baseName`: Your document base name.
+    -   `matches`: List of matches each containing:
+        -   `documentName`: Your document name.
+        -   `documentContent`: Your document content.
+        -   `nuggetText`: Nugget as text.
+        -   `startIndex`: Start index of the nugget.
+        -   `endIndex`: End index of the nugget.
+    -   `interactiveCallTaskId`: Interactive call task ID.
+-   Response
+    -   401: No authorization provided.
+    -   200: Nugget confirmed successfully.
+        ```json
+        {"task_ids": ["task_id1", ...]}
+        ```
