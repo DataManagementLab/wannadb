@@ -1,4 +1,4 @@
-/venv/
+/venv*/
 /.idea/
 **/__pycache__/
 /.pytest_cache/
@@ -10,9 +10,11 @@ flask_app/__pycache__
 1_:memory:
 
 /cache/
+/build/
 .json
 .pdf
 .bson
+*.spec
 /evaluation/datasets/aviation/documents
 /evaluation/datasets/nobel/documents
 /evaluation/results/
