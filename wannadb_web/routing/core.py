@@ -466,3 +466,86 @@ def confirm_nugget_match():
 	
 	return make_response({'task_id': task.id}, 202)
 
+@core_routes.route('/document_base/confirm/nugget/multi_match', methods=['POST'])
+def confirm_nugget_multi_match():
+	"""
+	Endpoint to confirm multiple matched nuggets.
+
+	Example Form Payload:
+	{
+		"authorization": "your_author
+		"organisationId": "your_organisation_id",
+		"baseName": "your_document_base_name",
+		"matches": [{
+			"documentName": "your_document_name",
+			"documentContent": "your_document_content",
+			"nuggetText": "nugget_as_text",
+			"startIndex": "start_index_of_nugget",
+			"endIndex": "end_index_of_nugget"
+		}],
+		"interactiveCallTaskId": "interactive_call_task_id"
+	}
+	"""
+	form = request.form
+
+	authorization = form.get("authorization")
+	organisation_id: Optional[int] = form.get("organisationId")
+	base_name = form.get("baseName")
+	matches = form.get("matches")
+	i_task_id = form.get("interactiveCallTaskId")
+
+	if (organisation_id is None
+			or base_name is None
+			or matches is None
+			or authorization is None
+			or i_task_id is None):
+
+		return make_response({"error": "missing parameters"}, 400)
+
+	_token = tokenDecode(authorization)
+
+	if _token is False:
+		return make_response({"error": "invalid token"}, 401)
+
+	user_id = _token.id
+
+	if not isinstance(matches, list):
+		return make_response({"error": "matches must be a list"}, 400)
+	
+	tasks = []
+	
+	for match in matches:
+
+		document_name = match.get("documentName")
+		document_content = match.get("documentContent")
+		nugget_text = match.get("nuggetText")
+		start_index = match.get("startIndex")
+		end_index = match.get("endIndex")
+
+		if (document_name is None
+				or document_content is None
+				or nugget_text is None
+				or start_index is None
+				or end_index is None):
+
+			return make_response({"error": "missing parameters"}, 400)
+
+		document = Document(document_name, document_content)
+
+		nugget = InformationNugget(document, start_index, end_index)
+
+		task = DocumentBaseConfirmNugget().apply_async(args=(
+			user_id,
+			base_name,
+			organisation_id,
+			document_name,
+			document_content,
+			nugget,
+			start_index,
+			end_index,
+			i_task_id
+		))
+
+		tasks.append(task.id)
+
+	return make_response({'task_ids': [task.id for task in tasks]}, 202)
