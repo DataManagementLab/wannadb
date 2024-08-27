@@ -150,6 +150,14 @@ class DataInsightsArea:
     def _show_suggestion_visualizer(self):
         self.suggestion_visualizer.setVisible(True)
 
+    def _enable_accessible_color_palette(self):
+        self.accessible_color_palette = True
+        self.suggestion_visualizer.enable_accessible_color_palette_()
+    
+    def _disable_accessible_color_palette(self):
+        self.accessible_color_palette = False
+        self.suggestion_visualizer.disable_accessible_color_palette_()
+
 
 class SimpleDataInsightsArea(QWidget, DataInsightsArea):
     def __init__(self):
@@ -163,6 +171,14 @@ class SimpleDataInsightsArea(QWidget, DataInsightsArea):
         self.layout.addWidget(self.suggestion_visualizer_button, 0, Qt.AlignmentFlag.AlignRight)
 
         self.setVisible(False)
+
+    def enable_accessible_color_palette(self):
+        self.accessible_color_palette = True
+        self._enable_accessible_color_palette()
+    
+    def disable_accessible_color_palette(self):
+        self.accessible_color_palette = False
+        self._disable_accessible_color_palette()
 
 
 class ExtendedDataInsightsArea(QWidget, DataInsightsArea):
@@ -224,14 +240,15 @@ class ExtendedDataInsightsArea(QWidget, DataInsightsArea):
         self.layout.addLayout(self.changes_list3_hbox)
 
         self.setVisible(False)
-    
+
     def enable_accessible_color_palette(self):
         self.accessible_color_palette = True
-        self.suggestion_visualizer.enable_accessible_color_palette_()
+        self._enable_accessible_color_palette()
     
     def disable_accessible_color_palette(self):
         self.accessible_color_palette = False
-        self.suggestion_visualizer.disable_accessible_color_palette_()
+        self._disable_accessible_color_palette()
+    
 
     def update_threshold_value_label(self, new_threshold_value, threshold_value_change):
         if round(threshold_value_change, 4) != 0:
