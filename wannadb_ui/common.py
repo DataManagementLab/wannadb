@@ -1,4 +1,4 @@
-import abc
+from abc import ABC, abstractmethod
 from enum import Enum
 from typing import Union, List, Optional
 
@@ -40,6 +40,48 @@ LIGHT_GREEN = "#ececcb"
 INPUT_DOCS_COLUMN_NAME = "input_document"
 
 
+class ThresholdPosition(Enum):
+    ABOVE = 1
+    BELOW = 2
+
+
+class AvailableVisualizationsLevel(Enum):
+    DISABLED = 0
+    LEVEL_1 = 1
+    LEVEL_2 = 2
+
+
+class NuggetUpdateType(Enum):
+    NEWLY_ADDED = 1
+    THRESHOLD_POSITION_UPDATE = 2
+    BEST_MATCH_UPDATE = 3
+
+
+class AddedReason(Enum):
+    MOST_UNCERTAIN = "The documents match belongs to the considered most uncertain matches."
+    INTERESTING_ADDITIONAL_EXTRACTION = "The document recently got interesting additional extraction to the list."
+    AT_THRESHOLD = "The distance of the guessed match is within the considered range around the threshold."
+
+    def __init__(self, corresponding_tooltip_text: str):
+        self._corresponding_tooltip_text = corresponding_tooltip_text
+
+    @property
+    def corresponding_tooltip_text(self):
+        return self._corresponding_tooltip_text
+
+
+class VisualizationProvidingItem:
+    def __init__(self,  *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+    def update_shown_visualizations(self, visualization_level: AvailableVisualizationsLevel):
+        self._adapt_to_visualizations_level(visualization_level)
+
+    @abstractmethod
+    def _adapt_to_visualizations_level(self, visualizations_level):
+        pass
+
+
 class MainWindowContent(QWidget):
 
     def __init__(self, main_window, header_text):
@@ -65,11 +107,11 @@ class MainWindowContent(QWidget):
         self.controls_widget_layout.setContentsMargins(0, 0, 0, 0)
         self.top_widget_layout.addWidget(self.controls_widget, alignment=Qt.AlignmentFlag.AlignRight)
 
-    @abc.abstractmethod
+    @abstractmethod
     def enable_input(self):
         raise NotImplementedError
 
-    @abc.abstractmethod
+    @abstractmethod
     def disable_input(self):
         raise NotImplementedError
 
@@ -90,17 +132,7 @@ class MainWindowContentSection(QWidget):
         self.layout.addWidget(self.sub_header)
 
 
-class VisualizationsProvidingItem:
-    @abc.abstractmethod
-    def show_visualizations(self):
-        raise NotImplementedError
-
-    @abc.abstractmethod
-    def hide_visualizations(self):
-        raise NotImplementedError
-
-
-class CustomScrollableList(QWidget, VisualizationsProvidingItem):
+class CustomScrollableList(QWidget):
 
     def __init__(self, parent, item_type, floating_widget=None, orientation="vertical", above_widget=None):
         super(CustomScrollableList, self).__init__()
@@ -149,7 +181,7 @@ class CustomScrollableList(QWidget, VisualizationsProvidingItem):
 
         # make sure that there are enough item widgets
         while len(item_list) > len(self.item_widgets):
-            self.item_widgets.append(self.item_type(self.parent))
+            self.item_widgets.append(self._create_new_widget())
 
         # make sure that the correct number of item widgets is shown
         while len(item_list) > self.num_visible_item_widgets:
@@ -179,15 +211,25 @@ class CustomScrollableList(QWidget, VisualizationsProvidingItem):
         for item_widget in self.item_widgets:
             item_widget.disable_input()
 
-    def show_visualizations(self):
-        for item_widget in self.item_widgets:
-            if isinstance(item_widget, VisualizationsProvidingItem):
-                item_widget.show_visualizations()
+    def _create_new_widget(self):
+        return self.item_type(self.parent)
 
-    def hide_visualizations(self):
-        for item_widget in self.item_widgets:
-            if isinstance(item_widget, VisualizationsProvidingItem):
-                item_widget.hide_visualizations()
+
+class VisualizationProvidingCustomScrollableList(CustomScrollableList, VisualizationProvidingItem):
+    def __init__(self, parent, item_type, visualizations_level, attach_visualization_level_observer,
+                 floating_widget=None, orientation="vertical", above_widget=None):
+        super().__init__(parent, item_type, floating_widget, orientation, above_widget)
+
+        self.visualizations_level = visualizations_level
+        self.attach_visualization_level_observer = attach_visualization_level_observer
+
+    def _create_new_widget(self):
+        new_widget = self.item_type(self.parent, self.visualizations_level)
+        self.attach_visualization_level_observer(new_widget)
+        return new_widget
+
+    def _adapt_to_visualizations_level(self, visualizations_level):
+        self.visualizations_level = visualizations_level
 
 
 class CustomScrollableListItem(QFrame):
@@ -196,15 +238,15 @@ class CustomScrollableListItem(QFrame):
         super(CustomScrollableListItem, self).__init__()
         self.parent = parent
 
-    @abc.abstractmethod
+    @abstractmethod
     def update_item(self, item, params=None):
         raise NotImplementedError
 
-    @abc.abstractmethod
+    @abstractmethod
     def enable_input(self):
         raise NotImplementedError
 
-    @abc.abstractmethod
+    @abstractmethod
     def disable_input(self):
         raise NotImplementedError
 
@@ -234,24 +276,6 @@ def show_confirmation_dialog(parent, title_text, explanation_text, accept_text, 
     no_button.setFocus()
 
     return dialog.exec()
-
-
-class AddedReason(Enum):
-    MOST_UNCERTAIN = "The documents match belongs to the considered most uncertain matches."
-    INTERESTING_ADDITIONAL_EXTRACTION = "The document recently got interesting additional extraction to the list."
-    AT_THRESHOLD = "The distance of the guessed match is within the considered range around the threshold."
-
-    def __init__(self, corresponding_tooltip_text: str):
-        self._corresponding_tooltip_text = corresponding_tooltip_text
-
-    @property
-    def corresponding_tooltip_text(self):
-        return self._corresponding_tooltip_text
-
-
-class ThresholdPosition(Enum):
-    ABOVE = 1
-    BELOW = 2
 
 
 class BestMatchUpdate:
@@ -335,12 +359,6 @@ class NewlyAddedNuggetContext:
     @property
     def added_reason(self):
         return self._added_reason
-
-
-class NuggetUpdateType(Enum):
-    NEWLY_ADDED = 1
-    THRESHOLD_POSITION_UPDATE = 2
-    BEST_MATCH_UPDATE = 3
 
 
 class NuggetUpdatesContext:

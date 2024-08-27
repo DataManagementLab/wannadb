@@ -6,11 +6,12 @@ from pathlib import Path
 from wannadb.configuration import Pipeline
 from wannadb.data.data import Document, DocumentBase
 from wannadb.interaction import EmptyInteractionCallback
+from wannadb.preprocessing.dimension_reduction import PCAReducer
 from wannadb.preprocessing.embedding import BERTContextSentenceEmbedder, RelativePositionEmbedder, SBERTTextEmbedder, SBERTLabelEmbedder
 from wannadb.preprocessing.extraction import StanzaNERExtractor, SpacyNERExtractor
 from wannadb.preprocessing.label_paraphrasing import OntoNotesLabelParaphraser, SplitAttributeNameLabelParaphraser
 from wannadb.preprocessing.normalization import CopyNormalizer
-from wannadb.preprocessing.other_processing import ContextSentenceCacher
+from wannadb.preprocessing.other_processing import ContextSentenceCacher, DuplicatedNuggetsCleaner
 from wannadb.resources import ResourceManager
 from wannadb.statistics import Statistics
 from wannadb.status import EmptyStatusCallback
@@ -68,7 +69,9 @@ def main() -> None:
             SBERTLabelEmbedder("SBERTBertLargeNliMeanTokensResource"),
             SBERTTextEmbedder("SBERTBertLargeNliMeanTokensResource"),
             BERTContextSentenceEmbedder("BertLargeCasedResource"),
-            RelativePositionEmbedder()
+            RelativePositionEmbedder(),
+            DuplicatedNuggetsCleaner(),
+            PCAReducer()
         ])
 
         document_base = DocumentBase(documents, [])

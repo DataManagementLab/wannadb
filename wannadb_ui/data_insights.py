@@ -2,10 +2,12 @@ import abc
 import random
 from typing import Generic, TypeVar, List, Tuple
 
+from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QWidget, QHBoxLayout, QLabel, QVBoxLayout, QSpacerItem, QSizePolicy, QPushButton
 
 from wannadb_ui.common import BestMatchUpdate, ThresholdPositionUpdate, ThresholdPosition, SUBHEADER_FONT, LABEL_FONT, \
-    BUTTON_FONT
+    BUTTON_FONT, VisualizationProvidingItem, AvailableVisualizationsLevel
+from wannadb_ui.study import track_button_click
 from wannadb_ui.visualizations import EmbeddingVisualizerWindow
 
 UPDATE_TYPE = TypeVar("UPDATE_TYPE")
@@ -73,7 +75,7 @@ class ChangedBestMatchDocumentsList(ChangesList[BestMatchUpdate]):
         super(ChangedBestMatchDocumentsList, self).__init__("Changed best guesses:", tooltip_text)
 
     def _create_label_and_tooltip_text(self, update: BestMatchUpdate) -> Tuple[str, str]:
-        label_text = f"{update.new_best_match} ({update.count})"
+        label_text = f"{update.new_best_match} {'(' + str(update.count) + ')' if update.count > 1 else ''}"
         tooltip_text = (f"Previous best match was: {update.old_best_match}\n"
                         f"Changes to token \"{update.new_best_match}\": {update.count}")
 
@@ -92,9 +94,11 @@ class ChangedThresholdPositionList(ChangesList[ThresholdPositionUpdate]):
     def _create_label_and_tooltip_text(self, update: ThresholdPositionUpdate) -> Tuple[str, str]:
         moving_direction = update.new_position.name.lower()
 
-        label_text = f"{update.best_guess} ({update.count})"
+        label_text = f"{update.best_guess} {'(' + str(update.count) + ')' if update.count > 1 else ''}"
+        distance_change_text = f"Old distance: {round(update.old_distance, 4)} -> New distance: {round(update.new_distance, 4)}\n" if update.old_distance is not None \
+            else f"Initial distance: {round(update.new_distance, 4)}\n"
         tooltip_text = (f"Due to your last feedback {update.best_guess} moved {moving_direction} the threshold.\n"
-                        f"Old distance: {round(update.old_distance, 4) if update.old_distance is not None else '<Unavailable>'} -> New distance: {round(update.new_distance, 4)}\n"
+                        f"{distance_change_text}"
                         f"This happened for {update.count - 1} similar nuggets as well.")
 
         return label_text, tooltip_text
@@ -132,9 +136,39 @@ class ChangedThresholdPositionToBelowList(ChangedThresholdPositionList):
                            threshold_updates))
 
 
-class DataInsightsArea(QWidget):
+class DataInsightsArea:
     def __init__(self):
-        super(DataInsightsArea, self).__init__()
+        self.suggestion_visualizer = EmbeddingVisualizerWindow()
+
+        self.suggestion_visualizer_button = QPushButton("Show Suggestions In 3D-Grid")
+        self.suggestion_visualizer_button.setContentsMargins(0, 0, 0, 0)
+        self.suggestion_visualizer_button.setFont(BUTTON_FONT)
+        self.suggestion_visualizer_button.setMaximumWidth(240)
+        self.suggestion_visualizer_button.clicked.connect(self._show_suggestion_visualizer)
+
+    @track_button_click("Show Suggestions In 3D-Grid")
+    def _show_suggestion_visualizer(self):
+        self.suggestion_visualizer.setVisible(True)
+
+
+class SimpleDataInsightsArea(QWidget, DataInsightsArea):
+    def __init__(self):
+        QWidget.__init__(self)
+        DataInsightsArea.__init__(self)
+
+        self.layout = QHBoxLayout(self)
+        self.layout.setContentsMargins(0, 0, 0, 0)
+        self.layout.setSpacing(0)
+
+        self.layout.addWidget(self.suggestion_visualizer_button, 0, Qt.AlignmentFlag.AlignRight)
+
+        self.setVisible(False)
+
+
+class ExtendedDataInsightsArea(QWidget, DataInsightsArea):
+    def __init__(self):
+        QWidget.__init__(self)
+        DataInsightsArea.__init__(self)
 
         self.layout = QVBoxLayout(self)
         self.layout.setSpacing(0)
@@ -178,15 +212,7 @@ class DataInsightsArea(QWidget):
         self.changes_list3_hbox = QHBoxLayout()
         self.changes_list3_hbox.setContentsMargins(0, 0, 0, 0)
         self.changes_list3_hbox.setSpacing(0)
-
-        self.suggestion_visualizer = EmbeddingVisualizerWindow()
-        self.suggestion_visualizer_button = QPushButton("Show Suggestions In 3D-Grid")
-        self.suggestion_visualizer_button.setContentsMargins(0, 0, 0, 0)
         self.accessible_color_palette = False
-        self.suggestion_visualizer_button.setFont(BUTTON_FONT)
-        self.suggestion_visualizer_button.setMaximumWidth(240)
-        self.suggestion_visualizer_button.clicked.connect(self._show_suggestion_visualizer)
-
         self.changes_best_matches_list = ChangedBestMatchDocumentsList()
 
         self.changes_list3_hbox.addWidget(self.changes_best_matches_list)
@@ -197,8 +223,7 @@ class DataInsightsArea(QWidget):
         self.layout.addLayout(self.changes_list2_hbox)
         self.layout.addLayout(self.changes_list3_hbox)
 
-    def _show_suggestion_visualizer(self):
-        self.suggestion_visualizer.setVisible(True)
+        self.setVisible(False)
     
     def enable_accessible_color_palette(self):
         self.accessible_color_palette = True

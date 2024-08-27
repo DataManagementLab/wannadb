@@ -310,6 +310,7 @@ class RankingBasedMatcher(BaseMatcher):
                 t1 = time.time()
                 statistics[attribute.name]["feedback_durations"].append(t1 - t0)
 
+                self._old_max_distance = self._max_distance
                 self._old_feedback_nuggets = feedback_nuggets
                 self._new_nugget_contexts.clear()
                 old_distances = {nugget: nugget[CachedDistanceSignal] for nugget in document_base.nuggets}
@@ -411,13 +412,17 @@ class RankingBasedMatcher(BaseMatcher):
                         for nugget, new_distance in zip(document.nuggets, new_distances):
                             if distances_based_on_label or new_distance < nugget[CachedDistanceSignal]:
                                 nugget[CachedDistanceSignal] = new_distance
+
+                        previous_best_match: InformationNugget = document.nuggets[document[CachedDistanceSignal]]
                         for ix, nugget in enumerate(document.nuggets):
                             current_guess: InformationNugget = document.nuggets[document[CurrentMatchIndexSignal]]
                             if nugget[CachedDistanceSignal] < current_guess[CachedDistanceSignal]:
                                 document[CurrentMatchIndexSignal] = ix
-                                if nugget.text != current_guess.text:
-                                    new_best_matches.update([nugget.text])
-                                    new_to_old_match[nugget.text] = current_guess.text
+                        new_best_match: InformationNugget = document.nuggets[document[CurrentMatchIndexSignal]]
+                        if previous_best_match != new_best_match:
+                            new_best_matches.update([new_best_match.text])
+                            new_to_old_match[new_best_match.text] = previous_best_match.text
+
                     distances_based_on_label = False
 
                     # Find more nuggets that are similar to this match
@@ -498,13 +503,16 @@ class RankingBasedMatcher(BaseMatcher):
                         for nugget, new_distance in zip(document.nuggets, new_distances):
                             if distances_based_on_label or new_distance < nugget[CachedDistanceSignal]:
                                 nugget[CachedDistanceSignal] = new_distance
+
+                        previous_best_match: InformationNugget = document.nuggets[document[CurrentMatchIndexSignal]]
                         for ix, nugget in enumerate(document.nuggets):
                             current_guess: InformationNugget = document.nuggets[document[CurrentMatchIndexSignal]]
                             if nugget[CachedDistanceSignal] < current_guess[CachedDistanceSignal]:
                                 document[CurrentMatchIndexSignal] = ix
-                                if nugget.text != current_guess.text:
-                                    new_best_matches.update([nugget.text])
-                                    new_to_old_match[nugget.text] = current_guess.text
+                        new_best_match: InformationNugget = document.nuggets[document[CurrentMatchIndexSignal]]
+                        if previous_best_match != new_best_match:
+                            new_best_matches.update([new_best_match.text])
+                            new_to_old_match[new_best_match.text] = previous_best_match.text
                     distances_based_on_label = False
 
                     if self._adjust_threshold:
