@@ -31,7 +31,7 @@ See [EXTRACTORS.md](EXTRACTORS.md) for more information on the interactive extra
 
 ## Installation
 
-This project requires Python 3.9 or newer.
+This project requires Python 3.10 or newer.
 
 ##### 1. Create a virtual environment.
 
