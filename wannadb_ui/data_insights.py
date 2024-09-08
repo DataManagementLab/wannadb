@@ -5,8 +5,9 @@ from typing import Generic, TypeVar, List, Tuple
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QWidget, QHBoxLayout, QLabel, QVBoxLayout, QSpacerItem, QSizePolicy, QPushButton
 
+from wannadb_ui import visualizations
 from wannadb_ui.common import BestMatchUpdate, ThresholdPositionUpdate, ThresholdPosition, SUBHEADER_FONT, LABEL_FONT, \
-    BUTTON_FONT, VisualizationProvidingItem, AvailableVisualizationsLevel
+    BUTTON_FONT, AccessibleColor
 from wannadb_ui.study import track_button_click
 from wannadb_ui.visualizations import EmbeddingVisualizerWindow
 
@@ -138,7 +139,11 @@ class ChangedThresholdPositionToBelowList(ChangedThresholdPositionList):
 
 class DataInsightsArea:
     def __init__(self):
-        self.suggestion_visualizer = EmbeddingVisualizerWindow()
+        self.suggestion_visualizer = EmbeddingVisualizerWindow([
+            (AccessibleColor(visualizations.WHITE, visualizations.WHITE), 'Below threshold'),
+            (AccessibleColor(visualizations.RED, visualizations.ACC_RED), 'Above threshold'),
+            (AccessibleColor(visualizations.GREEN, visualizations.ACC_GREEN), 'Confirmed match')
+        ])
 
         self.suggestion_visualizer_button = QPushButton("Show Suggestions In 3D-Grid")
         self.suggestion_visualizer_button.setContentsMargins(0, 0, 0, 0)
