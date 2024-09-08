@@ -1,9 +1,10 @@
 from abc import ABC, abstractmethod
 from enum import Enum
-from typing import Union, List, Optional
+from typing import Union, List, Optional, Tuple
 
-from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QFont
+import pyqtgraph
+from PyQt6.QtCore import Qt, QPoint
+from PyQt6.QtGui import QFont, QPixmap, QPainter, QColor
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QLabel, QScrollArea, QFrame, QHBoxLayout, QDialog, QPushButton
 
 from wannadb.data.data import InformationNugget
@@ -21,6 +22,7 @@ MENU_FONT = QFont("Segoe UI", pointSize=11)
 STATUS_BAR_FONT = QFont("Segoe UI", pointSize=11)
 STATUS_BAR_FONT_BOLD = QFont("Segoe UI", pointSize=11, weight=QFont.Weight.Bold)
 BUTTON_FONT = QFont("Segoe UI", pointSize=11)
+BUTTON_FONT_SMALL = QFont("Segoe UI", pointSize=9)
 
 # colors
 WHITE = "#FFFFFF"
@@ -381,3 +383,17 @@ class NuggetUpdatesContext:
     @property
     def threshold_position_updates(self) -> List[ThresholdPositionUpdate]:
         return self._threshold_position_updates
+
+
+class AccessibleColor:
+    def __init__(self, color: QColor, corresponding_accessible_color: QColor):
+        self._color = color
+        self._corresponding_accessible_color = corresponding_accessible_color
+
+    @property
+    def color(self):
+        return self._color
+
+    @property
+    def corresponding_accessible_color(self):
+        return self._corresponding_accessible_color

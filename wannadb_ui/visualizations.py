@@ -5,10 +5,10 @@ from typing import List, Dict, Tuple, Union
 import numpy as np
 import pyqtgraph as pg
 import pyqtgraph.opengl as gl
-from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QFont
+from PyQt6.QtCore import Qt, QPoint
+from PyQt6.QtGui import QFont, QColor, QPixmap, QPainter
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QPushButton, QMainWindow, QHBoxLayout, QFrame, QScrollArea, \
-    QApplication
+    QApplication, QLabel
 from matplotlib import pyplot as plt
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.backends.backend_qt5agg import NavigationToolbar2QT as NavigationToolbar
@@ -21,6 +21,7 @@ from pyqtgraph.opengl import GLViewWidget, GLScatterPlotItem, GLTextItem
 from wannadb.data.data import InformationNugget, Attribute
 from wannadb.data.signals import PCADimensionReducedTextEmbeddingSignal, PCADimensionReducedLabelEmbeddingSignal, \
     CachedDistanceSignal, CurrentThresholdSignal
+from wannadb_ui.common import AccessibleColor, BUTTON_FONT_SMALL
 from wannadb_ui.study import Tracker, track_button_click
 
 logger: logging.Logger = logging.getLogger(__name__)
@@ -60,8 +61,68 @@ def create_sanitized_text(nugget):
     return nugget.text.replace("\n", " ")
 
 
+class PointLegend(QLabel):
+    def __init__(self, point_meaning: str, point_color: QColor):
+        super().__init__()
+
+        self._height = 30
+        self._width = 300
+        self._circle_diameter = 10
+
+        self._point_meaning = point_meaning
+        self._point_color = point_color
+
+        self._pixmap = QPixmap(self._width, self._height)
+        self._pixmap.fill(Qt.GlobalColor.transparent)
+
+        self._painter = QPainter(self._pixmap)
+
+        circle_center = QPoint(self._circle_diameter, round(self._height / 2))
+
+        self._painter.setPen(Qt.PenStyle.NoPen)
+        self._painter.setBrush(point_color)
+        self._painter.drawEllipse(circle_center, self._circle_diameter, self._circle_diameter)
+        self._painter.setFont(BUTTON_FONT_SMALL)
+        self._painter.setPen(pg.mkColor('black'))
+        text_height = self._painter.fontMetrics().height()
+        self._painter.drawText(circle_center.x() + self._circle_diameter + 5,
+                               circle_center.y() + round(text_height / 4),
+                               f': {self._point_meaning}')
+
+        self._painter.end()
+
+        self.setPixmap(self._pixmap)
+
+
+class EmbeddingVisualizerLegend(QWidget):
+    def __init__(self):
+        super().__init__()
+
+        self.layout = QHBoxLayout()
+        self.layout.setContentsMargins(0, 0, 0, 0)
+        self.layout.setSpacing(0)
+        self.setLayout(self.layout)
+
+        self._point_legends = []
+
+    def reset(self):
+        for widget in self._point_legends:
+            self.layout.removeWidget(widget)
+        self._point_legends = []
+
+    def update_colors_and_meanings(self, colors_with_meanings: List[Tuple[QColor, str]]):
+        self.reset()
+
+        for color, meaning in colors_with_meanings:
+            point_legend = PointLegend(meaning, color)
+            self.layout.addWidget(point_legend)
+            self._point_legends.append(point_legend)
+
+
 class EmbeddingVisualizer:
     def __init__(self,
+                 legend: EmbeddingVisualizerLegend,
+                 colors_with_meanings: List[Tuple[AccessibleColor, str]],
                  attribute: Attribute = None,
                  nuggets: List[InformationNugget] = None,
                  currently_highlighted_nugget: InformationNugget = None,
@@ -75,13 +136,18 @@ class EmbeddingVisualizer:
         self._other_best_guesses: List[InformationNugget] = other_best_guesses
         self._nugget_to_displayed_items: Dict[InformationNugget, Tuple[GLScatterPlotItem, GLTextItem]] = dict()
         self._gl_widget = GLViewWidget()
-        self.accessible_color_palette = accessible_color_palette
+        self._accessible_color_palette = accessible_color_palette
+        self._legend = legend
+        self._colors_with_meanings = colors_with_meanings
+        self._update_legend()
 
     def enable_accessible_color_palette_(self):
-        self.accessible_color_palette = True
+        self._accessible_color_palette = True
+        self._update_legend()
     
     def disable_accessible_color_palette_(self):
-        self.accessible_color_palette = False
+        self._accessible_color_palette = False
+        self._update_legend()
 
     def update_and_display_params(self,
                                   attribute: Attribute,
@@ -141,7 +207,7 @@ class EmbeddingVisualizer:
         self._best_guess = best_guess
 
         if self._best_guess == self._currently_highlighted_nugget:
-            self._highlight_nugget(self._best_guess, ACC_BLUE if self.accessible_color_palette else BLUE, 15)
+            self._highlight_nugget(self._best_guess, ACC_BLUE if self._accessible_color_palette else BLUE, 15)
             return
 
         self._highlight_nugget(self._best_guess, WHITE, 15)
@@ -176,7 +242,7 @@ class EmbeddingVisualizer:
                                   annotation_text=build_nuggets_annotation_text(nugget))
 
     def display_attribute_embedding(self, attribute):
-        self.add_item_to_grid(nugget_to_display_context=(attribute, ACC_RED if self.accessible_color_palette else RED),
+        self.add_item_to_grid(nugget_to_display_context=(attribute, ACC_RED if self._accessible_color_palette else RED),
                               annotation_text=attribute.name)
         self._attribute = attribute  # save for later use
 
@@ -194,7 +260,7 @@ class EmbeddingVisualizer:
 
         for confirmed_match in self._attribute.confirmed_matches:
             if confirmed_match in self._nugget_to_displayed_items:
-                self._highlight_nugget(confirmed_match, ACC_GREEN if self.accessible_color_palette else GREEN, DEFAULT_NUGGET_SIZE)
+                self._highlight_nugget(confirmed_match, ACC_GREEN if self._accessible_color_palette else GREEN, DEFAULT_NUGGET_SIZE)
 
     def reset(self):
         for nugget, (scatter, annotation) in self._nugget_to_displayed_items.items():
@@ -208,14 +274,14 @@ class EmbeddingVisualizer:
     def _determine_update_values(self, previously_selected_nugget, newly_selected_nugget) -> (
             (int, Color), (int, Color)):
 
-        highlight_color = ACC_BLUE if self.accessible_color_palette else BLUE
+        highlight_color = ACC_BLUE if self._accessible_color_palette else BLUE
         highlight_size = 15 if newly_selected_nugget == self._best_guess else 10
 
         if previously_selected_nugget is None:
             reset_color = WHITE
             reset_size = DEFAULT_NUGGET_SIZE
         elif previously_selected_nugget in self._attribute.confirmed_matches:
-            reset_color = ACC_GREEN if self.accessible_color_palette else GREEN
+            reset_color = ACC_GREEN if self._accessible_color_palette else GREEN
             reset_size = DEFAULT_NUGGET_SIZE
         elif previously_selected_nugget == self._best_guess:
             reset_color = WHITE
@@ -231,9 +297,9 @@ class EmbeddingVisualizer:
                 CurrentThresholdSignal.identifier not in self._attribute.signals):
             logger.warning(f"Could not determine nuggets color from given attribute: {self._attribute}. "
                            f"Will return purple as color highlighting nuggets with this issue.")
-            return ACC_PURPLE if self.accessible_color_palette else PURPLE
+            return ACC_PURPLE if self._accessible_color_palette else PURPLE
 
-        return WHITE if nugget[CachedDistanceSignal] < self._attribute[CurrentThresholdSignal] else ACC_RED if self.accessible_color_palette else RED
+        return WHITE if nugget[CachedDistanceSignal] < self._attribute[CurrentThresholdSignal] else ACC_RED if self._accessible_color_palette else RED
 
     def _add_grids(self):
         grid_xy = gl.GLGridItem()
@@ -257,20 +323,38 @@ class EmbeddingVisualizer:
         scatter_to_highlight.setData(color=new_color, size=new_size)
 
     def _add_other_best_guess(self, other_best_guess):
-        self.add_item_to_grid(nugget_to_display_context=(other_best_guess, ACC_YELLOW if self.accessible_color_palette else YELLOW),
+        self.add_item_to_grid(nugget_to_display_context=(other_best_guess, ACC_YELLOW if self._accessible_color_palette else YELLOW),
                               annotation_text=build_nuggets_annotation_text(other_best_guess),
                               size=15)
+
+    def _update_legend(self):
+        def map_to_correct_color(accessible_color):
+            return accessible_color.corresponding_accessible_color if self._accessible_color_palette \
+                else accessible_color.color
+
+        colors_with_meanings = list(map(lambda color_with_meaning: (map_to_correct_color(color_with_meaning[0]),
+                                                                    color_with_meaning[1]),
+                                        self._colors_with_meanings))
+        self._legend.update_colors_and_meanings(colors_with_meanings)
 
 
 class EmbeddingVisualizerWindow(EmbeddingVisualizer, QMainWindow):
     def __init__(self,
+                 colors_with_meanings: List[Tuple[AccessibleColor, str]],
                  attribute: Attribute = None,
                  nuggets: List[InformationNugget] = None,
                  currently_highlighted_nugget: InformationNugget = None,
                  best_guess: InformationNugget = None,
                  other_best_guesses: List[InformationNugget] = None,
                  accessible_color_palette: bool = False):
-        EmbeddingVisualizer.__init__(self, attribute, nuggets, currently_highlighted_nugget, best_guess, accessible_color_palette)
+        EmbeddingVisualizer.__init__(self,
+                                     legend=EmbeddingVisualizerLegend(),
+                                     colors_with_meanings=colors_with_meanings,
+                                     attribute=attribute,
+                                     nuggets=nuggets,
+                                     currently_highlighted_nugget=currently_highlighted_nugget,
+                                     best_guess=best_guess,
+                                     accessible_color_palette=accessible_color_palette)
         QMainWindow.__init__(self)
         self.accessible_color_palette = accessible_color_palette
 
@@ -282,7 +366,8 @@ class EmbeddingVisualizerWindow(EmbeddingVisualizer, QMainWindow):
         self.fullscreen_layout = QVBoxLayout()
         central_widget.setLayout(self.fullscreen_layout)
 
-        self.fullscreen_layout.addWidget(self._gl_widget)
+        self.fullscreen_layout.addWidget(self._gl_widget, stretch=7)
+        self.fullscreen_layout.addWidget(self._legend, stretch=1)
 
         self._add_grids()
 
@@ -314,7 +399,14 @@ class EmbeddingVisualizerWindow(EmbeddingVisualizer, QMainWindow):
 
 class EmbeddingVisualizerWidget(EmbeddingVisualizer, QWidget):
     def __init__(self):
-        EmbeddingVisualizer.__init__(self)
+        colors_with_meanings = [
+            (AccessibleColor(WHITE, WHITE), 'Below threshold'),
+            (AccessibleColor(ACC_RED, RED), 'Above threshold'),
+            (AccessibleColor(ACC_BLUE, BLUE), 'Documents best match'),
+            (AccessibleColor(ACC_YELLOW, YELLOW), 'Other documents best matches'),
+            (AccessibleColor(ACC_PURPLE, PURPLE), 'Could not determine correct color')
+        ]
+        EmbeddingVisualizer.__init__(self, EmbeddingVisualizerLegend(), colors_with_meanings)
         QWidget.__init__(self)
 
         self.layout = QVBoxLayout()
@@ -324,6 +416,8 @@ class EmbeddingVisualizerWidget(EmbeddingVisualizer, QWidget):
 
         self._gl_widget.setMinimumHeight(300)  # Set the initial height of the grid to 200
         self.layout.addWidget(self._gl_widget)
+
+        self.layout.addWidget(self._legend)
 
         self.best_guesses_widget = QWidget()
         self.best_guesses_widget_layout = QHBoxLayout(self.best_guesses_widget)
@@ -350,7 +444,8 @@ class EmbeddingVisualizerWidget(EmbeddingVisualizer, QWidget):
     @track_button_click("fullscreen embedding visualizer")
     def _show_embedding_visualizer_window(self):
         if self._fullscreen_window is None:
-            self._fullscreen_window = EmbeddingVisualizerWindow(attribute=self._attribute,
+            self._fullscreen_window = EmbeddingVisualizerWindow(colors_with_meanings=self._colors_with_meanings,
+                                                                attribute=self._attribute,
                                                                 nuggets=list(self._nugget_to_displayed_items.keys()),
                                                                 currently_highlighted_nugget=self._currently_highlighted_nugget,
                                                                 best_guess=self._best_guess)

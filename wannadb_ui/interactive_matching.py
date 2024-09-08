@@ -491,7 +491,7 @@ class DocumentWidget(QWidget, VisualizationProvidingItem):
         self.upper_buttons_widget_layout.addWidget(self.scatter_plot_widget)
 
         self.visualizer = EmbeddingVisualizerWidget()
-        self.visualizer.setFixedHeight(300)
+        self.visualizer.setFixedHeight(355)
         self.layout.addWidget(self.visualizer)
 
         self.buttons_widget = QWidget()
