@@ -15,7 +15,7 @@ from wannadb_ui.common import BUTTON_FONT, CODE_FONT, CODE_FONT_BOLD, LABEL_FONT
     CustomScrollableList, CustomScrollableListItem, WHITE, LIGHT_YELLOW, YELLOW, NewlyAddedNuggetContext, \
     VisualizationProvidingItem, AvailableVisualizationsLevel, VisualizationProvidingCustomScrollableList
 from wannadb_ui.data_insights import DataInsightsArea, SimpleDataInsightsArea, ExtendedDataInsightsArea
-from wannadb_ui.visualizations import EmbeddingVisualizerWidget, BarChartVisualizerWidget, ScatterPlotVisualizerWidget
+from wannadb_ui.visualizations import EmbeddingVisualizerWidget, BarChartVisualizerWidget
 from wannadb_ui.study import Tracker, track_button_click
 
 logger = logging.getLogger(__name__)
@@ -486,9 +486,6 @@ class DocumentWidget(QWidget, VisualizationProvidingItem):
         self.cosine_barchart = BarChartVisualizerWidget()
         self.cosine_barchart.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         self.upper_buttons_widget_layout.addWidget(self.cosine_barchart)
-        self.scatter_plot_widget = ScatterPlotVisualizerWidget()
-        self.scatter_plot_widget.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
-        self.upper_buttons_widget_layout.addWidget(self.scatter_plot_widget)
 
         self.visualizer = EmbeddingVisualizerWidget()
         self.visualizer.setFixedHeight(355)
@@ -671,7 +668,6 @@ class DocumentWidget(QWidget, VisualizationProvidingItem):
                                                       best_guess=self.nuggets_sorted_by_distance[0],
                                                       other_best_guesses=other_best_guesses)
             self.cosine_barchart.update_data(self.nuggets_sorted_by_distance)
-            self.scatter_plot_widget.update_data(self.nuggets_sorted_by_distance)
 
         else:
             self.idx_mapper = {}
@@ -687,9 +683,6 @@ class DocumentWidget(QWidget, VisualizationProvidingItem):
         scroll_cursor.setPosition(nugget.start_char)
         self.text_edit.setTextCursor(scroll_cursor)
         self.text_edit.ensureCursorVisible()
-
-    def clear_scatter_plot_data(self):
-        self.scatter_plot_widget.clear_data()
 
     def enable_input(self):
         self.match_button.setEnabled(True)
