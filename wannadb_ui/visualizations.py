@@ -1,5 +1,7 @@
+import itertools
 import logging
 import math
+from operator import itemgetter
 from typing import List, Dict, Tuple, Union
 
 import numpy as np
@@ -7,8 +9,9 @@ import pyqtgraph as pg
 import pyqtgraph.opengl as gl
 from PyQt6.QtCore import Qt, QPoint
 from PyQt6.QtGui import QFont, QColor, QPixmap, QPainter
+from PyQt6.QtSvgWidgets import QSvgWidget
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QPushButton, QMainWindow, QHBoxLayout, QFrame, QScrollArea, \
-    QApplication, QLabel
+    QApplication, QLabel, QMessageBox, QDialog
 from matplotlib import pyplot as plt
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.backends.backend_qt5agg import NavigationToolbar2QT as NavigationToolbar
@@ -35,7 +38,7 @@ WHITE = pg.mkColor('white')
 YELLOW = pg.mkColor('yellow')
 ACC_YELLOW = pg.mkColor(254, 97, 0)
 PURPLE = pg.mkColor('purple')
-ACC_PURPLE = pg.mkColor(120,94,240)
+ACC_PURPLE = pg.mkColor(120, 94, 240)
 EMBEDDING_ANNOTATION_FONT = QFont('Helvetica', 10)
 DEFAULT_NUGGET_SIZE = 7
 
@@ -144,7 +147,7 @@ class EmbeddingVisualizer:
     def enable_accessible_color_palette_(self):
         self._accessible_color_palette = True
         self._update_legend()
-    
+
     def disable_accessible_color_palette_(self):
         self._accessible_color_palette = False
         self._update_legend()
@@ -260,7 +263,8 @@ class EmbeddingVisualizer:
 
         for confirmed_match in self._attribute.confirmed_matches:
             if confirmed_match in self._nugget_to_displayed_items:
-                self._highlight_nugget(confirmed_match, ACC_GREEN if self._accessible_color_palette else GREEN, DEFAULT_NUGGET_SIZE)
+                self._highlight_nugget(confirmed_match, ACC_GREEN if self._accessible_color_palette else GREEN,
+                                       DEFAULT_NUGGET_SIZE)
 
     def reset(self):
         for nugget, (scatter, annotation) in self._nugget_to_displayed_items.items():
@@ -299,7 +303,8 @@ class EmbeddingVisualizer:
                            f"Will return purple as color highlighting nuggets with this issue.")
             return ACC_PURPLE if self._accessible_color_palette else PURPLE
 
-        return WHITE if nugget[CachedDistanceSignal] < self._attribute[CurrentThresholdSignal] else ACC_RED if self._accessible_color_palette else RED
+        return WHITE if nugget[CachedDistanceSignal] < self._attribute[
+            CurrentThresholdSignal] else ACC_RED if self._accessible_color_palette else RED
 
     def _add_grids(self):
         grid_xy = gl.GLGridItem()
@@ -323,9 +328,10 @@ class EmbeddingVisualizer:
         scatter_to_highlight.setData(color=new_color, size=new_size)
 
     def _add_other_best_guess(self, other_best_guess):
-        self.add_item_to_grid(nugget_to_display_context=(other_best_guess, ACC_YELLOW if self._accessible_color_palette else YELLOW),
-                              annotation_text=build_nuggets_annotation_text(other_best_guess),
-                              size=15)
+        self.add_item_to_grid(
+            nugget_to_display_context=(other_best_guess, ACC_YELLOW if self._accessible_color_palette else YELLOW),
+            annotation_text=build_nuggets_annotation_text(other_best_guess),
+            size=15)
 
     def _update_legend(self):
         def map_to_correct_color(accessible_color):
@@ -387,11 +393,11 @@ class EmbeddingVisualizerWindow(EmbeddingVisualizer, QMainWindow):
     def _enable_accessible_color_palette(self):
         self.accessible_color_palette = True
         self.enable_accessible_color_palette_()
-        
+
     def _disable_accessible_color_palette(self):
         self.accessible_color_palette = False
         self.disable_accessible_color_palette_()
-    
+
     def closeEvent(self, event):
         Tracker().stop_timer(str(self.__class__))
         event.accept()
@@ -457,14 +463,14 @@ class EmbeddingVisualizerWidget(EmbeddingVisualizer, QWidget):
             pass
         else:
             self._fullscreen_window.enable_accessible_color_palette_()
-    
+
     def disable_accessible_color_palette(self):
         self.accessible_color_palette = False
         if self._fullscreen_window is None:
             pass
         else:
             self._fullscreen_window.disable_accessible_color_palette_()
-    
+
     def return_from_embedding_visualizer_window(self):
         self._fullscreen_window.close()
         self._fullscreen_window = None
@@ -531,7 +537,7 @@ class BarChartVisualizerWidget(QWidget):
         self.layout.addWidget(self.button)
         self.data = []
         self.button.clicked.connect(self.show_bar_chart)
-        self.window : QMainWindow = None
+        self.window: QMainWindow = None
         self.current_annotation_index = None
         self.bar = None
 
@@ -621,6 +627,72 @@ class BarChartVisualizerWidget(QWidget):
         self.texts = texts
         self.distances = rounded_distances
 
+        info_list = [
+            """ 
+                <b>Hey there!</b><br>
+                Before you access the cosine-distance scale, take a moment to read the following tips. 
+                If you are familiar with the metrics used in WANNADB or have gone through this tutorial before,
+                feel free to exit using the <b>skip</b> button.
+            """,
+            """<b>Cosine Similarity in 2D Plane:</b><br>
+                Imagine that you and a friend are standing in the middle of a field, and both of you
+                point in different directions. Each direction you point is like a piece of information.
+                The closer your two arms are to pointing in the same direction, the more similar your
+                thoughts or ideas are.<br><br>
+
+                Same direction: If you both point in exactly the same direction, it means your ideas
+                (or pieces of information) are exactly alike. This is like saying:
+                "We’re thinking the same thing!" <br><br>
+
+                Opposite direction: If you point in completely opposite directions, your ideas are as
+                different as they can be. You’re thinking about completely different things.<br><br>
+
+                Right angle: If your arms are at a 90-degree angle, you're pointing in different directions,
+                but not as different as pointing in opposite directions. You’re thinking about different things,
+                but there might still be a tiny bit of connection.<br><br>
+                
+                Before skipping over to the next tip, try to reason which vector is the most similar to vector A
+                in the image below!
+            """,
+            """<b>Multi Dimensionality of Vectors and Cosine Distance</b><br>
+                Vectors may have more than 2 dimensions, as was the case of you and your friend on the field. The
+                mathematical formula guarantees a value between -1 and 1 for each pair of vectors, for any number
+                of dimensions.<br><br>
+                
+                The cosine similarity is equal to 1 when the vectors point at the same direction, -1 when the vectors
+                point in opposite directions, and 0 when the vectors are perpendicular to each other.<br><br> 
+                
+                As cosine similarity expresses how similar two vectors are, a higher value (in the range from -1 to 1)
+                expresses a higher similarity. In wanna-db we use the dual concept of cosine distance. Contrary to 
+                cosine similarity, a higher value in the cosine distance metric, means a higher degree of dissimilarity. 
+                <br><span>cos-dist(<b>a</b>, <b>b</b>) = 1 - cos-sim(<b>a</b>, <b>b</b>)</span><br><br>
+                
+                Take a look at the image below. The yellow dots are closer to a fixed vector(not shown here), whereas the scattered
+                red dots are further away. Think about what the varying cosine distances imply for the spatial configuration.  
+                
+            """,
+            """<b>Cosine-Driven Choices: Ranking Database Values</b>: 
+                The bar chart shows all nuggets found inside the documents, lined after each other along the x-axis.
+                The y axis shows the normalized cosine distance. As we mentioned, the lower the cosine distance is,
+                the more certain we are that the corresponding word belongs to what we are looking for: a value in the database. <br><br>
+                
+                
+                <b>QUESTION</b>: After you explore the bar chart, ask yourself - do the answers on the left tend to be more plausible? <br><br>
+                <b>PRO TIP</b>: Click on each bar to show the exact value, as well as the full information nugget.
+                """
+        ]
+        image_list = [
+            None,
+            'wannadb_ui/resources/visualizations/cosine_similarity.png',  # Add the path to an SVG image
+            'wannadb_ui/resources/visualizations/screenshot_grid.png',  # Regular PNG image
+            'wannadb_ui/resources/visualizations/screenshot_bar_chart.png'
+        ]
+
+
+        # Create and show the custom dialog
+        dialog = InfoDialog(info_list, image_list)
+        dialog.exec()
+
     def on_pick(self, event):
         if isinstance(event.artist, Rectangle):
             patch = event.artist
@@ -671,10 +743,10 @@ class ScatterPlotVisualizerWidget(QWidget):
         self.y = None
         self.scatter = None
         self.accessible_color_palette = False
-        
+
     def enable_accessible_color_palette(self):
         self.accessible_color_palette = True
-    
+
     def disable_accessible_color_palette(self):
         self.accessible_color_palette = False
 
@@ -820,3 +892,92 @@ class ScatterPlotVisualizerWidget(QWidget):
     def closeWindowEvent(self, event):
         event.accept()
         Tracker().stop_timer(str(self.__class__))
+
+
+class InfoDialog(QDialog):
+    def __init__(self, info_list, image_list):
+        super().__init__()
+
+        self.info_list = info_list
+        self.image_list = image_list
+        self.current_index = 0
+
+        # Set up the dialog layout
+        self.layout = QVBoxLayout()
+
+        # Set a fixed width for the dialog
+        self.setFixedWidth(400)  # Set the fixed width you prefer
+
+        # Label to display the information text
+        self.info_label = QLabel(self.info_list[self.current_index])
+        self.info_label.setWordWrap(True)  # Enable word wrap for the label
+        self.layout.addWidget(self.info_label)
+
+        # Widget to display the PNG image
+        self.image_widget = QLabel()
+        self.layout.addWidget(self.image_widget)
+
+        self.update_image()  # Update image on dialog creation
+
+        # Buttons for navigation (Previous, Next, Skip)
+        self.button_layout = QHBoxLayout()
+
+        self.prev_button = QPushButton("Previous")
+        self.prev_button.clicked.connect(self.show_previous)
+        self.button_layout.addWidget(self.prev_button)
+
+        self.next_button = QPushButton("Next")
+        self.next_button.clicked.connect(self.show_next)
+        self.button_layout.addWidget(self.next_button)
+
+        self.skip_button = QPushButton("Skip")
+        self.skip_button.clicked.connect(self.skip)
+        self.button_layout.addWidget(self.skip_button)
+
+        # Add button layout to the main layout
+        self.layout.addLayout(self.button_layout)
+
+        # Disable the "Previous" button initially
+        self.update_buttons()
+
+        # Set the layout for the dialog
+        self.setLayout(self.layout)
+
+    # Method to update the displayed information
+    def update_info(self):
+        self.info_label.setText(self.info_list[self.current_index])
+        self.update_image()
+
+    # Method to update the displayed PNG image
+    def update_image(self):
+        image_path = self.image_list[self.current_index]
+        if image_path and image_path.endswith(".png"):
+            pixmap = QPixmap(image_path)
+            self.image_widget.setPixmap(pixmap)
+            self.image_widget.setVisible(True)
+        else:
+            self.image_widget.clear()
+            self.image_widget.setVisible(False)
+
+    # Method to update the state of the buttons
+    def update_buttons(self):
+        self.prev_button.setEnabled(self.current_index > 0)
+        self.next_button.setEnabled(self.current_index < len(self.info_list) - 1)
+
+    # Method to show the previous piece of information
+    def show_previous(self):
+        if self.current_index > 0:
+            self.current_index -= 1
+            self.update_info()
+        self.update_buttons()
+
+    # Method to show the next piece of information
+    def show_next(self):
+        if self.current_index < len(self.info_list) - 1:
+            self.current_index += 1
+            self.update_info()
+        self.update_buttons()
+
+    # Method to skip and close the dialog
+    def skip(self):
+        self.accept()
