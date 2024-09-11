@@ -527,7 +527,110 @@ class EmbeddingVisualizerWidget(EmbeddingVisualizer, QWidget):
         if self._fullscreen_window is not None:
             self._fullscreen_window.remove_nuggets_from_widget(self._other_best_guesses)
 
+class InfoDialog(QDialog):
+    def __init__(self):
+        super().__init__()
 
+        self.dialog_shown: bool = False
+
+        self.info_list = None
+        self.image_list = None
+        self.current_index = 0
+
+        # Set up the dialog layout
+        self.layout = QVBoxLayout()
+
+        # Set a fixed width for the dialog
+        self.setFixedWidth(400)  # Set the fixed width you prefer
+
+        # Label to display the information text
+        self.info_label = QLabel()
+        self.info_label.setWordWrap(True)  # Enable word wrap for the label
+        self.layout.addWidget(self.info_label)
+
+        # Widget to display the PNG image
+        self.image_widget = QLabel()
+        self.layout.addWidget(self.image_widget)
+
+        # Buttons for navigation (Previous, Next, Skip)
+        self.button_layout = QHBoxLayout()
+
+        self.prev_button = QPushButton("Previous")
+        self.prev_button.clicked.connect(self.show_previous)
+        self.button_layout.addWidget(self.prev_button)
+
+        self.next_button = QPushButton("Next")
+        self.next_button.clicked.connect(self.show_next)
+        self.button_layout.addWidget(self.next_button)
+
+        self.skip_button = QPushButton("Skip")
+        self.skip_button.clicked.connect(self.skip)
+        self.button_layout.addWidget(self.skip_button)
+
+        # Add button layout to the main layout
+        self.layout.addLayout(self.button_layout)
+
+        # Set the layout for the dialog
+        self.setLayout(self.layout)
+
+    # Setter method to set the info_list
+    def set_info_list(self, info_list):
+        self.info_list = info_list
+        self.update_info()
+
+    # Setter method to set the image_list
+    def set_image_list(self, image_list):
+        self.image_list = image_list
+        self.update_image()
+
+    # Method to update the displayed information
+    def update_info(self):
+        if self.info_list is not None:
+            self.info_label.setText(self.info_list[self.current_index])
+            self.update_image()
+        self.update_buttons()
+
+    # Method to update the displayed PNG image
+    def update_image(self):
+        if self.image_list is not None:
+            image_path = self.image_list[self.current_index]
+            if image_path and image_path.endswith(".png"):
+                pixmap = QPixmap(image_path)
+                self.image_widget.setPixmap(pixmap)
+                self.image_widget.setVisible(True)
+            else:
+                self.image_widget.clear()
+                self.image_widget.setVisible(False)
+
+    # Method to update the state of the buttons
+    def update_buttons(self):
+        if self.info_list is not None:
+            self.prev_button.setEnabled(self.current_index > 0)
+            self.next_button.setEnabled(self.current_index < len(self.info_list) - 1)
+
+    # Method to show the previous piece of information
+    def show_previous(self):
+        if self.current_index > 0:
+            self.current_index -= 1
+            self.update_info()
+
+    # Method to show the next piece of information
+    def show_next(self):
+        if self.current_index < len(self.info_list) - 1:
+            self.current_index += 1
+            self.update_info()
+
+    # Method to skip and close the dialog
+    def skip(self):
+        self.accept()
+
+    # Override exec to prevent multiple executions
+    def exec(self):
+        if not self.dialog_shown:
+            super().exec()
+            self.dialog_shown = True
+
+dialog = InfoDialog()
 class BarChartVisualizerWidget(QWidget):
     def __init__(self, parent=None):
         super(BarChartVisualizerWidget, self).__init__(parent)
@@ -688,7 +791,10 @@ class BarChartVisualizerWidget(QWidget):
             'wannadb_ui/resources/visualizations/screenshot_bar_chart.png'
         ]
 
-        dialog = InfoDialog(info_list, image_list)
+        global dialog
+        assert len(info_list) == len(image_list)
+        dialog.set_info_list(info_list)
+        dialog.set_image_list(image_list)
         dialog.exec()
 
     def on_pick(self, event):
@@ -723,90 +829,3 @@ class BarChartVisualizerWidget(QWidget):
         Tracker().stop_timer(str(self.__class__))
 
 
-class InfoDialog(QDialog):
-    def __init__(self, info_list, image_list):
-        super().__init__()
-
-        self.info_list = info_list
-        self.image_list = image_list
-        self.current_index = 0
-
-        # Set up the dialog layout
-        self.layout = QVBoxLayout()
-
-        # Set a fixed width for the dialog
-        self.setFixedWidth(400)  # Set the fixed width you prefer
-
-        # Label to display the information text
-        self.info_label = QLabel(self.info_list[self.current_index])
-        self.info_label.setWordWrap(True)  # Enable word wrap for the label
-        self.layout.addWidget(self.info_label)
-
-        # Widget to display the PNG image
-        self.image_widget = QLabel()
-        self.layout.addWidget(self.image_widget)
-
-        self.update_image()  # Update image on dialog creation
-
-        # Buttons for navigation (Previous, Next, Skip)
-        self.button_layout = QHBoxLayout()
-
-        self.prev_button = QPushButton("Previous")
-        self.prev_button.clicked.connect(self.show_previous)
-        self.button_layout.addWidget(self.prev_button)
-
-        self.next_button = QPushButton("Next")
-        self.next_button.clicked.connect(self.show_next)
-        self.button_layout.addWidget(self.next_button)
-
-        self.skip_button = QPushButton("Skip")
-        self.skip_button.clicked.connect(self.skip)
-        self.button_layout.addWidget(self.skip_button)
-
-        # Add button layout to the main layout
-        self.layout.addLayout(self.button_layout)
-
-        # Disable the "Previous" button initially
-        self.update_buttons()
-
-        # Set the layout for the dialog
-        self.setLayout(self.layout)
-
-    # Method to update the displayed information
-    def update_info(self):
-        self.info_label.setText(self.info_list[self.current_index])
-        self.update_image()
-
-    # Method to update the displayed PNG image
-    def update_image(self):
-        image_path = self.image_list[self.current_index]
-        if image_path and image_path.endswith(".png"):
-            pixmap = QPixmap(image_path)
-            self.image_widget.setPixmap(pixmap)
-            self.image_widget.setVisible(True)
-        else:
-            self.image_widget.clear()
-            self.image_widget.setVisible(False)
-
-    # Method to update the state of the buttons
-    def update_buttons(self):
-        self.prev_button.setEnabled(self.current_index > 0)
-        self.next_button.setEnabled(self.current_index < len(self.info_list) - 1)
-
-    # Method to show the previous piece of information
-    def show_previous(self):
-        if self.current_index > 0:
-            self.current_index -= 1
-            self.update_info()
-        self.update_buttons()
-
-    # Method to show the next piece of information
-    def show_next(self):
-        if self.current_index < len(self.info_list) - 1:
-            self.current_index += 1
-            self.update_info()
-        self.update_buttons()
-
-    # Method to skip and close the dialog
-    def skip(self):
-        self.accept()
