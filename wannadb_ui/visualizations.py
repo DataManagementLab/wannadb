@@ -575,7 +575,7 @@ class BarChartVisualizerWidget(QWidget):
 
         self.bar = ax.bar(texts, rounded_distances, alpha=0.75, picker=True, color=get_colors(distances))
         ax.set_xticks([])
-        ax.set_ylabel('Cosine Similarity', fontsize=15)
+        ax.set_ylabel('Cosine Distance', fontsize=15)
         ax.set_xlabel('Information Nuggets', fontsize=15)
         fig.subplots_adjust(left=0.115, right=0.920, top=0.945, bottom=0.065)
         for idx, rect in enumerate(self.bar):
@@ -688,8 +688,6 @@ class BarChartVisualizerWidget(QWidget):
             'wannadb_ui/resources/visualizations/screenshot_bar_chart.png'
         ]
 
-
-        # Create and show the custom dialog
         dialog = InfoDialog(info_list, image_list)
         dialog.exec()
 
