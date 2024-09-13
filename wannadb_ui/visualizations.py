@@ -49,7 +49,7 @@ WINDOW_WIDTH = int(screen_geometry.width() * 0.7)
 WINDOW_HEIGHT = int(screen_geometry.height() * 0.7)
 
 
-def get_colors(distances, color_start='red', color_end='blue'):
+def get_colors(distances, color_start='green', color_end='red'):
     cmap = LinearSegmentedColormap.from_list("CustomMap", [color_start, color_end])
     norm = plt.Normalize(min(distances), max(distances))
     colors = [cmap(norm(value)) for value in distances]
@@ -674,11 +674,19 @@ class BarChartVisualizerWidget(QWidget):
         ax = fig.add_subplot(111)
         texts, distances = zip(*self.data)
 
-        rounded_distances = np.round(distances, 3)
+        rounded_distances =  np.round(np.ones(len(distances)) - distances, 3)
+        x_positions = [0]
+        for i, y_val in enumerate(rounded_distances):
+            if i == 0:
+                continue
+            if rounded_distances[i - 1] != y_val:
+                x_positions.append(x_positions[i - 1] + 2)
+            else:
+                x_positions.append(x_positions[i - 1] + 1)
 
-        self.bar = ax.bar(texts, rounded_distances, alpha=0.75, picker=True, color=get_colors(distances))
+        self.bar = ax.bar(x_positions, rounded_distances, alpha=0.75, picker=True, color=get_colors(distances))
         ax.set_xticks([])
-        ax.set_ylabel('Cosine Distance', fontsize=15)
+        ax.set_ylabel('Certainty', fontsize=15)
         ax.set_xlabel('Information Nuggets', fontsize=15)
         fig.subplots_adjust(left=0.115, right=0.920, top=0.945, bottom=0.065)
         for idx, rect in enumerate(self.bar):
