@@ -566,9 +566,9 @@ class MainWindow(QMainWindow):
         self.accessible_color_palette = False
         self.attributes_to_match = None
         self.cache_db = None
-        self.usage_info_popup = InformationPopup("Usage Information", "wannadb_ui/resources/popups/usage_info.md")
-        self.visualization_info_popup = InformationPopup("Visualization Information", "wannadb_ui/resources/popups/visualization_info.md")
-        self.general_info_popup = InformationPopup("Underlying Ideas / Architecture", "wannadb_ui/resources/popups/ideas_and_architecture_info.md")
+        self.usage_info_popup = InformationPopup("Usage Information", "wannadb_ui/resources/info_popups/usage_info.md")
+        self.visualization_info_popup = InformationPopup("Visualization Information", "wannadb_ui/resources/info_popups/visualization_info.md")
+        self.general_info_popup = InformationPopup("Underlying Ideas / Architecture", "wannadb_ui/resources/info_popups/ideas_and_architecture_info.md")
 
         # set up the api_thread and api and connect slots and signals
         self.feedback_mutex = QMutex()
@@ -808,7 +808,7 @@ class MainWindow(QMainWindow):
         self.show()
 
         # Information popup
-        self.information_popup = InformationPopup("Quick Start Guide", "wannadb_ui/resources/popups/splash_screen.md")
+        self.information_popup = InformationPopup("Quick Start Guide", "wannadb_ui/resources/info_popups/splash_screen.md")
         self.information_popup.show()
 
         logger.info("Initialized MainWindow.")

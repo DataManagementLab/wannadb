@@ -9,9 +9,8 @@ import pyqtgraph as pg
 import pyqtgraph.opengl as gl
 from PyQt6.QtCore import Qt, QPoint
 from PyQt6.QtGui import QFont, QColor, QPixmap, QPainter
-from PyQt6.QtSvgWidgets import QSvgWidget
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QPushButton, QMainWindow, QHBoxLayout, QFrame, QScrollArea, \
-    QApplication, QLabel, QMessageBox, QDialog
+    QApplication, QLabel, QDialog
 from matplotlib import pyplot as plt
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.backends.backend_qt5agg import NavigationToolbar2QT as NavigationToolbar
@@ -527,6 +526,7 @@ class EmbeddingVisualizerWidget(EmbeddingVisualizer, QWidget):
         if self._fullscreen_window is not None:
             self._fullscreen_window.remove_nuggets_from_widget(self._other_best_guesses)
 
+
 class InfoDialog(QDialog):
     def __init__(self):
         super().__init__()
@@ -630,7 +630,10 @@ class InfoDialog(QDialog):
             super().exec()
             self.dialog_shown = True
 
+
 dialog = InfoDialog()
+
+
 class BarChartVisualizerWidget(QWidget):
     def __init__(self, parent=None):
         super(BarChartVisualizerWidget, self).__init__(parent)
@@ -674,7 +677,7 @@ class BarChartVisualizerWidget(QWidget):
         ax = fig.add_subplot(111)
         texts, distances = zip(*self.data)
 
-        rounded_distances =  np.round(np.ones(len(distances)) - distances, 3)
+        rounded_distances = np.round(np.ones(len(distances)) - distances, 3)
         x_positions = [0]
         for i, y_val in enumerate(rounded_distances):
             if i == 0:
@@ -794,9 +797,9 @@ class BarChartVisualizerWidget(QWidget):
         ]
         image_list = [
             None,
-            'wannadb_ui/resources/visualizations/cosine_similarity.png',  # Add the path to an SVG image
-            'wannadb_ui/resources/visualizations/screenshot_grid.png',  # Regular PNG image
-            'wannadb_ui/resources/visualizations/screenshot_bar_chart.png'
+            'wannadb_ui/resources/info_popups/cosine_similarity.png',  # Add the path to an SVG image
+            'wannadb_ui/resources/info_popups/screenshot_grid.png',  # Regular PNG image
+            'wannadb_ui/resources/info_popups/screenshot_bar_chart.png'
         ]
 
         global dialog
@@ -835,5 +838,3 @@ class BarChartVisualizerWidget(QWidget):
     def closeWindowEvent(self, event):
         event.accept()
         Tracker().stop_timer(str(self.__class__))
-
-
