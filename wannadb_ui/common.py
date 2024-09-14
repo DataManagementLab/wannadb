@@ -2,10 +2,12 @@ from abc import ABC, abstractmethod
 from enum import Enum
 from typing import Union, List, Optional, Tuple
 
+import markdown
 import pyqtgraph
 from PyQt6.QtCore import Qt, QPoint
 from PyQt6.QtGui import QFont, QPixmap, QPainter, QColor
-from PyQt6.QtWidgets import QWidget, QVBoxLayout, QLabel, QScrollArea, QFrame, QHBoxLayout, QDialog, QPushButton
+from PyQt6.QtWidgets import QWidget, QVBoxLayout, QLabel, QScrollArea, QFrame, QHBoxLayout, QDialog, QPushButton, \
+    QMainWindow, QTextEdit
 
 from wannadb.data.data import InformationNugget
 
@@ -278,6 +280,24 @@ def show_confirmation_dialog(parent, title_text, explanation_text, accept_text, 
     no_button.setFocus()
 
     return dialog.exec()
+
+
+class InformationPopup(QMainWindow):
+    def __init__(self, title: str, content_file_to_display: str):
+        super().__init__()
+
+        self._text_widget = QTextEdit()
+
+        with open(content_file_to_display, "r") as file:
+            formatted_text = file.read()
+            markdown_result = markdown.markdown(formatted_text)
+
+        self._text_widget.setHtml(markdown_result)
+
+        self.setCentralWidget(self._text_widget)
+
+        self.setWindowTitle(title)
+        self.resize(1000, 700)
 
 
 class BestMatchUpdate:

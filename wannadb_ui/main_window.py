@@ -15,6 +15,7 @@ from wannadb_ui.common import MENU_FONT, STATUS_BAR_FONT, STATUS_BAR_FONT_BOLD, 
 from wannadb_ui.document_base import DocumentBaseCreatorWidget, DocumentBaseViewerWidget, DocumentBaseCreatingWidget
 from wannadb_ui.interactive_matching import InteractiveMatchingWidget
 from wannadb_ui.start_menu import StartMenuWidget
+from wannadb_ui.common import InformationPopup
 from wannadb_ui.wannadb_api import WannaDBAPI
 
 logger = logging.getLogger(__name__)
@@ -333,6 +334,25 @@ class MainWindow(QMainWindow):
             # noinspection PyUnresolvedReferences
             self.interactive_table_population.emit(self.document_base, self.statistics)
 
+    def open_usage_info_task(self):
+        logger.info("Execute task 'open_usage_info_task'.")
+
+        if self.usage_info_popup.isHidden():
+            self.usage_info_popup.show()
+
+    def open_visualization_info_task(self):
+        logger.info("Execute task 'open_visualization_info_task'.")
+
+        if self.visualization_info_popup.isHidden():
+            self.visualization_info_popup.show()
+
+    def open_general_info_task(self):
+        logger.info("Execute task 'open_general_info_task'.")
+
+        if self.general_info_popup.isHidden():
+            self.general_info_popup.show()
+
+
     ##################
     # controller logic
     ##################
@@ -546,6 +566,9 @@ class MainWindow(QMainWindow):
         self.accessible_color_palette = False
         self.attributes_to_match = None
         self.cache_db = None
+        self.usage_info_popup = InformationPopup("Usage Information", "wannadb_ui/resources/popups/usage_info.md")
+        self.visualization_info_popup = InformationPopup("Visualization Information", "wannadb_ui/resources/popups/visualization_info.md")
+        self.general_info_popup = InformationPopup("Underlying Ideas / Architecture", "wannadb_ui/resources/popups/ideas_and_architecture_info.md")
 
         # set up the api_thread and api and connect slots and signals
         self.feedback_mutex = QMutex()
@@ -697,6 +720,23 @@ class MainWindow(QMainWindow):
         self.disable_accessible_color_palette_action.triggered.connect(self.disable_accessible_color_palette_task)
         self._all_actions.append(self.disable_accessible_color_palette_action)
 
+        self.open_usage_info = QAction("&Open usage info", self)
+        self.open_usage_info.setStatusTip("Open popup providing some information about the usage of the application.")
+        self.open_usage_info.triggered.connect(self.open_usage_info_task)
+
+        self.open_visualization_info = QAction("&Open visualization info", self)
+        self.open_visualization_info.setStatusTip("Open popup providing some information about the available visualizations.")
+        self.open_visualization_info.triggered.connect(self.open_visualization_info_task)
+
+        self.open_general_info = QAction("&Open general info", self)
+        self.open_general_info.setStatusTip("Open popup providing some general information about the application.")
+        self.open_general_info.triggered.connect(self.open_general_info_task)
+
+        self.open_usage_info = QAction("&Open usage info", self)
+        self.open_usage_info.setStatusTip("Open usage popup providing some usage information.")
+        self.open_usage_info.triggered.connect(self.open_usage_info_task)
+
+
         # set up the menu bar
         self.menubar = self.menuBar()
         self.menubar.setFont(MENU_FONT)
@@ -740,6 +780,16 @@ class MainWindow(QMainWindow):
         self.visualizations_menu.addAction(self.enable_accessible_color_palette_action)
         self.visualizations_menu.addAction(self.disable_accessible_color_palette_action)
 
+        self.help_menu = self.menubar.addMenu("&Help")
+        self.help_menu.setFont(MENU_FONT)
+
+        self.general_menu = self.help_menu.addMenu("&General")
+        self.general_menu.addAction(self.open_general_info)
+        self.usage_menu = self.help_menu.addMenu("&Usage")
+        self.usage_menu.addAction(self.open_usage_info)
+        self.visualization_menu = self.help_menu.addMenu("&Visualization")
+        self.visualization_menu.addAction(self.open_visualization_info)
+
         # main UI
         self.central_widget = QWidget(self)
         self.central_widget_layout = QHBoxLayout(self.central_widget)
@@ -756,5 +806,9 @@ class MainWindow(QMainWindow):
 
         self.resize(1400, 800)
         self.show()
+
+        # Information popup
+        self.information_popup = InformationPopup("Quick Start Guide", "wannadb_ui/resources/popups/splash_screen.md")
+        self.information_popup.show()
 
         logger.info("Initialized MainWindow.")
