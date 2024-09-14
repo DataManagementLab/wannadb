@@ -13,10 +13,10 @@ from wannadb.data.signals import CachedContextSentenceSignal, CachedDistanceSign
 from wannadb.interaction import BaseInteractionCallback
 from wannadb.matching.custom_match_extraction import BaseCustomMatchExtractor
 from wannadb.matching.distance import BaseDistance
+from wannadb.models import NewlyAddedNuggetContext, NuggetUpdatesContext, BestMatchUpdate, ThresholdPositionUpdate
 from wannadb.statistics import Statistics
 from wannadb.status import BaseStatusCallback
-from wannadb_ui.common import BestMatchUpdate, AddedReason, NewlyAddedNuggetContext, NuggetUpdatesContext, \
-    ThresholdPosition, ThresholdPositionUpdate
+from wannadb_ui.common import AddedReason, ThresholdPosition
 
 logger: logging.Logger = logging.getLogger(__name__)
 

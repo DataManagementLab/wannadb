@@ -11,8 +11,9 @@ from PyQt6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QTextEdit, QVBoxLa
 from wannadb.data.signals import CachedContextSentenceSignal, CachedDistanceSignal, \
     PCADimensionReducedLabelEmbeddingSignal, PCADimensionReducedTextEmbeddingSignal, \
     TSNEDimensionReducedLabelEmbeddingSignal
+from wannadb.models import NewlyAddedNuggetContext
 from wannadb_ui.common import BUTTON_FONT, CODE_FONT, CODE_FONT_BOLD, LABEL_FONT, MainWindowContent, \
-    CustomScrollableList, CustomScrollableListItem, WHITE, LIGHT_YELLOW, YELLOW, NewlyAddedNuggetContext, \
+    CustomScrollableList, CustomScrollableListItem, WHITE, LIGHT_YELLOW, YELLOW, \
     VisualizationProvidingItem, AvailableVisualizationsLevel, VisualizationProvidingCustomScrollableList
 from wannadb_ui.data_insights import DataInsightsArea, SimpleDataInsightsArea, ExtendedDataInsightsArea
 from wannadb_ui.visualizations import EmbeddingVisualizerWidget, BarChartVisualizerWidget

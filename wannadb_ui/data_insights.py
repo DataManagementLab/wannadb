@@ -5,9 +5,10 @@ from typing import Generic, TypeVar, List, Tuple
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QWidget, QHBoxLayout, QLabel, QVBoxLayout, QSpacerItem, QSizePolicy, QPushButton
 
+from wannadb.models import BestMatchUpdate, ThresholdPositionUpdate, AccessibleColor
 from wannadb_ui import visualizations
-from wannadb_ui.common import BestMatchUpdate, ThresholdPositionUpdate, ThresholdPosition, SUBHEADER_FONT, LABEL_FONT, \
-    BUTTON_FONT, AccessibleColor
+from wannadb_ui.common import ThresholdPosition, SUBHEADER_FONT, LABEL_FONT, \
+    BUTTON_FONT
 from wannadb_ui.study import track_button_click
 from wannadb_ui.visualizations import EmbeddingVisualizerWindow
 
