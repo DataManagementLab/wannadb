@@ -233,7 +233,7 @@ tokenizers==0.19.1
     # via transformers
 toml==0.10.2
     # via stanza
-torch==2.4.0
+torch==2.4.1
     # via
     #   sentence-transformers
     #   stanza
