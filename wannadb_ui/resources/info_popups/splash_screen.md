@@ -1,4 +1,4 @@
-![Basic structure](splash.png)
+![Basic structure](overview.svg)
 
 WannaDB helps you to turn large collections of text into a concise table:
 
