@@ -413,7 +413,7 @@ class RankingBasedMatcher(BaseMatcher):
                             if distances_based_on_label or new_distance < nugget[CachedDistanceSignal]:
                                 nugget[CachedDistanceSignal] = new_distance
 
-                        previous_best_match: InformationNugget = document.nuggets[document[CachedDistanceSignal]]
+                        previous_best_match: InformationNugget = document.nuggets[document[CurrentMatchIndexSignal]]
                         for ix, nugget in enumerate(document.nuggets):
                             current_guess: InformationNugget = document.nuggets[document[CurrentMatchIndexSignal]]
                             if nugget[CachedDistanceSignal] < current_guess[CachedDistanceSignal]:
@@ -474,6 +474,9 @@ class RankingBasedMatcher(BaseMatcher):
                                 nugget.document[CurrentMatchIndexSignal] = nugget.document.nuggets.index(nugget)
                                 docs_with_added_nuggets[nugget.document] = distance_difference
                                 logger.info(f"Found nugget better than current best guess for document {nugget.document.name} with distance difference {distance_difference}.")
+                            old_distances[nugget] = nugget[CachedDistanceSignal]
+
+                    old_distances[confirmed_nugget] = confirmed_nugget[CachedDistanceSignal]
 
                 elif feedback_result["message"] == "is-match":
                     statistics[attribute.name]["num_confirmed_match"] += 1
