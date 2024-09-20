@@ -408,10 +408,10 @@ class EmbeddingVisualizerWidget(EmbeddingVisualizer, QWidget):
     def __init__(self):
         colors_with_meanings = [
             (AccessibleColor(WHITE, WHITE), 'Below threshold'),
-            (AccessibleColor(ACC_RED, RED), 'Above threshold'),
-            (AccessibleColor(ACC_BLUE, BLUE), 'Documents best match'),
-            (AccessibleColor(ACC_YELLOW, YELLOW), 'Other documents best matches'),
-            (AccessibleColor(ACC_PURPLE, PURPLE), 'Could not determine correct color')
+            (AccessibleColor(RED, ACC_RED), 'Above threshold'),
+            (AccessibleColor(BLUE, ACC_BLUE), 'Documents best match'),
+            (AccessibleColor(YELLOW, ACC_YELLOW), 'Other documents best matches'),
+            (AccessibleColor(PURPLE, ACC_PURPLE), 'Could not determine correct color')
         ]
         EmbeddingVisualizer.__init__(self, EmbeddingVisualizerLegend(), colors_with_meanings)
         QWidget.__init__(self)
