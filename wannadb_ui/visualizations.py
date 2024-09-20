@@ -40,7 +40,8 @@ ACC_YELLOW = pg.mkColor(254, 97, 0)
 PURPLE = pg.mkColor('purple')
 ACC_PURPLE = pg.mkColor(120, 94, 240)
 EMBEDDING_ANNOTATION_FONT = QFont('Helvetica', 10)
-DEFAULT_NUGGET_SIZE = 7
+DEFAULT_NUGGET_SIZE = 10
+HIGHLIGHT_SIZE = 17
 
 app = QApplication([])
 screen = app.primaryScreen()
@@ -289,7 +290,7 @@ class EmbeddingVisualizer:
             reset_size = DEFAULT_NUGGET_SIZE
         elif previously_selected_nugget == self._best_guess:
             reset_color = WHITE
-            reset_size = 15
+            reset_size = HIGHLIGHT_SIZE
         else:
             reset_color = self._determine_nuggets_color(previously_selected_nugget)
             reset_size = DEFAULT_NUGGET_SIZE
@@ -331,7 +332,7 @@ class EmbeddingVisualizer:
         self.add_item_to_grid(
             nugget_to_display_context=(other_best_guess, ACC_YELLOW if self._accessible_color_palette else YELLOW),
             annotation_text=build_nuggets_annotation_text(other_best_guess),
-            size=15)
+            size=HIGHLIGHT_SIZE)
 
     def _update_legend(self):
         def map_to_correct_color(accessible_color):
