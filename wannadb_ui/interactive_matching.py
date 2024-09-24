@@ -744,11 +744,11 @@ class SuggestionListItemWidget(CustomScrollableListItem, VisualizationProvidingI
         self.text_label.setFont(CODE_FONT_BOLD)
         self.layout.addWidget(self.text_label, 0, 0)
 
-        self.distance_label = QLabel()
-        self.distance_label.setFont(CODE_FONT)
-        self.layout.addWidget(self.distance_label), 0, 1
+        self.certainty_label = QLabel()
+        self.certainty_label.setFont(CODE_FONT)
+        self.layout.addWidget(self.certainty_label), 0, 1
         if not self.visualizations:
-            self.distance_label.hide()
+            self.certainty_label.hide()
 
     def mousePressEvent(self, a0: QtGui.QMouseEvent) -> None:
         self.suggestion_list_widget.interactive_matching_widget.document_widget.current_nugget = self.nugget
@@ -758,9 +758,9 @@ class SuggestionListItemWidget(CustomScrollableListItem, VisualizationProvidingI
     def update_item(self, item, params=None):
         self.nugget = item
         sanitized_text = self.nugget.text.replace("\n", " ")
-        distance = np.round(self.nugget[CachedDistanceSignal], 3)
+        certainty_value = np.round(1 - self.nugget[CachedDistanceSignal], 3)
         self.text_label.setText(sanitized_text)
-        self.distance_label.setText(str(distance))
+        self.certainty_label.setText(str(certainty_value))
 
         if self.nugget == params:
             self.setStyleSheet(f"background-color: {YELLOW}")
@@ -778,9 +778,9 @@ class SuggestionListItemWidget(CustomScrollableListItem, VisualizationProvidingI
 
     def _adapt_to_visualizations_level(self, visualizations_level):
         if visualizations_level != AvailableVisualizationsLevel.LEVEL_2:
-            self.distance_label.hide()
+            self.certainty_label.hide()
         else:
-            self.distance_label.show()
+            self.certainty_label.show()
 
 
 class CustomSelectionItemWidget(QWidget):
