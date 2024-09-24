@@ -575,17 +575,17 @@ class BarChartVisualizerWidget(QWidget):
         ax = fig.add_subplot(111)
         texts, distances = zip(*self.data)
 
-        rounded_distances = np.round(np.ones(len(distances)) - distances, 3)
+        rounded_certainties = np.round(np.ones(len(distances)) - distances, 3)
         x_positions = [0]
-        for i, y_val in enumerate(rounded_distances):
+        for i, y_val in enumerate(rounded_certainties):
             if i == 0:
                 continue
-            if rounded_distances[i - 1] != y_val:
+            if rounded_certainties[i - 1] != y_val:
                 x_positions.append(x_positions[i - 1] + 2)
             else:
                 x_positions.append(x_positions[i - 1] + 1)
 
-        self.bar = ax.bar(x_positions, rounded_distances, alpha=0.75, picker=True, color=get_colors(distances))
+        self.bar = ax.bar(x_positions, rounded_certainties, alpha=0.75, picker=True, color=get_colors(distances))
         ax.set_xticks([])
         ax.set_ylabel('Certainty', fontsize=15)
         ax.set_xlabel('Information Nuggets', fontsize=15)
@@ -637,7 +637,7 @@ class BarChartVisualizerWidget(QWidget):
         self.bar_chart_canvas.mpl_connect('pick_event', self.on_pick)
 
         self.texts = texts
-        self.distances = rounded_distances
+        self.distances = rounded_certainties
 
         info_list = [
             """ 
