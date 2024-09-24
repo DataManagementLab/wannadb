@@ -1,7 +1,20 @@
-import itertools
+"""
+This class provides several classes related to visualization widgets.
+    1. PointLegend
+        Label serving as a legend for a dyed point.
+    2. EmbeddingVisualizerLegend
+        Widget serving as a legend for the EmbeddingVisualizer.
+    3. EmbeddingVisualizer
+       Provides logic for handling a grid displaying dimension reduced nuggets.
+    4. EmbeddingVisualizerWindow
+        Realizes an EmbeddingVisualizer in a separate window.
+    5. EmbeddingVisualizerWidget
+        Realizes an EmbeddingVisualizer in a widget.
+    6. BarChartVisualizerWidget
+        Widget realizing a bar chart displaying nuggets with their certainty with which they match an attribute.
+"""
+
 import logging
-import math
-from operator import itemgetter
 from typing import List, Dict, Tuple, Union
 
 import numpy as np
@@ -10,7 +23,7 @@ import pyqtgraph.opengl as gl
 from PyQt6.QtCore import Qt, QPoint
 from PyQt6.QtGui import QFont, QColor, QPixmap, QPainter
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QPushButton, QMainWindow, QHBoxLayout, QFrame, QScrollArea, \
-    QApplication, QLabel, QDialog
+    QApplication, QLabel
 from matplotlib import pyplot as plt
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.backends.backend_qt5agg import NavigationToolbar2QT as NavigationToolbar
@@ -28,6 +41,7 @@ from wannadb_ui.common import BUTTON_FONT_SMALL, InfoDialog
 from wannadb_ui.study import Tracker, track_button_click
 
 logger: logging.Logger = logging.getLogger(__name__)
+
 RED = pg.mkColor('red')
 ACC_RED = pg.mkColor(220, 38, 127)
 BLUE = pg.mkColor('blue')
@@ -50,39 +64,56 @@ WINDOW_WIDTH = int(screen_geometry.width() * 0.7)
 WINDOW_HEIGHT = int(screen_geometry.height() * 0.7)
 
 
-def get_colors(distances, color_start='green', color_end='red'):
+def _get_colors(distances, color_start='green', color_end='red'):
     cmap = LinearSegmentedColormap.from_list("CustomMap", [color_start, color_end])
     norm = plt.Normalize(min(distances), max(distances))
     colors = [cmap(norm(value)) for value in distances]
     return colors
 
 
-def build_nuggets_annotation_text(nugget) -> str:
+def _build_nuggets_annotation_text(nugget) -> str:
     return f"{nugget.text}: {round(nugget[CachedDistanceSignal], 3)}"
 
 
-def create_sanitized_text(nugget):
+def _create_sanitized_text(nugget):
     return nugget.text.replace("\n", " ")
 
 
 class PointLegend(QLabel):
+    """
+    Class realizing a legend for a dyed point by displaying a dyed point next to the meaning of this point within a label.
+
+    In the application, this class is employed to create a legend for the 3D-Grids.
+    The 3D-Grid contains points with different colors. Each color is explained using a label created by this class.
+    """
     def __init__(self, point_meaning: str, point_color: QColor):
+        """
+        Parameters
+        ----------
+        point_meaning : str
+            the meaning of points with the given color
+        point_color: QColor
+            the color of the points whose meaning is explained by this label
+        """
+
         super().__init__()
 
+        # Set fixed sizes
         self._height = 30
         self._width = 300
         self._circle_diameter = 10
 
-        self._point_meaning = point_meaning
-        self._point_color = point_color
-
+        # Init pixmap on which all contents will be painted
         self._pixmap = QPixmap(self._width, self._height)
         self._pixmap.fill(Qt.GlobalColor.transparent)
 
+        # Init painter used to paint on pixmap
         self._painter = QPainter(self._pixmap)
 
+        # Init point displayed on pixmap serving as a reference to which points the meaning refers to
         circle_center = QPoint(self._circle_diameter, round(self._height / 2))
 
+        # Paint point and text on pixmap
         self._painter.setPen(Qt.PenStyle.NoPen)
         self._painter.setBrush(point_color)
         self._painter.drawEllipse(circle_center, self._circle_diameter, self._circle_diameter)
@@ -91,10 +122,11 @@ class PointLegend(QLabel):
         text_height = self._painter.fontMetrics().height()
         self._painter.drawText(circle_center.x() + self._circle_diameter + 5,
                                circle_center.y() + round(text_height / 4),
-                               f': {self._point_meaning}')
+                               f': {point_meaning}')
 
         self._painter.end()
 
+        # Add pixmap to label represented by this instance
         self.setPixmap(self._pixmap)
 
 
@@ -243,7 +275,7 @@ class EmbeddingVisualizer:
             nugget_to_display_context = (nugget, self._determine_nuggets_color(nugget))
 
             self.add_item_to_grid(nugget_to_display_context=nugget_to_display_context,
-                                  annotation_text=build_nuggets_annotation_text(nugget))
+                                  annotation_text=_build_nuggets_annotation_text(nugget))
 
     def display_attribute_embedding(self, attribute):
         self.add_item_to_grid(nugget_to_display_context=(attribute, ACC_RED if self._accessible_color_palette else RED),
@@ -331,7 +363,7 @@ class EmbeddingVisualizer:
     def _add_other_best_guess(self, other_best_guess):
         self.add_item_to_grid(
             nugget_to_display_context=(other_best_guess, ACC_YELLOW if self._accessible_color_palette else YELLOW),
-            annotation_text=build_nuggets_annotation_text(other_best_guess),
+            annotation_text=_build_nuggets_annotation_text(other_best_guess),
             size=HIGHLIGHT_SIZE)
 
     def _update_legend(self):
@@ -548,7 +580,7 @@ class BarChartVisualizerWidget(QWidget):
     def update_data(self, nuggets):
         self.reset()
 
-        self.data = [(create_sanitized_text(nugget),
+        self.data = [(_create_sanitized_text(nugget),
                       np.round(nugget[CachedDistanceSignal], 3))
                      for nugget in nuggets]
 
@@ -585,7 +617,7 @@ class BarChartVisualizerWidget(QWidget):
             else:
                 x_positions.append(x_positions[i - 1] + 1)
 
-        self.bar = ax.bar(x_positions, rounded_certainties, alpha=0.75, picker=True, color=get_colors(distances))
+        self.bar = ax.bar(x_positions, rounded_certainties, alpha=0.75, picker=True, color=_get_colors(distances))
         ax.set_xticks([])
         ax.set_ylabel('Certainty', fontsize=15)
         ax.set_xlabel('Information Nuggets', fontsize=15)
