@@ -4,10 +4,22 @@
 #
 #    pip-compile --output-file=requirements.txt
 #
+accelerate==0.34.2
+    # via sentence-transformers
+aiohappyeyeballs==2.4.0
+    # via aiohttp
+aiohttp==3.10.5
+    # via
+    #   datasets
+    #   fsspec
+aiosignal==1.3.1
+    # via aiohttp
 annotated-types==0.7.0
     # via pydantic
+attrs==24.2.0
+    # via aiohttp
 blis==0.7.11
-    # via thinc (requires blis<0.8.0,>=0.7.8)
+    # via thinc
 catalogue==2.0.10
     # via
     #   spacy
@@ -41,6 +53,12 @@ cymem==2.0.8
     #   preshed
     #   spacy
     #   thinc
+datasets==3.0.0
+    # via sentence-transformers
+dill==0.3.8
+    # via
+    #   datasets
+    #   multiprocess
 dnspython==2.6.1
     # via pymongo
 emoji==2.12.1
@@ -49,22 +67,32 @@ faiss-cpu==1.8.0.post1
     # via wannadb (pyproject.toml)
 filelock==3.15.4
     # via
+    #   datasets
     #   huggingface-hub
     #   torch
     #   transformers
 fonttools==4.53.1
     # via matplotlib
-fsspec==2024.6.1
+frozenlist==1.4.1
     # via
+    #   aiohttp
+    #   aiosignal
+fsspec[http]==2024.6.1
+    # via
+    #   datasets
     #   huggingface-hub
     #   torch
 huggingface-hub==0.24.5
     # via
+    #   accelerate
+    #   datasets
     #   sentence-transformers
     #   tokenizers
     #   transformers
 idna==3.7
-    # via requests
+    # via
+    #   requests
+    #   yarl
 jinja2==3.1.4
     # via
     #   spacy
@@ -93,6 +121,12 @@ mdurl==0.1.2
     # via markdown-it-py
 mpmath==1.3.0
     # via sympy
+multidict==6.1.0
+    # via
+    #   aiohttp
+    #   yarl
+multiprocess==0.70.16
+    # via datasets
 murmurhash==1.0.10
     # via
     #   preshed
@@ -106,11 +140,14 @@ nltk==3.8.1
     # via wannadb (pyproject.toml)
 numpy==1.26.4
     # via
+    #   accelerate
     #   blis
     #   contourpy
+    #   datasets
     #   faiss-cpu (requires numpy<2.0,>=1.0)
     #   matplotlib
     #   pandas
+    #   pyarrow
     #   scikit-learn
     #   scipy
     #   seaborn
@@ -122,6 +159,8 @@ numpy==1.26.4
     #   wannadb (pyproject.toml)
 packaging==24.1
     # via
+    #   accelerate
+    #   datasets
     #   faiss-cpu
     #   huggingface-hub
     #   matplotlib
@@ -131,6 +170,7 @@ packaging==24.1
     #   weasel
 pandas==2.2.2
     # via
+    #   datasets
     #   seaborn
     #   wannadb (pyproject.toml)
 pillow==10.4.0
@@ -143,6 +183,10 @@ preshed==3.0.9
     #   thinc
 protobuf==5.27.3
     # via stanza
+psutil==6.0.0
+    # via accelerate
+pyarrow==17.0.0
+    # via datasets
 pydantic==2.8.2
     # via
     #   confection
@@ -171,6 +215,8 @@ pytz==2024.1
     # via pandas
 pyyaml==6.0.1
     # via
+    #   accelerate
+    #   datasets
     #   huggingface-hub
     #   transformers
 regex==2024.7.24
@@ -179,6 +225,7 @@ regex==2024.7.24
     #   transformers
 requests==2.32.3
     # via
+    #   datasets
     #   huggingface-hub
     #   spacy
     #   stanza
@@ -187,7 +234,9 @@ requests==2.32.3
 rich==13.7.1
     # via typer
 safetensors==0.4.3
-    # via transformers
+    # via
+    #   accelerate
+    #   transformers
 scikit-learn==1.5.1
     # via
     #   sentence-transformers
@@ -199,7 +248,7 @@ scipy==1.14.0
     #   wannadb (pyproject.toml)
 seaborn==0.13.2
     # via wannadb (pyproject.toml)
-sentence-transformers==3.0.1
+sentence-transformers[train]==3.0.1
     # via wannadb (pyproject.toml)
 shellingham==1.5.4
     # via typer
@@ -235,11 +284,13 @@ toml==0.10.2
     # via stanza
 torch==2.4.1
     # via
+    #   accelerate
     #   sentence-transformers
     #   stanza
     #   wannadb (pyproject.toml)
 tqdm==4.66.4
     # via
+    #   datasets
     #   huggingface-hub
     #   nltk
     #   sentence-transformers
@@ -273,6 +324,10 @@ wasabi==1.1.3
     #   weasel
 weasel==0.4.1
     # via spacy
+xxhash==3.5.0
+    # via datasets
+yarl==1.12.1
+    # via aiohttp
 
 # The following packages are considered to be unsafe in a requirements file:
 # setuptools

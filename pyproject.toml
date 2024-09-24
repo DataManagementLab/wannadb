@@ -25,7 +25,7 @@ dependencies = [
     "scipy==1.14.0",
     "stanza==1.8.2",
     "spacy==3.7.5",
-    "sentence-transformers==3.0.1",
+    "sentence-transformers[train]==3.0.1",
     "matplotlib==3.9.2",
     "seaborn==0.13.2",
     "scikit-learn==1.5.1",
