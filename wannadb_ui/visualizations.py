@@ -565,7 +565,16 @@ dialog = InfoDialog()
 
 
 class BarChartVisualizerWidget(QWidget):
+    """
+    A QWidget-based class that provides a UI widget for visualizing cosine values in a bar chart.
+    It allows users to update the data, display a bar chart with certainty values, and interact with
+    the chart (e.g., displaying annotations on click).
+    """
     def __init__(self, parent=None):
+        """
+        Initializes the BarChartVisualizerWidget, sets up the layout and button,
+        and prepares attributes to store data, the chart window, and interactive state.
+        """
         super(BarChartVisualizerWidget, self).__init__(parent)
         self.layout = QVBoxLayout(self)
         self.layout.setContentsMargins(0, 0, 0, 0)
@@ -578,6 +587,12 @@ class BarChartVisualizerWidget(QWidget):
         self.bar = None
 
     def update_data(self, nuggets):
+        """
+        Updates the widget's data based on the provided nuggets. Resets any previous state
+        and processes the nuggets to extract text and cosine values.
+
+        :param nuggets: List of information nuggets with cosine similarity values.
+        """
         self.reset()
 
         self.data = [(_create_sanitized_text(nugget),
@@ -586,11 +601,18 @@ class BarChartVisualizerWidget(QWidget):
 
     @track_button_click("show bar chart")
     def show_bar_chart(self):
+        """
+        Displays the bar chart using the current data. If no data is available, the method returns early. Represents a button
+        """
         if not self.data:
             return
         self.plot_bar_chart()
 
     def _unique_nuggets(self):
+        """
+        Ensures that only the most relevant (i.e., minimal cosine distance) nuggets are included in the data.
+        Filters out duplicates based on text, keeping only the lowest cosine distance for each unique nugget.
+        """
         min_dict = {}
         for item in self.data:
             key, value = item
@@ -599,6 +621,10 @@ class BarChartVisualizerWidget(QWidget):
         self.data = [(key, min_dict[key]) for key in min_dict]
 
     def plot_bar_chart(self):
+        """
+        Generates and displays the bar chart with cosine-based certainty values.
+        Includes interactive functionality for annotations and customizable axes.
+        """
         self._unique_nuggets()
         if self.window is not None:
             self.window.close()
@@ -739,6 +765,12 @@ class BarChartVisualizerWidget(QWidget):
         dialog.exec()
 
     def on_pick(self, event):
+        """
+        Handles click events on the bar chart. When a bar is clicked, displays an annotation
+        with detailed information about the clicked nugget.
+
+        :param event: The pick event triggered by clicking a bar.
+        """
         if isinstance(event.artist, Rectangle):
             patch = event.artist
             index = self.bar.get_children().index(patch)
@@ -758,10 +790,16 @@ class BarChartVisualizerWidget(QWidget):
             self.bar_chart_canvas.draw_idle()
 
     def reset(self):
+        """
+        Resets the state of the bar chart widget, clearing any previously stored data and bars.
+        """
         self.data = []
         self.bar = None
 
     def showWindowEvent(self, event):
+        """
+        These and method below needed for tracking how much time user spent on the bar chart
+        """
         super().showEvent(event)
         Tracker().start_timer(str(self.__class__))
 
