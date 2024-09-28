@@ -68,8 +68,11 @@ class ChangesList(QWidget, Generic[UPDATE_TYPE]):
 
         Parameters
         ----------
+        updates: List[UPDATE_TYPE]
+            Items which should be added to the list.
         """
 
+        # Remove existing items from list
         self._reset_list()
 
         if len(updates) == 0:
@@ -111,21 +114,15 @@ class ChangesList(QWidget, Generic[UPDATE_TYPE]):
 
 class ChangedBestMatchDocumentsList(ChangesList[BestMatchUpdate]):
     """
-    Realizes a ChangesList displaying changed best matches after each user feedback which can be found within the
-    Data Insights section.
-
-    Methods
-    ------
-    update_list(self, updates: List[UPDATE_TYPE]):
-        see `update_list` of `ChangesList`
+    Realizes a `ChangesList` displaying changed best matches after each user feedback which can be found within the
+    Data Insights section by inheriting from `ChangesList`.
     """
 
-    def __init__(self, addressed_change: ThresholdPosition):
+    def __init__(self):
         """
         Determines its tooltip text and name and initializes itself by calling super constructor.
         """
 
-        self._addressed_change = addressed_change
         tooltip_text = ("The distance associated with each nugget is recomputed after every feedback round.\n"
                         "Therefore the best guess of an document (nugget with lowest distance) might change "
                         "after a feedback round. Such best guesses are listed here.")
@@ -144,7 +141,13 @@ class ChangedBestMatchDocumentsList(ChangesList[BestMatchUpdate]):
 class ChangedThresholdPositionList(ChangesList[ThresholdPositionUpdate]):
     """
     Realizes an abstract ChangesList displaying nuggets whose threshold position changed (either above or below) due to
-    the latest user feedback which can be found in the Data Insights section.
+    the latest user feedback which can be found in the Data Insights section by inheriting from `ChangesList`.
+
+    Methods
+    -------
+    update_list(updates: List[ThresholdPositionUpdate])
+        Extracts the relevant updates out of the given list matching and updates the list with the extracted, relevant
+        updates.
     """
 
     def __init__(self, info_label_text: str, tooltip_text: str, addressed_change: ThresholdPosition):
@@ -158,8 +161,7 @@ class ChangedThresholdPositionList(ChangesList[ThresholdPositionUpdate]):
         tooltip_text: QColor
             Text further explaining the list's intention displayed if hovering over list's name
         addressed_change
-            Determines about which threshold position updates this list cares, either from above to below or below to
-            above.
+            Determines the change type addressed by this list, either from above to below or below to above.
             The given position refers to the end position of the relevant updates (E.g. If it's 'below', then this list
             only cares about 'above' -> 'below' updates).
         """
@@ -170,13 +172,29 @@ class ChangedThresholdPositionList(ChangesList[ThresholdPositionUpdate]):
 
     def update_list(self, threshold_updates: List[ThresholdPositionUpdate]):
         """
-        Extracts the relevant updates out of the given list matching
+        Extracts the relevant updates out of the given list matching and updates the list with the extracted, relevant
+        updates.
+
+        The given list contains all updates covering changes from above to below as well as below to above the
+        threshold while this list should only display one of these type of changes.
+        Therefore, the mentioned extraction is required.
+
+        Parameters
+        ----------
+        threshold_updates: List[ThresholdPositionUpdate]
+            List of items in which the items to be added can be found. To extract the items to be added from the whole
+            list, filter it according to the change type addressed by the list.
         """
+
+        # Extract relevant updates
         relevant_updates = self._extract_relevant_updates(threshold_updates)
 
+        # Add extracted updates to list
         super().update_list(relevant_updates)
 
     def _create_label_and_tooltip_text(self, update: ThresholdPositionUpdate) -> Tuple[str, str]:
+        # Computes the label representing one change in the list and the corresponding tooltip
+
         moving_direction = update.new_position.name.lower()
 
         label_text = f"{update.best_guess} {'(' + str(update.count) + ')' if update.count > 1 else ''}"
@@ -189,6 +207,9 @@ class ChangedThresholdPositionList(ChangesList[ThresholdPositionUpdate]):
         return label_text, tooltip_text
 
     def _extract_relevant_updates(self, threshold_updates: List[ThresholdPositionUpdate]) -> List[ThresholdPositionUpdate]:
+        # Extracts the updates relevant to this list from a list containing all updates by filtering according to the
+        # value of `_addressed_change`.
+
         return list(filter(lambda update: (update.old_position != update.new_position and
                                            update.new_position == self._addressed_change),
                     threshold_updates))
@@ -237,13 +258,21 @@ class ChangedThresholdPositionToBelowList(ChangedThresholdPositionList):
 class DataInsightsArea:
     """
     Abstract superclass responsible for the common logic required for both, the simple and the extended version of the
-    Data Insights section.
-    It only handles the 3D-Grid which is present in both Data Insight section types.
+    Data Insights area.
+    It only handles the 3D-Grid as it's the only component present in both Data Insight area types.
+
+    Methods
+    -------
+    enable_accessible_color_palette()
+        Enables the accessible color palette in the grid.
+    disable_accessible_color_palette()
+        Disables the accessible color palette in the grid.
     """
 
     def __init__(self):
         """
-        Initializes the Data Insight section by initializing the 3D Grid.
+        Initializes the Data Insight section by initializing the 3D Grid and setting up the corresponding buttons
+        responsible for opening the grid.
         """
 
         # Init 3D-Grid
@@ -260,63 +289,113 @@ class DataInsightsArea:
         self.suggestion_visualizer_button.setMaximumWidth(240)
         self.suggestion_visualizer_button.clicked.connect(self._show_suggestion_visualizer)
 
-    @track_button_click("Show Suggestions In 3D-Grid")
-    def _show_suggestion_visualizer(self):
-        self.suggestion_visualizer.setVisible(True)
+    def enable_accessible_color_palette(self):
+        """
+        Enables the accessible color palette in the grid.
 
-    def _enable_accessible_color_palette(self):
-        self.accessible_color_palette = True
+        For further details, check the related method in `EmbeddingVisualizer`.
+        """
+
         self.suggestion_visualizer.enable_accessible_color_palette_()
     
-    def _disable_accessible_color_palette(self):
-        self.accessible_color_palette = False
+    def disable_accessible_color_palette(self):
+        """
+        Disables the accessible color palette in the grid.
+
+        For further details, check the related method in `EmbeddingVisualizer`.
+        """
+
         self.suggestion_visualizer.disable_accessible_color_palette_()
+
+    @track_button_click("Show Suggestions In 3D-Grid")
+    def _show_suggestion_visualizer(self):
+        # Opens the 3D-Grid and tracks the click on the corresponding button
+
+        self.suggestion_visualizer.setVisible(True)
 
 
 class SimpleDataInsightsArea(QWidget, DataInsightsArea):
+    """
+    Class realizing the simple version of the Data Insights Area which only contains the 3D-Grid with the best guesses
+    of all best guesses.
+
+    It can be found in the document overview screen if only Level 1 visualization are enabled via the menu.
+
+    Inherits from `QWidget` and `DataInsightsArea`.
+    """
+
     def __init__(self):
+
+        # Call super constructors
         QWidget.__init__(self)
         DataInsightsArea.__init__(self)
 
+        # Set up layout
         self.layout = QHBoxLayout(self)
         self.layout.setContentsMargins(0, 0, 0, 0)
         self.layout.setSpacing(0)
 
+        # Add button to widget
         self.layout.addWidget(self.suggestion_visualizer_button, 0, Qt.AlignmentFlag.AlignRight)
 
+        # Make itself invisible initially
         self.setVisible(False)
-
-    def enable_accessible_color_palette(self):
-        self.accessible_color_palette = True
-        self._enable_accessible_color_palette()
-    
-    def disable_accessible_color_palette(self):
-        self.accessible_color_palette = False
-        self._disable_accessible_color_palette()
 
 
 class ExtendedDataInsightsArea(QWidget, DataInsightsArea):
     """
-    Class realizing the extended Data Insights section displayed in the document overview screen and providing
-    information about the effects of the user's latest feedback.
+    Class realizing the extended Data Insights section providing
+    information about the effects of the user's latest feedback as well as a 3D grid displaying all best guesses of all
+    documents.
 
     It contains a label indicating the current threshold, lists providing nugget related changes due to the user's last
-    feedback and 3D-Grid displaying the embeddings of all best guesses of all documetns.
+    feedback and 3D-Grid displaying the embeddings of all best guesses of all documents.
+    The lists providing information about nugget related changes cover two lists displaying nugget whose position
+    relative to the threshold changed. One list for all "above -> below" changes and one list for all "below -> above"
+    changes. The lists are realized by utilizing instances of `ChangedThresholdPositionList`.
+    Furthermore, there's a list displaying all nuggets who newly became the best guess due to the user's latest
+    feedback.
+
+    It can be found in the document overview screen if Level 2 visualization are enabled via the menu.
+
+    Methods
+    -------
+    update_threshold_value_label(new_threshold_value, threshold_value_change)
+        Updates the label indicating the current threshold with the given, new value and adds a label indicating the
+        change of the threshold by considering the given value change.
+    update_threshold_position_lists(threshold_position_updates: List[ThresholdPositionUpdate])
+        Updates the lists displaying nuggets whose position relative to the threshold changed due to the user's latest
+        feedback by the given list of changes.
+    update_best_match_list(new_best_matches: List[BestMatchUpdate])
+        Updates the list displaying changed best guesses by the given list of changes.
+    hide()
+        Hides itself as well as the possibly opened 3D-Grid.
     """
 
     def __init__(self):
+        """
+        Initializes an instance of this class by calling the related super constructors and setting up the required UI
+        components.
+        Setting up the required UI components covers the title displayed above the area, the label indicating the
+        current threshold and the lists showing changes due to the user's latest feedback.
+        """
+
+        # Call super constructors
         QWidget.__init__(self)
         DataInsightsArea.__init__(self)
 
+        # Set up layout
         self.layout = QVBoxLayout(self)
         self.layout.setSpacing(0)
         self.layout.setContentsMargins(0, 0, 0, 0)
 
+        # Set up title
         self.title_label = QLabel("Data Insights")
         self.title_label.setFont(SUBHEADER_FONT)
         self.title_label.setContentsMargins(0, 5, 0, 5)
         self.layout.addWidget(self.title_label)
 
+        # Set up label indicating the current threshold and a possible change of the threshold's value
         self.threshold_label = QLabel()
         self.threshold_label.setFont(LABEL_FONT)
         self.threshold_label.setText("Current Threshold: ")
@@ -333,6 +412,7 @@ class ExtendedDataInsightsArea(QWidget, DataInsightsArea):
         self.threshold_hbox.addItem(QSpacerItem(40, 20, QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum))
         self.layout.addLayout(self.threshold_hbox)
 
+        # Set up list displaying nuggets whose position relative to the threshold changed from above to below
         self.changes_list1_hbox = QHBoxLayout()
         self.changes_list1_hbox.setContentsMargins(0, 0, 0, 0)
         self.changes_list1_hbox.setSpacing(0)
@@ -340,6 +420,7 @@ class ExtendedDataInsightsArea(QWidget, DataInsightsArea):
         self.changes_list1_hbox.addWidget(self.threshold_position_changes_below_list)
         self.changes_list1_hbox.addItem(QSpacerItem(40, 20, QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum))
 
+        # Set up list displaying nuggets whose position relative to the threshold changed from below to above
         self.changes_list2_hbox = QHBoxLayout()
         self.changes_list2_hbox.setContentsMargins(0, 0, 0, 0)
         self.changes_list2_hbox.setSpacing(0)
@@ -347,32 +428,43 @@ class ExtendedDataInsightsArea(QWidget, DataInsightsArea):
         self.changes_list2_hbox.addWidget(self.threshold_position_changes_above_list)
         self.changes_list2_hbox.addItem(QSpacerItem(40, 20, QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum))
 
+        # Set up list displaying changed best guesses
         self.changes_list3_hbox = QHBoxLayout()
         self.changes_list3_hbox.setContentsMargins(0, 0, 0, 0)
         self.changes_list3_hbox.setSpacing(0)
         self.accessible_color_palette = False
         self.changes_best_matches_list = ChangedBestMatchDocumentsList()
-
         self.changes_list3_hbox.addWidget(self.changes_best_matches_list)
         self.changes_list3_hbox.addItem(QSpacerItem(40, 20, QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum))
         self.changes_list3_hbox.addWidget(self.suggestion_visualizer_button)
 
+        # Add lists to layout
         self.layout.addLayout(self.changes_list1_hbox)
         self.layout.addLayout(self.changes_list2_hbox)
         self.layout.addLayout(self.changes_list3_hbox)
 
+        # Make invisible initially
         self.setVisible(False)
 
-    def enable_accessible_color_palette(self):
-        self.accessible_color_palette = True
-        self._enable_accessible_color_palette()
-    
-    def disable_accessible_color_palette(self):
-        self.accessible_color_palette = False
-        self._disable_accessible_color_palette()
-    
+    def update_threshold_value_label(self, new_threshold_value: float, threshold_value_change: float):
+        """
+        Updates the label indicating the current threshold with the given, new value and adds a label indicating the
+        change of the threshold by considering the given value change.
 
-    def update_threshold_value_label(self, new_threshold_value, threshold_value_change):
+        The text of the label indicates the current threshold is set to the given new value.
+        If the given value change is non-zero, a label indicating this value change is added next to the label
+        displaying the actual threshold value.
+
+        Parameters
+        ----------
+        new_threshold_value: float
+            New threshold value used to update the label indicating the current threshold value.
+        threshold_value_change: float
+            Value that indicates how much the threshold has changed compared to the previous one. If non-zero, a label
+            containing this change is added.
+        """
+
+        # Add label indicating the value change if necessary
         if round(threshold_value_change, 4) != 0:
             self.threshold_value_label.setStyleSheet("color: yellow;")
             change_text = f'(+{round(threshold_value_change, 4)})' if threshold_value_change > 0 else f'{round(threshold_value_change, 4)})'
@@ -381,16 +473,54 @@ class ExtendedDataInsightsArea(QWidget, DataInsightsArea):
             self.threshold_value_label.setStyleSheet("")
             self.threshold_change_label.setText("")
 
+        # Update the label displaying the current threshold
         self.threshold_value_label.setText(f"{round(new_threshold_value, 4)} ")
         self.threshold_label.setVisible(True)
 
-    def update_best_match_list(self, new_best_matches: List[BestMatchUpdate]):
-        self.changes_best_matches_list.update_list(new_best_matches)
-
     def update_threshold_position_lists(self, threshold_position_updates: List[ThresholdPositionUpdate]):
+        """
+        Updates the lists displaying nuggets whose position relative to the threshold changed due to the user's latest
+        feedback by the given list of changes.
+
+        Each list will extract the relevant changes out of the given list and update itself according to extracted
+        changes.
+
+        Realized by calling `update_list(updates: List[ThresholdPositionUpdate])` method of
+        `ChangedThresholdPositionList` for both instances of the lists displaying the threshold position updates.
+        Further details can be found in the documentation of this method in the `ChangedThresholdPositionList` class.
+
+        Parameters
+        ----------
+        threshold_position_updates: List[ThresholdPositionUpdate]
+            List containing all nuggets whose position relative to the threshold changed due to the user's latest
+            feedback.
+            The list contains both types of changes 'above -> below' and 'below -> above'.
+        """
+
         self.threshold_position_changes_below_list.update_list(threshold_position_updates)
         self.threshold_position_changes_above_list.update_list(threshold_position_updates)
 
+    def update_best_match_list(self, new_best_matches: List[BestMatchUpdate]):
+        """
+        Updates the list displaying changed best guesses by the given list of changes.
+
+        Realized by calling `update_list(updates: List[BestMatchUpdate])` method of `ChangedBestMatchList` for the
+        instance representing the list.
+        Further details can be found in the documentation of this method in the `ChangedBestMatchList` class.
+
+        Parameters
+        ----------
+        new_best_matches: List[BestMatchUpdate]
+            List containing changed best guesses by the given list of changes. The `ChangedBestMatchList` instance will
+            update itself by this list.
+        """
+
+        self.changes_best_matches_list.update_list(new_best_matches)
+
     def hide(self):
+        """
+        Hides itself as well as the possibly opened 3D-Grid.
+        """
+
         super().hide()
         self.suggestion_visualizer.hide()
