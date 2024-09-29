@@ -132,8 +132,8 @@ class RankingBasedMatcher(BaseMatcher):
 
             logger.info(f"Matching attribute '{attribute.name}'.")
             start_matching: float = time.time()
-            self._max_distance = self._default_max_distance
-            self._old_max_distance = -1
+            self._max_distance = self._default_max_distance  # Current threshold
+            self._old_max_distance = -1  # Previous threshold
             attribute[CurrentThresholdSignal] = CurrentThresholdSignal(self._max_distance)
             statistics[attribute.name]["max_distances"] = [self._max_distance]
             statistics[attribute.name]["feedback_durations"] = []
@@ -181,13 +181,13 @@ class RankingBasedMatcher(BaseMatcher):
             # iterative user interactions
             logger.info("Execute interactive matching.")
             tik: float = time.time()
-            self._old_feedback_nuggets: List[InformationNugget] = []
-            self._new_nugget_contexts: List[NewlyAddedNuggetContext] = []
+            self._old_feedback_nuggets: List[InformationNugget] = []  # All nuggets displayed in the previous feedback round
+            self._new_nugget_contexts: List[NewlyAddedNuggetContext] = []  # All nuggets newly displayed in the current feedback round
             num_feedback: int = 0
             continue_matching: bool = True
-            new_best_matches: Counter[str] = Counter[str]()
-            new_to_old_match: Dict[str, str] = {}
-            old_distances: Dict[InformationNugget, float] = {}
+            new_best_matches: Counter[str] = Counter[str]()  # New best matches due the user's latest feedback
+            new_to_old_match: Dict[str, str] = {}  # All new best matches mapped to the corresponding previous best match of the same document
+            old_distances: Dict[InformationNugget, float] = {}  # Values of CachedDistanceSignal for all nuggets in previous feedback round
             while continue_matching and num_feedback < self._max_num_feedback and remaining_documents != []:
                 # sort remaining documents by distance
                 _sort_remaining_documents()
@@ -244,6 +244,7 @@ class RankingBasedMatcher(BaseMatcher):
                         new_docs = random.choices(remaining_documents[:num_nuggets_above], k=k)
                         selected_documents.extend(new_docs)
                         num_nuggets_above -= k
+                        # Mark best matches of newly added docs as newly added nuggets if they weren't present in previous feedback round
                         self._update_new_nugget_contexts(new_docs, AddedReason.MOST_UNCERTAIN, old_distances)
                     # ...  and those that recently got interesting additional extractions to the list
                     if self.num_recent_docs > 0 and len(docs_with_added_nuggets) > 0:
@@ -252,6 +253,7 @@ class RankingBasedMatcher(BaseMatcher):
                         if len(selected_docs_with_added_nuggets) > self.num_recent_docs:
                             selected_docs_with_added_nuggets = random.choices(selected_docs_with_added_nuggets, k=self.num_recent_docs)
                         selected_documents.extend(selected_docs_with_added_nuggets)
+                        # Mark best matches of newly added docs as newly added nuggets if they weren't present in previous feedback round
                         self._update_new_nugget_contexts(selected_docs_with_added_nuggets,
                                                          AddedReason.INTERESTING_ADDITIONAL_EXTRACTION,
                                                          old_distances)
@@ -261,6 +263,7 @@ class RankingBasedMatcher(BaseMatcher):
                     docs_at_threshold_to_add = [doc for doc in remaining_documents[higher_left:lower_right] if
                                                 doc not in selected_docs_with_added_nuggets]
                     selected_documents.extend(docs_at_threshold_to_add)
+                    # Mark best matches of selected docs as newly added if they weren't present in previous feedback round
                     self._update_new_nugget_contexts(docs_at_threshold_to_add, AddedReason.AT_THRESHOLD, old_distances)
 
                     # Sort to unify the order across the different three sources
@@ -283,11 +286,14 @@ class RankingBasedMatcher(BaseMatcher):
 
                 t0 = time.time()
 
+                # Build all `BestMatchUpdate` instances based on `new_best_matches` dict
                 best_match_updates = [BestMatchUpdate(new_to_old_match[new_best_match],
                                                       new_best_match,
                                                       new_best_matches[new_best_match])
                                       for new_best_match in new_best_matches.keys()]
+                # Build all `ThresholdPositionUpdate` instances based on old and new distances of all nuggets and the current and previous threshold
                 threshold_position_updates = self._compute_threshold_position_updates(document_base, old_distances)
+                # Gather all update types in `NuggetUpdatesContext` instance which is passed to UI
                 nugget_updates_context = NuggetUpdatesContext(newly_added_nugget_contexts=self._new_nugget_contexts,
                                                               best_match_updates=best_match_updates,
                                                               threshold_position_updates=threshold_position_updates)
@@ -310,10 +316,12 @@ class RankingBasedMatcher(BaseMatcher):
                 t1 = time.time()
                 statistics[attribute.name]["feedback_durations"].append(t1 - t0)
 
+                # Reinit all variables providing information related to previous feedback round
                 self._old_max_distance = self._max_distance
                 self._old_feedback_nuggets = feedback_nuggets
-                self._new_nugget_contexts.clear()
                 old_distances = {nugget: nugget[CachedDistanceSignal] for nugget in document_base.nuggets}
+                # Reset all variables providing information related to current feedback round
+                self._new_nugget_contexts.clear()
                 new_best_matches.clear()
                 new_to_old_match.clear()
 
@@ -413,12 +421,13 @@ class RankingBasedMatcher(BaseMatcher):
                             if distances_based_on_label or new_distance < nugget[CachedDistanceSignal]:
                                 nugget[CachedDistanceSignal] = new_distance
 
-                        previous_best_match: InformationNugget = document.nuggets[document[CurrentMatchIndexSignal]]
+                        previous_best_match: InformationNugget = document.nuggets[document[CurrentMatchIndexSignal]] # Save previous best match
                         for ix, nugget in enumerate(document.nuggets):
                             current_guess: InformationNugget = document.nuggets[document[CurrentMatchIndexSignal]]
                             if nugget[CachedDistanceSignal] < current_guess[CachedDistanceSignal]:
                                 document[CurrentMatchIndexSignal] = ix
                         new_best_match: InformationNugget = document.nuggets[document[CurrentMatchIndexSignal]]
+                        # If there's new best match, save it and add mapping to previous best match for later use
                         if previous_best_match != new_best_match:
                             new_best_matches.update([new_best_match.text])
                             new_to_old_match[new_best_match.text] = previous_best_match.text
@@ -507,12 +516,13 @@ class RankingBasedMatcher(BaseMatcher):
                             if distances_based_on_label or new_distance < nugget[CachedDistanceSignal]:
                                 nugget[CachedDistanceSignal] = new_distance
 
-                        previous_best_match: InformationNugget = document.nuggets[document[CurrentMatchIndexSignal]]
+                        previous_best_match: InformationNugget = document.nuggets[document[CurrentMatchIndexSignal]] # Save previous best match
                         for ix, nugget in enumerate(document.nuggets):
                             current_guess: InformationNugget = document.nuggets[document[CurrentMatchIndexSignal]]
                             if nugget[CachedDistanceSignal] < current_guess[CachedDistanceSignal]:
                                 document[CurrentMatchIndexSignal] = ix
                         new_best_match: InformationNugget = document.nuggets[document[CurrentMatchIndexSignal]]
+                        # If there's new best match, save it and add mapping to previous best match for later use
                         if previous_best_match != new_best_match:
                             new_best_matches.update([new_best_match.text])
                             new_to_old_match[new_best_match.text] = previous_best_match.text
@@ -595,6 +605,9 @@ class RankingBasedMatcher(BaseMatcher):
 
     def _update_new_nugget_contexts(self, new_docs: List[Document], added_reason: AddedReason,
                                     old_distances: Dict[InformationNugget, float]):
+        # Computes the newly added nuggets in this feedback round and creates the corresponding instances wrapping these updates
+        # To determine whether a nugget is newly added, the method considers the `_old_feedback_nuggets` list
+
         best_matches: List[InformationNugget] = [new_doc.nuggets[new_doc[CurrentMatchIndexSignal]] for new_doc in
                                                  new_docs]
 
@@ -605,6 +618,12 @@ class RankingBasedMatcher(BaseMatcher):
                                           for nugget in best_matches if nugget not in self._old_feedback_nuggets])
 
     def _compute_threshold_position_updates(self, document_base, old_distances):
+        # Computes the nuggets whose position of their distance relative to the threshold changed in this feedback round
+        # and creates the corresponding instances wrapping these updates.
+
+        # To determine these updates, the method iterates over all best matches and considers the old distances of these
+        # nuggets, the old threshold as well as the current distances and threshold to determine their old and new threshold position
+
         threshold_position_updates: Dict[str, Tuple[ThresholdPositionUpdate, Optional[ThresholdPositionUpdate]]] = dict()
 
         for nugget in document_base.nuggets:
@@ -622,6 +641,7 @@ class RankingBasedMatcher(BaseMatcher):
             new_threshold_position = ThresholdPosition.ABOVE if nugget[CachedDistanceSignal] > self._max_distance \
                 else ThresholdPosition.BELOW
             if old_threshold_position != new_threshold_position:
+                # If old and new threshold position differ, an `ThresholdPositionUpdate` instance is create representing this update
                 if (old_update is not None and
                         old_update.old_position == old_threshold_position and
                         old_update.new_position == new_threshold_position):
