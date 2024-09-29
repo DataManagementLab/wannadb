@@ -314,11 +314,31 @@ def show_confirmation_dialog(parent, title_text, explanation_text, accept_text, 
 
 
 class InformationPopup(QMainWindow):
+    """
+    Realizes an information popup as a separate window.
+
+    The content to be displayed within the window is determined by a markdown file.
+    """
+
     def __init__(self, title: str, content_file_to_display: str):
+        """
+        Initializes an instance of this class by reading the given markdown file and render the corresponding content
+        in the window.
+
+        Parameters
+        ----------
+        title: str
+            The title of the popup.
+        content_file_to_display: str
+            The path to the markdown file determining the content to be displayed.
+        """
+
         super().__init__()
 
+        # Init widget containing the HTML content defined in the given markdown file
         self._text_widget = QTextEdit()
 
+        # Read markdown file
         with open(content_file_to_display, "r") as file:
             formatted_text = file.read()
             markdown_result = markdown.markdown(formatted_text)
@@ -332,7 +352,28 @@ class InformationPopup(QMainWindow):
 
 
 class InfoDialog(QDialog):
+    """
+    Realizes an information dialog in form of pop-ups.
+
+    The user can click through the dialog via navigation buttons or skip the whole dialog directly.
+
+    Methods
+    -------
+    set_info_list(info_list)
+        Sets the information to display within this dialog.
+    set_image_list(image_list)
+        Sets the images to display within the dialogs.
+    exec()
+        Overwrite `exec()` to avoid multiple executions.
+    """
+
     def __init__(self):
+        """
+        Initializes the required UI components.
+        The UI consists of the raw information text, an image serving as illustration as well as navigation buttons to
+        open next/previous screen or skip the dialog.
+        """
+
         super().__init__()
 
         self.dialog_shown: bool = False
@@ -360,15 +401,15 @@ class InfoDialog(QDialog):
         self.button_layout = QHBoxLayout()
 
         self.prev_button = QPushButton("Previous")
-        self.prev_button.clicked.connect(self.show_previous)
+        self.prev_button.clicked.connect(self._show_previous)
         self.button_layout.addWidget(self.prev_button)
 
         self.next_button = QPushButton("Next")
-        self.next_button.clicked.connect(self.show_next)
+        self.next_button.clicked.connect(self._show_next)
         self.button_layout.addWidget(self.next_button)
 
         self.skip_button = QPushButton("Skip")
-        self.skip_button.clicked.connect(self.skip)
+        self.skip_button.clicked.connect(self._skip)
         self.button_layout.addWidget(self.skip_button)
 
         # Add button layout to the main layout
@@ -377,25 +418,56 @@ class InfoDialog(QDialog):
         # Set the layout for the dialog
         self.setLayout(self.layout)
 
-    # Setter method to set the info_list
-    def set_info_list(self, info_list):
+    def set_info_list(self, info_list: List[str]):
+        """
+        Sets the information to display within this dialog.
+        Each element of the given list represents an information text to be displayed in one of the pop-ups opened
+        during the dialog execution.
+
+        Parameters
+        ----------
+        info_list: List[str]
+            Determines the information to display within the dialog.
+        """
+
         self.info_list = info_list
-        self.update_info()
+        self._update_info()
 
-    # Setter method to set the image_list
-    def set_image_list(self, image_list):
+    def set_image_list(self, image_list: List[str]):
+        """
+        Sets the images to display within this dialog.
+        Each element of the given list represents a path to an image to be displayed in one of the pop-ups opened
+        during the dialog execution.
+
+        Parameters
+        ----------
+        image_list: List[str]
+            Determines the images to display within the dialog.
+        """
+
         self.image_list = image_list
-        self.update_image()
+        self._update_image()
 
-    # Method to update the displayed information
-    def update_info(self):
+    def exec(self):
+        """
+        Overwrite `exec()` to avoid multiple executions.
+        If dialog is not shown currently, call `exec()` of superclass, else do nothing.
+
+        For more information check documentation of `exec()` in `QtWidgets` module.
+        """
+        if not self.dialog_shown:
+            super().exec()
+            self.dialog_shown = True
+
+    def _update_info(self):
+        # Update the displayed information
         if self.info_list is not None:
             self.info_label.setText(self.info_list[self.current_index])
-            self.update_image()
-        self.update_buttons()
+            self._update_image()
+        self._update_buttons()
 
-    # Method to update the displayed PNG image
-    def update_image(self):
+    def _update_image(self):
+        # Method to update the displayed PNG image
         if self.image_list is not None:
             image_path = self.image_list[self.current_index]
             if image_path and image_path.endswith(".png"):
@@ -406,30 +478,24 @@ class InfoDialog(QDialog):
                 self.image_widget.clear()
                 self.image_widget.setVisible(False)
 
-    # Method to update the state of the buttons
-    def update_buttons(self):
+    def _update_buttons(self):
+        # Method to update the state of the buttons
         if self.info_list is not None:
             self.prev_button.setEnabled(self.current_index > 0)
             self.next_button.setEnabled(self.current_index < len(self.info_list) - 1)
 
-    # Method to show the previous piece of information
-    def show_previous(self):
+    def _show_previous(self):
+        # Method to show the previous piece of information
         if self.current_index > 0:
             self.current_index -= 1
-            self.update_info()
+            self._update_info()
 
-    # Method to show the next piece of information
-    def show_next(self):
+    def _show_next(self):
+        # Method to show the next piece of information
         if self.current_index < len(self.info_list) - 1:
             self.current_index += 1
-            self.update_info()
+            self._update_info()
 
-    # Method to skip and close the dialog
-    def skip(self):
+    def _skip(self):
+        # Method to skip and close the dialog
         self.accept()
-
-    # Override exec to prevent multiple executions
-    def exec(self):
-        if not self.dialog_shown:
-            super().exec()
-            self.dialog_shown = True

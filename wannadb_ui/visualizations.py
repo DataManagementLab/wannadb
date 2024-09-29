@@ -36,7 +36,7 @@ from pyqtgraph.opengl import GLViewWidget, GLScatterPlotItem, GLTextItem
 from wannadb.data.data import InformationNugget, Attribute
 from wannadb.data.signals import PCADimensionReducedTextEmbeddingSignal, PCADimensionReducedLabelEmbeddingSignal, \
     CachedDistanceSignal, CurrentThresholdSignal
-from wannadb.models import AccessibleColor
+from wannadb.utils import AccessibleColor
 from wannadb_ui.common import BUTTON_FONT_SMALL, InfoDialog
 from wannadb_ui.study import Tracker, track_button_click
 

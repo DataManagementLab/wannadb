@@ -9,7 +9,8 @@ from typing import Generic, TypeVar, List, Tuple
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QWidget, QHBoxLayout, QLabel, QVBoxLayout, QSpacerItem, QSizePolicy, QPushButton
 
-from wannadb.change_captor import BestMatchUpdate, ThresholdPositionUpdate, AccessibleColor
+from wannadb.change_captor import BestMatchUpdate, ThresholdPositionUpdate
+from wannadb.utils import AccessibleColor
 from wannadb_ui import visualizations
 from wannadb_ui.common import ThresholdPosition, SUBHEADER_FONT, LABEL_FONT, \
     BUTTON_FONT
