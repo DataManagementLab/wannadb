@@ -9,7 +9,7 @@ from PyQt6.QtGui import QIcon, QTextCursor
 from PyQt6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QTextEdit, QVBoxLayout, QWidget, QGridLayout, QSizePolicy
 
 from wannadb.data.signals import CachedContextSentenceSignal, CachedDistanceSignal
-from wannadb.models import NewlyAddedNuggetContext
+from wannadb.change_captor import NewlyAddedNuggetContext
 from wannadb_ui.common import BUTTON_FONT, CODE_FONT, CODE_FONT_BOLD, LABEL_FONT, MainWindowContent, \
     CustomScrollableListItem, WHITE, LIGHT_YELLOW, YELLOW, \
     VisualizationProvidingItem, AvailableVisualizationsLevel, VisualizationProvidingCustomScrollableList
@@ -775,6 +775,8 @@ class SuggestionListItemWidget(CustomScrollableListItem, VisualizationProvidingI
         pass
 
     def _adapt_to_visualizations_level(self, visualizations_level):
+        # Adapt UI element to enabled visualizations (show or hide certainty label)
+
         if visualizations_level != AvailableVisualizationsLevel.LEVEL_2:
             self.certainty_label.hide()
         else:

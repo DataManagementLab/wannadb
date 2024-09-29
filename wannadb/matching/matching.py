@@ -13,7 +13,7 @@ from wannadb.data.signals import CachedContextSentenceSignal, CachedDistanceSign
 from wannadb.interaction import BaseInteractionCallback
 from wannadb.matching.custom_match_extraction import BaseCustomMatchExtractor
 from wannadb.matching.distance import BaseDistance
-from wannadb.models import NewlyAddedNuggetContext, NuggetUpdatesContext, BestMatchUpdate, ThresholdPositionUpdate
+from wannadb.change_captor import NewlyAddedNuggetContext, NuggetUpdatesContext, BestMatchUpdate, ThresholdPositionUpdate
 from wannadb.statistics import Statistics
 from wannadb.status import BaseStatusCallback
 from wannadb_ui.common import AddedReason, ThresholdPosition
@@ -618,21 +618,19 @@ class RankingBasedMatcher(BaseMatcher):
                                           for nugget in best_matches if nugget not in self._old_feedback_nuggets])
 
     def _compute_threshold_position_updates(self, document_base, old_distances):
-        # Computes the nuggets whose position of their distance relative to the threshold changed in this feedback round
-        # and creates the corresponding instances wrapping these updates.
-
-        # To determine these updates, the method iterates over all best matches and considers the old distances of these
-        # nuggets, the old threshold as well as the current distances and threshold to determine their old and new threshold position
-
+        # Computes all threshold position updates of the current feedback round based on the old and new distances of the nuggets as well as the old and new threshold
         threshold_position_updates: Dict[str, Tuple[ThresholdPositionUpdate, Optional[ThresholdPositionUpdate]]] = dict()
 
         for nugget in document_base.nuggets:
+            # We only care about nuggets representing a current best guesses
             is_best_guess = nugget.document.nuggets[nugget.document[CurrentMatchIndexSignal]].text == nugget.text
             if not is_best_guess:
                 continue
 
+            # Since we map the nuggets text to the corresponding update and there can be nuggets with equal texts, there can already be updates created for the current nugget's text
             old_update = threshold_position_updates[nugget.text][0] if nugget.text in threshold_position_updates else None
 
+            # Compute old and new threshold position of the current nugget
             if self._old_max_distance == -1:
                 old_threshold_position = None
             else:
@@ -640,8 +638,10 @@ class RankingBasedMatcher(BaseMatcher):
                     else ThresholdPosition.BELOW
             new_threshold_position = ThresholdPosition.ABOVE if nugget[CachedDistanceSignal] > self._max_distance \
                 else ThresholdPosition.BELOW
+
+            # Create update instances if old and new position differ
             if old_threshold_position != new_threshold_position:
-                # If old and new threshold position differ, an `ThresholdPositionUpdate` instance is create representing this update
+                # If there's already a similar update created for the text of the current nugget, replace it by new one and increment its counter by one
                 if (old_update is not None and
                         old_update.old_position == old_threshold_position and
                         old_update.new_position == new_threshold_position):
@@ -652,6 +652,7 @@ class RankingBasedMatcher(BaseMatcher):
                                                                                        nugget[CachedDistanceSignal],
                                                                                        old_update.count + 1),
                                                                None)
+                # If there's already an update present whose type (above -> below / below -> above) is different, create new update and keep old one
                 elif old_update is not None:
                     threshold_position_updates[nugget.text] = (old_update,
                                                                ThresholdPositionUpdate(nugget.text,
@@ -660,6 +661,7 @@ class RankingBasedMatcher(BaseMatcher):
                                                                                        old_distances[nugget] if nugget in old_distances else None,
                                                                                        nugget[CachedDistanceSignal],
                                                                                        1))
+                # If there's no update present for the text of the current nugget, just create new one
                 else:
                     threshold_position_updates[nugget.text] = (ThresholdPositionUpdate(nugget.text,
                                                                                        old_threshold_position,
@@ -669,6 +671,7 @@ class RankingBasedMatcher(BaseMatcher):
                                                                                        1),
                                                                None)
 
+        # Create final result by concatenating all created updates
         result = []
         for first_update, second_update in threshold_position_updates.values():
             if second_update is None:
