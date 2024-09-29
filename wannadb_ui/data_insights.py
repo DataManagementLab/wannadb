@@ -9,7 +9,7 @@ from typing import Generic, TypeVar, List, Tuple
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QWidget, QHBoxLayout, QLabel, QVBoxLayout, QSpacerItem, QSizePolicy, QPushButton
 
-from wannadb.models import BestMatchUpdate, ThresholdPositionUpdate, AccessibleColor
+from wannadb.change_captor import BestMatchUpdate, ThresholdPositionUpdate, AccessibleColor
 from wannadb_ui import visualizations
 from wannadb_ui.common import ThresholdPosition, SUBHEADER_FONT, LABEL_FONT, \
     BUTTON_FONT
@@ -197,11 +197,12 @@ class ChangedThresholdPositionList(ChangesList[ThresholdPositionUpdate]):
 
         moving_direction = update.new_position.name.lower()
 
-        label_text = f"{update.best_guess} {'(' + str(update.count) + ')' if update.count > 1 else ''}"
-        distance_change_text = f"Old distance: {round(update.old_distance, 4)} -> New distance: {round(update.new_distance, 4)}\n" if update.old_distance is not None \
+        label_text = f"{update.nugget_text} {'(' + str(update.count) + ')' if update.count > 1 else ''}"
+        distance_change_text = f"Old distance: {round(update.old_distance, 4)} -> New distance: {round(update.new_distance, 4)}\n" if update.old_distance \
             else f"Initial distance: {round(update.new_distance, 4)}\n"
-        tooltip_text = (f"Due to your last feedback {update.best_guess} moved {moving_direction} the threshold.\n"
-                        f"{distance_change_text}"
+
+        tooltip_text = (f"Due to your last feedback {update.nugget_text} moved {moving_direction} the threshold.\n"
+                        f"{distance_change_text}" if not update.count > 1 else ""  # If update covers multiple nuggets, don't show distance text as the tooltip refers to multiple nuggets in this case
                         f"This happened for {update.count - 1} similar nuggets as well.")
 
         return label_text, tooltip_text
