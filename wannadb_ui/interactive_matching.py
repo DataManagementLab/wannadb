@@ -8,14 +8,12 @@ from PyQt6.QtCore import Qt, QEvent
 from PyQt6.QtGui import QIcon, QTextCursor
 from PyQt6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QTextEdit, QVBoxLayout, QWidget, QGridLayout, QSizePolicy
 
-from wannadb.data.signals import CachedContextSentenceSignal, CachedDistanceSignal, \
-    PCADimensionReducedLabelEmbeddingSignal, PCADimensionReducedTextEmbeddingSignal, \
-    TSNEDimensionReducedLabelEmbeddingSignal
+from wannadb.data.signals import CachedContextSentenceSignal, CachedDistanceSignal
 from wannadb.models import NewlyAddedNuggetContext
 from wannadb_ui.common import BUTTON_FONT, CODE_FONT, CODE_FONT_BOLD, LABEL_FONT, MainWindowContent, \
-    CustomScrollableList, CustomScrollableListItem, WHITE, LIGHT_YELLOW, YELLOW, \
+    CustomScrollableListItem, WHITE, LIGHT_YELLOW, YELLOW, \
     VisualizationProvidingItem, AvailableVisualizationsLevel, VisualizationProvidingCustomScrollableList
-from wannadb_ui.data_insights import DataInsightsArea, SimpleDataInsightsArea, ExtendedDataInsightsArea
+from wannadb_ui.data_insights import SimpleDataInsightsArea, ExtendedDataInsightsArea
 from wannadb_ui.visualizations import EmbeddingVisualizerWidget, BarChartVisualizerWidget
 from wannadb_ui.study import Tracker, track_button_click
 
@@ -79,7 +77,7 @@ class InteractiveMatchingWidget(MainWindowContent):
         self.layout.addWidget(self.document_widget)
         self.stop_button.hide()
 
-    def     enable_accessible_color_palette(self):
+    def enable_accessible_color_palette(self):
         self.document_widget.enable_accessible_color_palette()
         self.nugget_list_widget.enable_accessible_color_palette()
         

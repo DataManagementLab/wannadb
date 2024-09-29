@@ -62,6 +62,10 @@ class NuggetUpdateType(Enum):
 
 
 class AddedReason(Enum):
+    """
+    Corresponds to the reason why the framework decided to newly add a nugget to the overview list.
+    """
+
     MOST_UNCERTAIN = "The documents match belongs to the considered most uncertain matches."
     INTERESTING_ADDITIONAL_EXTRACTION = "The document recently got interesting additional extraction to the list."
     AT_THRESHOLD = "The distance of the guessed match is within the considered range around the threshold."
@@ -75,10 +79,32 @@ class AddedReason(Enum):
 
 
 class VisualizationProvidingItem:
+    """
+    Abstract class identifying UI items which provide any kind of visualization and therefore requires adapting if the
+    enabled visualization level changes.
+    Forces classes inheriting from this class to implement a method `_adapt_to_visualizations_level(visualizations_level)`
+    adapting the UI element according to the currently enabled visualization level.
+
+    Methods
+    -------
+    update_shown_visualizations(visualization_level: AvailableVisualizationsLevel)
+        Adapts the corresponding UI element to the given visualization level as each level allows different
+        visualization components to be enabled.
+    """
+
     def __init__(self,  *args, **kwargs):
         super().__init__(*args, **kwargs)
 
     def update_shown_visualizations(self, visualization_level: AvailableVisualizationsLevel):
+        """
+        Adapts the corresponding UI element to the given visualization level as each level allows different
+        visualization components to be enabled.
+
+        Parameters
+        ----------
+        visualization_level: AvailableVisualizationsLevel
+            Visualization level to which the UI component needs to be adapted.
+        """
         self._adapt_to_visualizations_level(visualization_level)
 
     @abstractmethod
@@ -220,6 +246,11 @@ class CustomScrollableList(QWidget):
 
 
 class VisualizationProvidingCustomScrollableList(CustomScrollableList, VisualizationProvidingItem):
+    """
+    Class realizing a `CustomScrollableList` providing visualizations via the items in the list by inheriting from
+    `CustomScrollableList` and `VisualizationProvidingItem`.
+    """
+
     def __init__(self, parent, item_type, visualizations_level, attach_visualization_level_observer,
                  floating_widget=None, orientation="vertical", above_widget=None):
         super().__init__(parent, item_type, floating_widget, orientation, above_widget)
