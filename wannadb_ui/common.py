@@ -1,3 +1,4 @@
+import os
 from abc import ABC, abstractmethod
 from enum import Enum
 from typing import Union, List, Optional, Tuple
@@ -373,7 +374,6 @@ class InfoDialog(QDialog):
         The UI consists of the raw information text, an image serving as illustration as well as navigation buttons to
         open next/previous screen or skip the dialog.
         """
-
         super().__init__()
 
         self.dialog_shown: bool = False
@@ -381,21 +381,18 @@ class InfoDialog(QDialog):
         self.info_list = None
         self.image_list = None
         self.current_index = 0
+        self.base_dir = ""  # Base directory to prepend to image paths
 
         # Set up the dialog layout
         self.layout = QVBoxLayout()
 
         # Set a fixed width for the dialog
-        self.setFixedWidth(400)  # Set the fixed width you prefer
+        self.setFixedWidth(600)
 
-        # Label to display the information text
-        self.info_label = QLabel()
-        self.info_label.setWordWrap(True)  # Enable word wrap for the label
-        self.layout.addWidget(self.info_label)
-
-        # Widget to display the PNG image
-        self.image_widget = QLabel()
-        self.layout.addWidget(self.image_widget)
+        # Text edit to display the information text (supports HTML)
+        self.info_text = QTextEdit()
+        self.info_text.setReadOnly(True)  # Make sure the text is not editable
+        self.layout.addWidget(self.info_text)
 
         # Buttons for navigation (Previous, Next, Skip)
         self.button_layout = QHBoxLayout()
@@ -418,35 +415,81 @@ class InfoDialog(QDialog):
         # Set the layout for the dialog
         self.setLayout(self.layout)
 
-    def set_info_list(self, info_list: List[str]):
+    def load_markdown_file(self, file_path: str):
         """
-        Sets the information to display within this dialog.
-        Each element of the given list represents an information text to be displayed in one of the pop-ups opened
-        during the dialog execution.
-
-        Parameters
-        ----------
-        info_list: List[str]
-            Determines the information to display within the dialog.
+        Load the markdown file and convert it to HTML.
         """
+        self.base_dir = os.path.dirname(os.path.abspath(file_path))  # Store base directory of the markdown file
 
-        self.info_list = info_list
+        with open(file_path, 'r', encoding='utf-8') as file:
+            markdown_content = file.read()
+            # Use custom delimiter to split sections instead of <hr>
+            sections = markdown_content.split('<!-- section -->')
+            # Convert each section to HTML and store in info_list
+            self.info_list = [markdown.markdown(section) for section in sections]
+
         self._update_info()
 
-    def set_image_list(self, image_list: List[str]):
+    def _update_info(self):
         """
-        Sets the images to display within this dialog.
-        Each element of the given list represents a path to an image to be displayed in one of the pop-ups opened
-        during the dialog execution.
+        Updates the displayed information in the QTextEdit widget.
+        Handles switching between sections.
+        """
+        if self.info_list is not None:
+            # Add base path to image sources in the HTML
+            html_with_images = self._add_base_path_to_images(self.info_list[self.current_index])
+            self.info_text.setHtml(html_with_images)
+        self._update_buttons()
+
+    def _add_base_path_to_images(self, html: str) -> str:
+        """
+        Modify HTML content to prepend base directory to image sources.
 
         Parameters
         ----------
-        image_list: List[str]
-            Determines the images to display within the dialog.
-        """
+        html: str
+            The HTML content where image paths need to be modified.
 
-        self.image_list = image_list
-        self._update_image()
+        Returns
+        -------
+        str
+            The HTML content with updated image paths.
+        """
+        if self.base_dir:
+            return html.replace('src="', f'src="{self.base_dir}/')
+        return html
+
+    def _update_buttons(self):
+        """
+        Update the state of navigation buttons (enabled/disabled).
+        Controls the "Previous" and "Next" buttons based on the current index.
+        """
+        self.prev_button.setEnabled(self.current_index > 0)
+        self.next_button.setEnabled(self.current_index < len(self.info_list) - 1)
+
+    def _show_previous(self):
+        """
+        Method to show the previous section of information in the dialog.
+        Decreases the current index by one and updates the displayed content.
+        """
+        if self.current_index > 0:
+            self.current_index -= 1
+            self._update_info()
+
+    def _show_next(self):
+        """
+        Method to show the next section of information in the dialog.
+        Increases the current index by one and updates the displayed content.
+        """
+        if self.current_index < len(self.info_list) - 1:
+            self.current_index += 1
+            self._update_info()
+
+    def _skip(self):
+        """
+        Method to skip the dialog and close it.
+        """
+        self.accept()
 
     def exec(self):
         """
@@ -458,44 +501,3 @@ class InfoDialog(QDialog):
         if not self.dialog_shown:
             super().exec()
             self.dialog_shown = True
-
-    def _update_info(self):
-        # Update the displayed information
-        if self.info_list is not None:
-            self.info_label.setText(self.info_list[self.current_index])
-            self._update_image()
-        self._update_buttons()
-
-    def _update_image(self):
-        # Method to update the displayed PNG image
-        if self.image_list is not None:
-            image_path = self.image_list[self.current_index]
-            if image_path and image_path.endswith(".png"):
-                pixmap = QPixmap(image_path)
-                self.image_widget.setPixmap(pixmap)
-                self.image_widget.setVisible(True)
-            else:
-                self.image_widget.clear()
-                self.image_widget.setVisible(False)
-
-    def _update_buttons(self):
-        # Method to update the state of the buttons
-        if self.info_list is not None:
-            self.prev_button.setEnabled(self.current_index > 0)
-            self.next_button.setEnabled(self.current_index < len(self.info_list) - 1)
-
-    def _show_previous(self):
-        # Method to show the previous piece of information
-        if self.current_index > 0:
-            self.current_index -= 1
-            self._update_info()
-
-    def _show_next(self):
-        # Method to show the next piece of information
-        if self.current_index < len(self.info_list) - 1:
-            self.current_index += 1
-            self._update_info()
-
-    def _skip(self):
-        # Method to skip and close the dialog
-        self.accept()
