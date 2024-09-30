@@ -1082,71 +1082,9 @@ class BarChartVisualizerWidget(QWidget):
         self.texts = texts
         self.distances = rounded_certainties
 
-        info_list = [
-            """ 
-                <b>Hey there!</b><br>
-                Before you access the cosine-distance scale, take a moment to read the following tips. 
-                If you are familiar with the metrics used in WANNADB or have gone through this tutorial before,
-                feel free to exit using the <b>skip</b> button.
-            """,
-            """<b>Cosine Similarity in 2D Plane:</b><br>
-                Imagine that you and a friend are standing in the middle of a field, and both of you
-                point in different directions. Each direction you point is like a piece of information.
-                The closer your two arms are to pointing in the same direction, the more similar your
-                thoughts or ideas are.<br><br>
-
-                Same direction: If you both point in exactly the same direction, it means your ideas
-                (or pieces of information) are exactly alike. This is like saying:
-                "We’re thinking the same thing!" <br><br>
-
-                Opposite direction: If you point in completely opposite directions, your ideas are as
-                different as they can be. You’re thinking about completely different things.<br><br>
-
-                Right angle: If your arms are at a 90-degree angle, you're pointing in different directions,
-                but not as different as pointing in opposite directions. You’re thinking about different things,
-                but there might still be a tiny bit of connection.<br><br>
-                
-                Before skipping over to the next tip, try to reason which vector is the most similar to vector A
-                in the image below!
-            """,
-            """<b>Multi Dimensionality of Vectors and Cosine Distance</b><br>
-                Vectors may have more than 2 dimensions, as was the case of you and your friend on the field. The
-                mathematical formula guarantees a value between -1 and 1 for each pair of vectors, for any number
-                of dimensions.<br><br>
-                
-                The cosine similarity is equal to 1 when the vectors point at the same direction, -1 when the vectors
-                point in opposite directions, and 0 when the vectors are perpendicular to each other.<br><br> 
-                
-                As cosine similarity expresses how similar two vectors are, a higher value (in the range from -1 to 1)
-                expresses a higher similarity. In wanna-db we use the dual concept of cosine distance. Contrary to 
-                cosine similarity, a higher value in the cosine distance metric, means a higher degree of dissimilarity. 
-                <br><span>cos-dist(<b>a</b>, <b>b</b>) = 1 - cos-sim(<b>a</b>, <b>b</b>)</span><br><br>
-                
-                Take a look at the image below. The yellow dots are closer to a fixed vector(not shown here), whereas the scattered
-                red dots are further away. Think about what the varying cosine distances imply for the spatial configuration.  
-                
-            """,
-            """<b>Cosine-Driven Choices: Ranking Database Values</b>: 
-                The bar chart shows all nuggets found inside the documents, lined after each other along the x-axis.
-                The y axis shows the normalized cosine distance. As we mentioned, the lower the cosine distance is,
-                the more certain we are that the corresponding word belongs to what we are looking for: a value in the database. <br><br>
-                
-                
-                <b>QUESTION</b>: After you explore the bar chart, ask yourself - do the answers on the left tend to be more plausible? <br><br>
-                <b>PRO TIP</b>: Click on each bar to show the exact value, as well as the full information nugget.
-                """
-        ]
-        image_list = [
-            None,
-            'wannadb_ui/resources/info_popups/cosine_similarity.png',  # Add the path to an SVG image
-            'wannadb_ui/resources/info_popups/screenshot_grid.png',  # Regular PNG image
-            'wannadb_ui/resources/info_popups/screenshot_bar_chart.png'
-        ]
-
         global dialog
-        assert len(info_list) == len(image_list)
-        dialog.set_info_list(info_list)
-        dialog.set_image_list(image_list)
+        dialog.load_markdown_file('wannadb_ui/resources/info_popups/barchart_tutorial.md')  # Path to your .md file
+        # dialog.set_image_list([None, 'image1.png', 'image2.png', 'image3.png'])
         dialog.exec()
 
     def on_pick(self, event):
