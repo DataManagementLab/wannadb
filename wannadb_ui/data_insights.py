@@ -298,7 +298,7 @@ class DataInsightsArea:
         For further details, check the related method in `EmbeddingVisualizer`.
         """
 
-        self.suggestion_visualizer.enable_accessible_color_palette_()
+        self.suggestion_visualizer.enable_accessible_color_palette()
     
     def disable_accessible_color_palette(self):
         """
@@ -307,7 +307,7 @@ class DataInsightsArea:
         For further details, check the related method in `EmbeddingVisualizer`.
         """
 
-        self.suggestion_visualizer.disable_accessible_color_palette_()
+        self.suggestion_visualizer.disable_accessible_color_palette()
 
     @track_button_click("Show Suggestions In 3D-Grid")
     def _show_suggestion_visualizer(self):

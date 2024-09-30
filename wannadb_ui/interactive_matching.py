@@ -709,7 +709,7 @@ class DocumentWidget(QWidget, VisualizationProvidingItem):
         self.visualizer.enable_accessible_color_palette()
     
     def disable_accessible_color_palette(self):
-        self.visualizer.enable_accessible_color_palette()
+        self.visualizer.disable_accessible_color_palette()
     
     def show_visualizations(self):
         self.upper_buttons_widget.show()
