@@ -275,7 +275,7 @@ class EmbeddingVisualizer:
         # Add the given colors with their meanings to the given legend
         self._update_legend()
 
-    def enable_accessible_color_palette_(self):
+    def enable_accessible_color_palette(self):
         """
         Replaces the colors of points displayed within the grid by accessible colors allowing people with color
         blindness to better differentiate the colors.
@@ -283,8 +283,13 @@ class EmbeddingVisualizer:
 
         self._accessible_color_palette = True
         self._update_legend()
+        self.update_and_display_params(self._attribute,
+                                       self._nuggets,
+                                       self._currently_highlighted_nugget,
+                                       self._best_guess,
+                                       self._other_best_guesses)
 
-    def disable_accessible_color_palette_(self):
+    def disable_accessible_color_palette(self):
         """
         Replaces the colors of points displayed within the grid by the originally used colors and therefore disables the
         usage of accessible colors.
@@ -292,6 +297,11 @@ class EmbeddingVisualizer:
 
         self._accessible_color_palette = False
         self._update_legend()
+        self.update_and_display_params(self._attribute,
+                                       self._nuggets,
+                                       self._currently_highlighted_nugget,
+                                       self._best_guess,
+                                       self._other_best_guesses)
 
     def update_and_display_params(self,
                                   attribute: Attribute,
@@ -775,11 +785,11 @@ class EmbeddingVisualizerWidget(EmbeddingVisualizer, QWidget):
         """
 
         # Call superclass implementation to enable accessible color palette on this grid
-        super().enable_accessible_color_palette_()
+        super().enable_accessible_color_palette()
 
         # Enable accessible color palette in fullscreen window if present
         if self._fullscreen_window is not None:
-            self._fullscreen_window.enable_accessible_color_palette_()
+            self._fullscreen_window.enable_accessible_color_palette()
 
     def disable_accessible_color_palette(self):
         """
@@ -792,11 +802,11 @@ class EmbeddingVisualizerWidget(EmbeddingVisualizer, QWidget):
         """
 
         # Call superclass implementation to disable accessible color palette on this grid
-        super().disable_accessible_color_palette_()
+        super().disable_accessible_color_palette()
 
         # Disable accessible color palette in fullscreen window if present
         if self._fullscreen_window is not None:
-            self._fullscreen_window.disable_accessible_color_palette_()
+            self._fullscreen_window.disable_accessible_color_palette()
 
     def return_from_embedding_visualizer_window(self):
         """
