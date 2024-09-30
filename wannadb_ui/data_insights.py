@@ -468,7 +468,7 @@ class ExtendedDataInsightsArea(QWidget, DataInsightsArea):
 
         # Add label indicating the value change if necessary
         if round(threshold_value_change, 4) != 0:
-            self.threshold_value_label.setStyleSheet("color: yellow;")
+            self.threshold_value_label.setStyleSheet("color: orange;")
             change_text = f'(+{round(threshold_value_change, 4)})' if threshold_value_change > 0 else f'{round(threshold_value_change, 4)})'
             self.threshold_change_label.setText(change_text)
         else:

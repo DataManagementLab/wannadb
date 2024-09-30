@@ -474,8 +474,8 @@ class EmbeddingVisualizer:
                                    annotation_text=_build_nuggets_annotation_text(nugget))
 
     def _display_attribute_embedding(self, attribute):
-        self._add_item_to_grid(nugget_to_display_context=(attribute, ACC_RED if self._accessible_color_palette else RED),
-                               annotation_text=attribute.name)
+        self._add_item_to_grid(nugget_to_display_context=(attribute, WHITE),
+                               annotation_text=f'Attribute: {attribute.name}')
         self._attribute = attribute
 
     def _remove_nuggets_from_widget(self, nuggets_to_remove):

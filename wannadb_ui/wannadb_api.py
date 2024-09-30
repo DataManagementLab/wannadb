@@ -14,7 +14,7 @@ from wannadb.interaction import EmptyInteractionCallback, InteractionCallback
 from wannadb.matching.custom_match_extraction import FaissSentenceSimilarityExtractor
 from wannadb.matching.distance import SignalsMeanDistance
 from wannadb.matching.matching import RankingBasedMatcher
-from wannadb.preprocessing.dimension_reduction import PCAReducer, TSNEReducer
+from wannadb.preprocessing.dimension_reduction import PCAReducer
 from wannadb.preprocessing.embedding import BERTContextSentenceEmbedder, RelativePositionEmbedder, \
     SBERTTextEmbedder, SBERTLabelEmbedder, SBERTDocumentSentenceEmbedder
 from wannadb.preprocessing.extraction import StanzaNERExtractor, SpacyNERExtractor
