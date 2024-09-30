@@ -11,11 +11,13 @@ from typing import Dict, Callable
 logger: logging.Logger = logging.getLogger(__name__)
 
 
+# Singleton class for tracking user interaction with a GUI
 class Tracker(QObject):
     _instance = None  # Class-level attribute to store the singleton instance
     time_spent_signal = pyqtSignal(str, float)  # Define the signal with window name and time spent
 
     def __new__(cls, *args, **kwargs):
+        """Singleton pattern ensures one instance of the class"""
         if not cls._instance:
             cls._instance = super(Tracker, cls).__new__(cls, *args, **kwargs)
             cls._instance._initialized = False
@@ -23,6 +25,7 @@ class Tracker(QObject):
         return cls._instance
 
     def __init__(self):
+        """Initialize tracking properties if not already initialized"""
         if not self._initialized:
             super().__init__()  # Call the QObject initializer
             self.window_open_times = {}
@@ -36,6 +39,9 @@ class Tracker(QObject):
             self.json_data = []
 
     def dump_report(self):
+        """Dumps the interaction data to two report files.
+        One of them contains a json representations of the user activiy, the other
+        contains natural text."""
         log_directory = './logs'
         log_file = os.path.join(log_directory, 'user_report.txt')
         os.makedirs(log_directory, exist_ok=True)
@@ -61,18 +67,21 @@ class Tracker(QObject):
         logger.info(f"Dumped the json report file in {round(tick - tack, 2)} seconds")
 
     def start_timer(self, window_name: str):
+        """Starts the timer for tracking window open time"""
         self.window_open_times[window_name] = QDateTime.currentDateTime()
         self.timer.start(1000)
         self.log += f"{self.sequence_number}. {window_name} was opened\n"
-        self.json_data.append({'type': 'window', 'action': 'open' ,'identifier': window_name})
+        self.json_data.append({'type': 'window', 'action': 'open', 'identifier': window_name})
         self.sequence_number += 1
 
     def stop_timer(self, window_name: str):
+        """Stops the timer for a window and calculates the time spent"""
         self.timer.stop()
         logger.debug(f"window_name = {window_name}")
         self.calculate_time_spent(window_name)
 
     def calculate_time_spent(self, window_name: str):
+        """Calculates the time spent in a window and logs the result"""
         if self.window_open_times[window_name]:
             current_time = QDateTime.currentDateTime()
             time_spent = self.window_open_times[window_name].msecsTo(current_time) / 1000.0  # Convert to seconds
@@ -84,15 +93,18 @@ class Tracker(QObject):
                 self.total_window_open_times[window_name] = time_spent
             self.log += f'{self.sequence_number}. {window_name} was closed. Time spent in {window_name} : {round(time_spent, 2)} seconds.\n'
             self.sequence_number += 1
-            self.json_data.append({'type': 'window', 'action': 'close', 'identifier': window_name, 'time_open': time_spent})
+            self.json_data.append(
+                {'type': 'window', 'action': 'close', 'identifier': window_name, 'time_open': time_spent})
 
     def track_button_click(self, button_name: str):
+        """Tracks button clicks and logs them. Helper method for the decorator below"""
         self.button_click_counts[button_name] += 1
         self.log += f'{self.sequence_number}. {button_name} was clicked.\n'
         self.sequence_number += 1
         self.json_data.append({'type': 'button', 'identifier': button_name})
 
     def track_tooltip_activation(self, tooltip_object: str):
+        """Tracks tooltip activations and logs them. Must be manually wired to every added tooltip"""
         self.tooltips_hovered_counts[tooltip_object] += 1
         self.log += f'{self.sequence_number}. The following tooltip was activated:\n {tooltip_object} \n'
         self.sequence_number += 1
@@ -100,6 +112,7 @@ class Tracker(QObject):
 
 
 def track_button_click(button_name: str):
+    """Decorator to track button clicks. Add to function signature behind a button to start logging"""
     def decorator(func: Callable):
         @wraps(func)
         def wrapper(self, *args, **kwargs):
@@ -109,4 +122,5 @@ def track_button_click(button_name: str):
             return func(self, *args, **kwargs)
 
         return wrapper
+
     return decorator
