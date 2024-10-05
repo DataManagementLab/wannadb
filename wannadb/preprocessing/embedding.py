@@ -238,9 +238,13 @@ class SBERTLabelEmbedder(BaseSBERTEmbedder):
             statistics: Statistics
     ) -> None:
         texts: List[str] = [attribute[NaturalLanguageLabelSignal] for attribute in attributes]
-        embeddings: List[np.ndarray] = resources.MANAGER[self._sbert_resource_identifier].encode(
-            texts, show_progress_bar=False
-        )
+        embeddings: List[np.ndarray] = []
+        # if there are no texts, embeddings will be an empty list
+        # this is necessary as newer versions of SentenceTransformers throw an error if texts is an empty list
+        if texts != []:
+            embeddings: List[np.ndarray] = resources.MANAGER[self._sbert_resource_identifier].encode(
+                texts, show_progress_bar=False
+            )
 
         for attribute, embedding in zip(attributes, embeddings):
             attribute[LabelEmbeddingSignal] = LabelEmbeddingSignal(embedding)
