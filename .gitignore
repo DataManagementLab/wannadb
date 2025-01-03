@@ -5,6 +5,8 @@
 
 /models/
 /cache/
+/build/
+/executable/
 .json
 .pdf
 .bson
