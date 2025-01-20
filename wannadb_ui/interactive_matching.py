@@ -114,7 +114,7 @@ class NuggetListWidget(QWidget, VisualizationProvidingItem):
         self.layout.addWidget(self.description)
 
         # suggestion visualizer
-        self.visualize_area = DataInsightsArea()
+        self.visualize_area = SimpleDataInsightsArea()
         self.layout.addWidget(self.visualize_area)
         self.visualize_area.setVisible(False)
         self.visualizations = True
