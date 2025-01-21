@@ -510,8 +510,7 @@ class EmbeddingVisualizer:
         if previously_selected_nugget is None:
             reset_color = WHITE
             reset_size = DEFAULT_NUGGET_SIZE
-        elif (previously_selected_nugget in self._attribute.confirmed_matches or
-              similar_prev_selected_nugget in self._attribute.confirmed_matches):
+        elif previously_selected_nugget in self._attribute.confirmed_matches:
             reset_color = ACC_GREEN if self._accessible_color_palette else GREEN
             reset_size = DEFAULT_NUGGET_SIZE
         elif previously_selected_nugget == self._best_guess:
@@ -535,12 +534,8 @@ class EmbeddingVisualizer:
                            f"Will return purple as color highlighting nuggets with this issue.")
             return ACC_PURPLE if self._accessible_color_palette else PURPLE
 
-        similar_nugget = self._nugget_to_similar_nugget[nugget] if nugget in self._nugget_to_similar_nugget else None
-
-        return (WHITE if nugget[CachedDistanceSignal] < self._attribute[CurrentThresholdSignal] or
-                         (similar_nugget is not None and similar_nugget[CachedDistanceSignal] < self._attribute[
-                             CurrentThresholdSignal])
-                else ACC_RED if self.accessible_color_palette else RED)
+        return WHITE if nugget[CachedDistanceSignal] < self._attribute[
+            CurrentThresholdSignal] else ACC_RED if self._accessible_color_palette else RED
 
     def _add_grids(self):
         # Adds the UI items realizing the grid

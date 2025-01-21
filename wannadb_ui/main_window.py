@@ -108,7 +108,7 @@ class MainWindow(QMainWindow):
     def statistics_to_ui(self, statistics):
         logger.debug("Called slot 'statistics_to_ui'.")
 
-        self.statistics = statistics
+        self.statistics = statisticsf
 
     @pyqtSlot(SQLiteCacheDB)
     def cache_db_to_ui(self, cache_db):
@@ -310,6 +310,7 @@ class MainWindow(QMainWindow):
 
         self._set_available_visualization_actions()
         self._enable_color_palette_settings()
+
     def interactive_table_population_task(self):
         logger.info("Execute task 'interactive_table_population_task'.")
 
@@ -534,9 +535,28 @@ class MainWindow(QMainWindow):
         self.enable_visualizations_action.setEnabled(not self.visualizations)
         self.disable_visualizations_action.setEnabled(self.visualizations)
 
+    def attach_visualization_level_observer(self, observer):
+        self.visualizations_level_observers.append(observer)
+
+
+    def _set_available_visualization_actions(self):
+        if self.visualizations_level == AvailableVisualizationsLevel.DISABLED:
+            self.enable_lvl1_visualizations_action.setEnabled(True)
+            self.enable_lvl2_visualizations_action.setEnabled(True)
+            self.disable_visualizations_action.setEnabled(False)
+        elif self.visualizations_level == AvailableVisualizationsLevel.LEVEL_1:
+            self.enable_lvl1_visualizations_action.setEnabled(False)
+            self.enable_lvl2_visualizations_action.setEnabled(True)
+            self.disable_visualizations_action.setEnabled(True)
+        elif self.visualizations_level == AvailableVisualizationsLevel.LEVEL_2:
+            self.enable_lvl1_visualizations_action.setEnabled(True)
+            self.enable_lvl2_visualizations_action.setEnabled(False)
+            self.disable_visualizations_action.setEnabled(True)
+
     def _enable_color_palette_settings(self):
         self.enable_accessible_color_palette_action.setEnabled(not self.accessible_color_palette)
         self.disable_accessible_color_palette_action.setEnabled(self.accessible_color_palette)
+    
     # noinspection PyUnresolvedReferences
     def __init__(self) -> None:
         super(MainWindow, self).__init__()

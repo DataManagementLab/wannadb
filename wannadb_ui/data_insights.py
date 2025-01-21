@@ -434,15 +434,6 @@ class ExtendedDataInsightsArea(QWidget, DataInsightsArea):
         self.changes_list3_hbox = QHBoxLayout()
         self.changes_list3_hbox.setContentsMargins(0, 0, 0, 0)
         self.changes_list3_hbox.setSpacing(0)
-
-        self.suggestion_visualizer = EmbeddingVisualizerWindow()
-        self.suggestion_visualizer_button = QPushButton("Show Suggestions In 3D-Grid")
-        self.suggestion_visualizer_button.setContentsMargins(0, 0, 0, 0)
-        self.accessible_color_palette = False
-        self.suggestion_visualizer_button.setFont(BUTTON_FONT)
-        self.suggestion_visualizer_button.setMaximumWidth(240)
-        self.suggestion_visualizer_button.clicked.connect(self._show_suggestion_visualizer)
-
         self.changes_best_matches_list = ChangedBestMatchDocumentsList()
         self.changes_list3_hbox.addWidget(self.changes_best_matches_list)
         self.changes_list3_hbox.addItem(QSpacerItem(40, 20, QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum))
