@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WannaDB Installer</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background-color: #f4f4f4;
+        }
+        .container {
+            max-width: 600px;
+            margin: 0 auto;
+            background: #fff;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+        }
+        h1 {
+            text-align: center;
+        }
+        .form-group {
+            margin-bottom: 15px;
+        }
+        label {
+            display: block;
+            margin-bottom: 5px;
+        }
+        input[type="text"] {
+            width: 100%;
+            padding: 8px;
+            box-sizing: border-box;
+        }
+        button {
+            display: inline-block;
+            width: calc(100% - 30px);
+            padding: 10px;
+            background-color: #007BFF;
+            color: #fff;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+        }
+        button:hover {
+            background-color: #0056b3;
+        }
+        .icon {
+            display: inline-block;
+            width: 30px;
+            text-align: center;
+            vertical-align: middle;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>WannaDB Installer</h1>
+        <p id="osInfo" style="display: none;"></p>
+        <p id="currentDir" style="display: none;"></p>
+        <form id="installerForm">
+            <div class="form-group">
+                <label for="installPath">Select Installation Path:</label>
+                <div style="display: flex; align-items: center;">
+                    <input type="text" id="installPath" name="installPath" readonly style="flex-grow: 1; margin-right: 10px;">
+                    <button type="button" id="selectFolderButton" style="width: 60px; height: 40px;">
+                        <span class="icon"><i class="fas fa-folder"></i></span>
+                    </button>
+                </div>
+            </div>
+            <button type="submit" style="width: 100%; padding: 15px; font-size: 16px;">Install</button>
+        </form>
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            const osInfo = window.electron.getOS();
+            document.getElementById('osInfo').textContent = `Operating System: ${osInfo}`;
+
+            const currentDir = window.electron.getCurrentDirectory();
+            document.getElementById('currentDir').textContent = `Current Directory: ${currentDir}`;
+        });
+
+        document.getElementById('selectFolderButton').addEventListener('click', async () => {
+            try {
+                const folderPath = await window.electron.selectDirectory();
+                if (folderPath) {
+                    document.getElementById('installPath').value = folderPath;
+                }
+            } catch (error) {
+                console.error('Error selecting directory:', error);
+                alert(`An error occurred while selecting the directory.\n${error.message}`);
+            }
+        });
+
+        document.getElementById('installerForm').addEventListener('submit', function(event) {
+            event.preventDefault();
+            const installPath = document.getElementById('installPath').value;
+            if (installPath) {
+                window.electron.cloneRepo(installPath)
+                    .then(() => {
+                        alert('WannaDB has been successfully installed.');
+                    })
+                    .catch((error) => {
+                        alert('An error occurred during installation: ' + error.message);
+                    });
+                window.electron.createVenv(installPath)
+                    .then(() => {
+                        alert('Virtual environment has been successfully created.');
+                    })
+                    .catch((error) => {
+                        alert('An error occurred during virtual environment creation: ' + error.message);
+                    });
+            } else {
+                alert('Please select a valid installation path.');
+            }
+        });
+
+        console.log('preload.js loaded');
+    </script>
+</body>
+</html>

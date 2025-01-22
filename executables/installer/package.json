@@ -1,0 +1,20 @@
+{
+  "name": "installer",
+  "version": "1.0.0",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "description": "",
+  "devDependencies": {
+    "electron": "^34.0.0"
+  },
+  "dependencies": {
+    "os": "^0.1.2",
+    "path": "^0.12.7"
+  }
+}

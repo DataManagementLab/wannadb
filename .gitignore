@@ -5,6 +5,7 @@
 
 /models/
 /cache/
+/executables/installer/node_modules/
 /build/
 /executable/
 .json
