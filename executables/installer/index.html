@@ -76,13 +76,18 @@
     </div>
 
     <script>
-        document.addEventListener('DOMContentLoaded', () => {
-            const osInfo = window.electron.getOS();
-            document.getElementById('osInfo').textContent = `Operating System: ${osInfo}`;
+        document.addEventListener('DOMContentLoaded', async () => {
+            try {
+                const osInfo = await window.electron.getOS();
+                document.getElementById('osInfo').textContent = `Operating System: ${osInfo}`;
 
-            const currentDir = window.electron.getCurrentDirectory();
-            document.getElementById('currentDir').textContent = `Current Directory: ${currentDir}`;
-        });
+                const currentDir = await window.electron.getCurrentDirectory();
+                document.getElementById('currentDir').textContent = `Current Directory: ${currentDir}`;
+                document.getElementById('installPath').value = currentDir;
+            } catch (error) {
+                console.error('Error getting OS information:', error);
+            }
+            });
 
         document.getElementById('selectFolderButton').addEventListener('click', async () => {
             try {
@@ -96,30 +101,43 @@
             }
         });
 
-        document.getElementById('installerForm').addEventListener('submit', function(event) {
+        document.getElementById('installerForm').addEventListener('submit', async function(event) {
             event.preventDefault();
-            const installPath = document.getElementById('installPath').value;
-            if (installPath) {
-                window.electron.cloneRepo(installPath)
-                    .then(() => {
-                        alert('WannaDB has been successfully installed.');
-                    })
-                    .catch((error) => {
-                        alert('An error occurred during installation: ' + error.message);
-                    });
-                window.electron.createVenv(installPath)
-                    .then(() => {
-                        alert('Virtual environment has been successfully created.');
-                    })
-                    .catch((error) => {
-                        alert('An error occurred during virtual environment creation: ' + error.message);
-                    });
-            } else {
-                alert('Please select a valid installation path.');
-            }
+            window.electron.checkDependencies()
+                .then(async (dependencies) => {
+                    const { python, git } = dependencies;
+                    if (!python || !git) {
+                        window.electron.loadDependencies(python, git)
+                            .then(() => {
+                                return;
+                            })
+                            .catch((error) => {
+                                alert('An error occurred while installing dependencies: ' + error.message);
+                            });
+                    }
+                    else {
+                        const installPath = document.getElementById('installPath').value;
+                        if (installPath) {
+                            window.electron.loadWannadbPage();
+                            await window.electron.cloneRepo(installPath)
+                                .then(() => {})
+                                .catch((error) => {
+                                    alert('An error occurred during installation: ' + error.message);
+                                });
+                            window.electron.createVenv(installPath)
+                                .then(() => {})
+                                .catch((error) => {
+                                    alert('An error occurred during virtual environment creation: ' + error.message);
+                                });
+                        } else {
+                            alert('Please select a valid installation path.');
+                        }
+                    }
+                })
+                .catch((error) => {
+                    alert('An error occurred while checking dependencies: ' + error.message);
+                });
         });
-
-        console.log('preload.js loaded');
     </script>
 </body>
 </html>

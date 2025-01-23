@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WannaDB Installer</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+        }
+        .container {
+            max-width: 600px;
+            margin: 0 auto;
+        }
+        .checkbox-group {
+            margin: 20px 0;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Missing Dependencies</h1>
+        <div class="checkbox-group">
+            <input type="checkbox" id="python" name="python">
+            <label for="python">Python</label>
+        </div>
+        <div class="checkbox-group">
+            <input type="checkbox" id="git" name="git">
+            <label for="git">Git</label>
+        </div>
+        <div class="button-group">
+            <button type="button" onclick="cancel()">Cancel</button>
+            <button type="button" onclick="install()">Install</button>
+        </div>
+    </div>
+    <script>
+        function getUrlParameter(name) {
+            name = name.replace(/[\[]/, '\\[').replace(/[\]]/, '\\]');
+            var regex = new RegExp('[\\?&]' + name + '=([^&#]*)');
+            var results = regex.exec(location.search);
+            return results === null ? '' : decodeURIComponent(results[1].replace(/\+/g, ' '));
+        }
+
+        document.addEventListener('DOMContentLoaded', (event) => {
+            const pythonParam = getUrlParameter('python');
+            const gitParam = getUrlParameter('git');
+
+            if (pythonParam === 'true') {
+                document.getElementById('python').checked = true;
+                document.getElementById('python').disabled = true;
+            }
+
+            if (gitParam === 'true') {
+                document.getElementById('git').checked = true;
+                document.getElementById('git').disabled = true;
+            }
+        });
+        function cancel() {
+            window.electron.endApp();
+        }
+
+        function install() {
+            const valid = document.getElementById('python').checked && document.getElementById('git').checked;
+            const python = document.getElementById('python').disabled;
+            const git = document.getElementById('git').disabled;
+            if (!valid) {
+                alert('Please select all dependencies to install!\nOr close the installer to cancel the installation.');
+                return;
+            }
+            window.electron.loadingDependenciesPage();
+            window.electron.installDependencies(python, git);
+            window.electron.startInstallPage();
+        }
+    </script>
+    <style>
+        .button-group {
+            display: flex;
+            justify-content: space-between;
+            margin-top: 20px;
+        }
+        .button-group button {
+            padding: 10px 20px;
+            font-size: 16px;
+            cursor: pointer;
+        }
+    </style>
+</body>
+</html></div>
