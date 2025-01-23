@@ -31,7 +31,10 @@ See [EXTRACTORS.md](EXTRACTORS.md) for more information on the interactive extra
 
 ## Installation
 
-This project requires Python 3.10 or newer.
+There are two possible ways to install WannaDB. You can either clone the repository and install everything youreself, or you can use the provide installer, which installs all dependencies for you.
+If you install everything yourself please follow the following steps:
+
+As this project requires Python 3.10 or newer, make sure it is installed.
 
 ##### 1. Create a virtual environment.
 
@@ -150,6 +153,7 @@ This repository is structured as follows:
 * `wannadb`, `wannadb_parsql`, and `wannadb_ui` contain the implementation of ASET and the GUI.
 * `scripts` contains helpers, like a stand-alone preprocessing script.
 * `tests` contains pytest tests.
+* `executables` contains all files need for the installer.
 
 ### Architecture: Core
 
