@@ -3,6 +3,18 @@ const { app, BrowserWindow, dialog, ipcMain } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const semver = require('semver');
+const yaml = require('js-yaml');
+const configPath = path.join(__dirname, 'config.yaml');
+let requiredPythonVersion = '3.10';
+let requirements = [];
+try {
+    const configFile = fs.readFileSync(configPath, 'utf8');
+    const config = yaml.load(configFile);
+    requiredPythonVersion = config.requiredPythonVersion || requiredPythonVersion;
+    requirements = config.requirement_files || [];
+} catch (e) {
+    console.error('Failed to read config.yaml:', e);
+}
 
 function createWindow() {
     const mainWindow = new BrowserWindow({
@@ -55,7 +67,7 @@ ipcMain.handle('clone-repo', async (event, filePath) => {
 
 ipcMain.handle('create-venv', async (event, filePath) => {
     const platform = process.platform;
-    const pythonCommand = platform === 'win32' ? 'py -3.10' : 'python3.10';
+    const pythonCommand = platform === 'win32' ? `py -${requiredPythonVersion}` : `python${requiredPythonVersion}`;
     const pythonVersion = await new Promise((resolve, reject) => {
         exec(`${pythonCommand} --version`, (error, stdout, stderr) => {
             if (error) {
@@ -65,13 +77,14 @@ ipcMain.handle('create-venv', async (event, filePath) => {
             } else {
                 resolve(stdout.trim());
             }
+        }).on('exit', (code) => {
+            if (code !== 0) {
+                throw new Error('Python not found');
+            }
         });
     });
 
-    const versionMatch = pythonVersion.match(/^Python (\d+\.\d+\.\d+)/);
-    if (!versionMatch || semver.lt(versionMatch[1], '3.10.0')) {
-        throw new Error('Python 3.10 or newer is required.');
-    }
+    const activateCommand = process.platform === 'win32' ? `${path.join(filePath, 'wannadb', 'venv')}\\Scripts\\activate` : ('darwin'? `source ${path.join(filePath, 'wannadb', 'venv')}/bin/activate`: `${path.join(filePath, 'wannadb', 'venv')}/bin/activate`);
     exec(`${pythonCommand} -m venv ${path.join(filePath, 'wannadb', 'venv')}`, (error, stdout, stderr) => {
         if (error) {
             throw new Error(error.message);
@@ -81,21 +94,35 @@ ipcMain.handle('create-venv', async (event, filePath) => {
         }
         return stdout;
     }).on('exit', (code) => {
-        const activateCommand = process.platform === 'win32' ? `${path.join(filePath, 'wannadb', 'venv')}\\Scripts\\activate` : ('darwin'? `source ${path.join(filePath, 'wannadb', 'venv')}/bin/activate`: `${path.join(filePath, 'wannadb', 'venv')}/bin/activate`);
-        exec(`${activateCommand} && pip install -r ${path.join(filePath, 'wannadb', 'requirements.txt')}`, { shell: true }, (error, stdout, stderr) => {
-            if (error) {
-                throw new Error(error.message);
-            }
-            if (stderr) {
-                return stderr;
-            }
-            return stdout;
-        }).on('exit', (code) => {
-            const mainWindow = BrowserWindow.getAllWindows()[0];
-            mainWindow.loadFile('finish.html');
+        const installRequirements = requirements.map((requirement) => {
+            return new Promise((resolve, reject) => {
+                exec(`${activateCommand} && pip install -r ${path.join(filePath, 'wannadb', requirement)}`, { shell: true }, (error, stdout, stderr) => {
+                }).on('exit', (code) => {
+                    if (code !== 0) {
+                        reject(`Failed to install ${requirement}`);
+                    }
+                    resolve();
+                });
+            });
         });
+
+        Promise.all(installRequirements)
+            .then((results) => {
+                const mainWindow = BrowserWindow.getAllWindows()[0];
+                mainWindow.loadFile('finish.html');
+            }, (error) => {
+                console.error('Error installing requirements:', error);
+            })
+            .catch((error) => {
+                console.error('Error installing requirements:', error);
+            });
     });
-    const scriptContent = `#!/bin/bash\nsource ${path.join(filePath, 'wannadb', 'venv')}/bin/activate\npython ${path.join(filePath, 'wannadb', 'main.py')}`;
+    const scriptContent = `
+        #!/bin/bash\n
+        cd ${path.join(filePath, 'wannadb')}\n
+        ${activateCommand}\n
+        python ${path.join(filePath, 'wannadb', 'main.py')}
+        `;
     const scriptFilePath = path.join(filePath, 'WannaDB.sh');
     fs.writeFile(scriptFilePath, scriptContent, { mode: 0o755 }, (err) => {
         if (err) {
@@ -136,46 +163,36 @@ ipcMain.handle('get-os', async (event) => {
 
 ipcMain.handle('check-dependencies', async (event) => {
     let python = false;
+    let pyFnished = false;
+    let git = false;
+    let gitFinished = false;
     try {
-        const pythonVersion = await new Promise((resolve, reject) => {
-            const pythonCommand = process.platform === 'win32' ? 'py -3.10 --version' : 'python3.10 --version';
-            exec(pythonCommand, (error, stdout, stderr) => {
-                if (error) {
-                    reject(error.message);
-                } else if (stderr) {
-                    reject(stderr);
-                } else {
-                    resolve(stdout.trim());
-                }
-            });
+        const pythonCommand = process.platform === 'win32' ? `py -${requiredPythonVersion} --version` : `python${requiredPythonVersion} --version`;
+        exec(pythonCommand, (error, stdout, stderr) => {
+        }).on('exit', (code) => {
+            if (code === 0) {
+                python = true;
+            }
+            pyFnished = true;
         });
-
-        const versionMatch = pythonVersion.match(/^Python (\d+\.\d+\.\d+)/);
-        if (!versionMatch || semver.lt(versionMatch[1], '3.10.0')) {
-            python = false;
-        }
-        else {
-            python = true;
-        }
     } catch (error) {
         python = false;
+        pyFnished = true;
     }
-    let git = false;
     try {
-        await new Promise((resolve, reject) => {
-            exec('git --version', (error, stdout, stderr) => {
-                if (error) {
-                    reject(error.message);
-                } else if (stderr) {
-                    reject(stderr);
-                } else {
-                    resolve();
-                }
-            });
+        exec('git --version', (error, stdout, stderr) => {
+        }).on('exit', (code) => {
+            if (code === 0) {
+                git = true;
+            }
+            gitFinished = true;
         });
-        git = true;
     } catch (error) {
         git = false;
+        gitFinished = true;
+    }
+    while (!pyFnished || !gitFinished) {
+        await new Promise((resolve) => setTimeout(resolve, 100));
     }
     return { python, git };
 });
@@ -186,7 +203,7 @@ ipcMain.handle('install-dependencies', async (event, python, git) => {
 
         if (platform === 'win32') {
             if (!python) {
-                exec('winget install -e --id Python.Python.3.10', (error, stdout, stderr) => {
+                exec(`winget install -e --id Python.Python.${requiredPythonVersion.replace('.', '')}`, (error, stdout, stderr) => {
                     if (error) {
                         throw new Error(error.message);
                     }
@@ -195,7 +212,7 @@ ipcMain.handle('install-dependencies', async (event, python, git) => {
                     }
                     console.log(stdout);
                 }).on('exit', (code) => {
-                    exec('winget install -e --id Python.Python.3.10.PythonDevelopment', (error, stdout, stderr) => {
+                    exec(`winget install -e --id Python.Python.${requiredPythonVersion.replace('.', '')}.PythonDevelopment`, (error, stdout, stderr) => {
                         if (error) {
                             throw new Error(error.message);
                         }
@@ -203,45 +220,57 @@ ipcMain.handle('install-dependencies', async (event, python, git) => {
                             console.error(stderr);
                         }
                         console.log(stdout);
+                    }).on('exit', (code) => {
+                        if (!git) {
+                            exec('winget install -e --id Git.Git', (error, stdout, stderr) => {
+                                if (error) {
+                                throw new Error(error.message);
+                                }
+                                if (stderr) {
+                                console.error(stderr);
+                                }
+                                console.log(stdout);
+                            }).on('exit', (code) => {
+                                if (code === 0) {
+                                    nextPage();
+                                }
+                            });
+                        }
+                        else {
+                            nextPage();
+                        }
                     });
-                    if (!git) {
-                        exec('winget install -e --id Git.Git', (error, stdout, stderr) => {
-                            if (error) {
-                            throw new Error(error.message);
-                            }
-                            if (stderr) {
-                            console.error(stderr);
-                            }
-                            console.log(stdout);
-                        });
-                    }
                 });
             }
             else if (!git) {
                 exec('winget install -e --id Git.Git', (error, stdout, stderr) => {
                     if (error) {
-                    throw new Error(error.message);
+                        throw new Error(error.message);
                     }
                     if (stderr) {
-                    console.error(stderr);
+                        console.error(stderr);
                     }
                     console.log(stdout);
+                }).on('exit', (code) => {
+                    if (code === 0) {
+                        nextPage();
+                    }
                 });
             }
         }
         else if (platform === 'darwin') {
             console.log(python, git);
             if (!python) {
-                exec('brew install python@3.10', (error, stdout, stderr) => {
+                exec(`brew install python@${requiredPythonVersion}`, (error, stdout, stderr) => {
                     if (error) {
-                    throw new Error(error.message);
+                        throw new Error(error.message);
                     }
                     if (stderr) {
-                    console.error(stderr);
+                        console.error(stderr);
                     }
                     console.log(stdout);
                 }).on('exit', (code) => {
-                    exec('brew link --force python@3.10', (error, stdout, stderr) => {
+                    exec(`brew link --force python@${requiredPythonVersion}`, (error, stdout, stderr) => {
                     if (error) {
                         throw new Error(error.message);
                     }
@@ -249,35 +278,47 @@ ipcMain.handle('install-dependencies', async (event, python, git) => {
                         console.error(stderr);
                     }
                     console.log(stdout);
-                    });
-                    if (!git) {
-                    exec('brew install git', (error, stdout, stderr) => {
-                        if (error) {
-                        throw new Error(error.message);
+                    }).on('exit', (code) => {
+                        if (!git) {
+                            exec('brew install git', (error, stdout, stderr) => {
+                                if (error) {
+                                    throw new Error(error.message);
+                                }
+                                if (stderr) {
+                                    console.error(stderr);
+                                }
+                                console.log(stdout);
+                            }).on('exit', (code) => {
+                                if (code === 0) {
+                                    nextPage();
+                                }
+                            });
                         }
-                        if (stderr) {
-                        console.error(stderr);
+                        else {
+                            nextPage();
                         }
-                        console.log(stdout);
                     });
-                    }
                 });
             }
             else if (!git) {
                 exec('brew install git', (error, stdout, stderr) => {
                     if (error) {
-                    throw new Error(error.message);
+                        throw new Error(error.message);
                     }
                     if (stderr) {
-                    console.error(stderr);
+                        console.error(stderr);
                     }
                     console.log(stdout);
+                }).on('exit', (code) => {
+                    if (code === 0) {
+                        nextPage();
+                    }
                 });
             }
         }
         else if (platform === 'linux') {
             if (!python) {
-                exec('sudo apt-get update && sudo apt-get install -y python3.10', (error, stdout, stderr) => {
+                exec(`sudo apt-get update && sudo apt-get install -y python${requiredPythonVersion}`, (error, stdout, stderr) => {
                     if (error) {
                         throw new Error(error.message);
                     }
@@ -286,7 +327,7 @@ ipcMain.handle('install-dependencies', async (event, python, git) => {
                     }
                     console.log(stdout);
                 }).on('exit', (code) => {
-                    exec('sudo apt-get install -y python3.10-venv', (error, stdout, stderr) => {
+                    exec(`sudo apt-get install -y python${requiredPythonVersion}-venv`, (error, stdout, stderr) => {
                         if (error) {
                             throw new Error(error.message);
                         }
@@ -294,18 +335,26 @@ ipcMain.handle('install-dependencies', async (event, python, git) => {
                             console.error(stderr);
                         }
                         console.log(stdout);
+                    }).on('exit', (code) => {
+                        if (!git) {
+                            exec('sudo apt-get install -y git', (error, stdout, stderr) => {
+                                if (error) {
+                                    throw new Error(error.message);
+                                }
+                                if (stderr) {
+                                    console.error(stderr);
+                                }
+                                console.log(stdout);
+                            }).on('exit', (code) => {
+                                if (code === 0) {
+                                    nextPage();
+                                }
+                            });
+                        }
+                        else {
+                            nextPage();
+                        }
                     });
-                    if (!git) {
-                        exec('sudo apt-get install -y git', (error, stdout, stderr) => {
-                            if (error) {
-                            throw new Error(error.message);
-                            }
-                            if (stderr) {
-                            console.error(stderr);
-                            }
-                            console.log(stdout);
-                        });
-                    }
                 });
             }
             else if (!git) {
@@ -317,6 +366,10 @@ ipcMain.handle('install-dependencies', async (event, python, git) => {
                         console.error(stderr);
                     }
                     console.log(stdout);
+                }).on('exit', (code) => {
+                    if (code === 0) {
+                        nextPage();
+                    }
                 });
             }
         } else {
@@ -324,11 +377,12 @@ ipcMain.handle('install-dependencies', async (event, python, git) => {
         }
     };
 
-    installPythonAndGit().then(() => {
+    const nextPage = () => {
         const mainWindow = BrowserWindow.getAllWindows()[0];
         mainWindow.loadFile('index.html');
-        return { python, git };
-    });
+    };
+
+    installPythonAndGit();
 });
 
 ipcMain.handle('end-app', async (event) => {

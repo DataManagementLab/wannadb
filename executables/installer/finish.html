@@ -40,7 +40,12 @@
     <div class="container">
         <h1>Download Finished</h1>
         <p>Your download has been completed successfully.</p>
-        <button class="button" onclick="window.close()">Finish</button>
+        <button class="button" onclick="cancel()">Finish</button>
     </div>
 </body>
+<script>
+    function cancel() {
+        window.electron.endApp();
+    }
+</script>
 </html>

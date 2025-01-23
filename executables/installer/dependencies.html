@@ -16,6 +16,19 @@
         .checkbox-group {
             margin: 20px 0;
         }
+        button {
+            display: inline-block;
+            width: 30%;
+            padding: 10px;
+            background-color: #00008b;
+            color: #fff;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+        }
+        button:hover {
+            background-color: #0000cd;
+        }
     </style>
 </head>
 <body>
@@ -29,8 +42,8 @@
             <input type="checkbox" id="git" name="git">
             <label for="git">Git</label>
         </div>
-        <div class="button-group">
-            <button type="button" onclick="cancel()">Cancel</button>
+        <div class="button-group" style="justify-content: flex-start;">
+            <button type="button" onclick="cancel()" style="margin-right: 20px;">Cancel</button>
             <button type="button" onclick="install()">Install</button>
         </div>
     </div>
