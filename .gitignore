@@ -6,6 +6,7 @@
 /models/
 /cache/
 /executables/installer/node_modules/
+/executables/installer/dist/
 /build/
 /executable/
 .json
@@ -15,3 +16,6 @@
 /evaluation/datasets/nobel/documents
 /evaluation/results/
 /logs/
+
+# OS generated files
+.DS_Store

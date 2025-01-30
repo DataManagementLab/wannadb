@@ -2,7 +2,6 @@ const { exec } = require('child_process');
 const { app, BrowserWindow, dialog, ipcMain } = require('electron');
 const path = require('path');
 const fs = require('fs');
-const semver = require('semver');
 const yaml = require('js-yaml');
 const configPath = path.join(__dirname, 'config.yaml');
 let requiredPythonVersion = '3.10';

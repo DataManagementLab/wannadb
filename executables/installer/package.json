@@ -1,21 +1,69 @@
 {
-  "name": "installer",
+  "name": "wannadbinstaller",
   "version": "1.0.0",
   "main": "main.js",
   "scripts": {
     "start": "electron .",
+    "build": "electron-builder",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
-  "keywords": [],
+  "keywords": [
+    "wannadb",
+    "installer"
+  ],
   "author": "",
-  "license": "ISC",
-  "description": "",
+  "license": "AGPL-3.0-or-later",
+  "description": "WannaDB allows users to explore unstructured text collections by automatically organizing the relevant information nuggets in a table. It supports ad-hoc SQL queries over text collections using a novel two-phased approach: First, a superset of information nuggets is extracted from the texts using existing extractors such as named entity recognizers. The extractions are then interactively matched to a structured table definition as requested by the user.",
+  "icon": "logo.png",
   "devDependencies": {
-    "electron": "^34.0.0"
+    "electron": "^34.0.0",
+    "electron-builder": "^25.1.8"
   },
   "dependencies": {
     "js-yaml": "^4.1.0",
     "os": "^0.1.2",
     "path": "^0.12.7"
+  },
+  "build": {
+    "appId": "de.dmlab.wannadb",
+    "productName": "WannaDB Installer",
+    "files": [
+      "main.js",
+      "index.html",
+      "dependencies.html",
+      "finish.html",
+      "index.html",
+      "loading_dependencies.html",
+      "loading_wannadb.html",
+      "preload.js",
+      "config.yaml",
+      "node_modules/**/*",
+      "package.json"
+    ],
+    "directories": {
+      "buildResources": "build"
+    },
+    "win": {
+      "target": "nsis",
+      "icon": "logo.png"
+    },
+    "mac": {
+      "icon": "logo.png"
+    },
+    "linux": {
+      "icon": "logo.png"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": true,
+      "allowToChangeInstallationDirectory": true
+    }
+  },
+  "pkg": {
+    "targets": [
+      "node16-macos-x64",
+      "node16-linux-x64",
+      "node16-win-x64"
+    ]
   }
 }
