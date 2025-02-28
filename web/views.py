@@ -1,7 +1,13 @@
+from django.shortcuts import reverse
 from django.utils.safestring import mark_safe
-from django.views.generic import TemplateView, DetailView, ListView
+from django.views.generic import TemplateView, DetailView, ListView, CreateView
 
-from web.models import Document, Collection
+from wannadb.data.data import DocumentBase
+from wannadb.interaction import InteractionCallback
+from wannadb.status import StatusCallback
+from web.models import Document, Collection, BoxAttribute, BoxAttributeValue
+
+
 
 
 class IndexView(ListView):
@@ -39,6 +45,7 @@ class DocumentView(DetailView):
 
         next_unseen_nugget_idx = 0
         inside = False
+        confirmed = False
         current_inside_nuggets = []
 
         # For every char in the original document
@@ -73,19 +80,82 @@ class DocumentView(DetailView):
                     base_formatted_text += f"<span class='nugget' style='background-color: {n.label.color}'><b>"
                     if n in nuggets_to_confirmed_nuggets:
                         base_formatted_text += f"<span class='nugget-label' style='background-color: {n.label.color}'>{nuggets_to_confirmed_nuggets[n].box_attribute.name}:</span> "
+                        confirmed = True
                     base_formatted_text += char
                     idx_mapper[idx] = len(base_formatted_text) - 1
                 # Inside
                 else:
                     # But now the questions: really inside or at the end?
                     if len(current_inside_nuggets) == 0:
+                        if confirmed:
+                            base_formatted_text += ' <i class="fa-regular fa-thumbs-up"></i> <i class="fa-regular fa-thumbs-down"></i>'
+                            confirmed = False
                         base_formatted_text += "</span></b>"
                         inside = False
                     base_formatted_text += char
                     idx_mapper[idx] = len(base_formatted_text) - 1
 
-
         context["text"] = mark_safe(base_formatted_text)
 
         return context
 
+
+class AddAttributeView(CreateView):
+    model = BoxAttribute
+    fields = ['name']
+    template_name = "add_attribute.html"
+
+    def form_valid(self, form):
+        form.instance.collection = Collection.objects.get(slug=self.kwargs['slug'])
+        s = super().form_valid(form)
+        for doc in form.instance.collection.document_set.all():
+            BoxAttributeValue.objects.create(document=doc, box_attribute=form.instance)
+        return s
+
+    def get_success_url(self):
+        return reverse('populate_attribute', kwargs={'pk': self.object.pk})
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        context['collection'] = Collection.objects.get(slug=self.kwargs['slug'])
+        return context
+
+
+class PopulateInitialView(DetailView):
+    model = BoxAttribute
+    context_object_name = "box_attribute"
+    template_name = "populate.html"
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+
+        context["feedback_list"] = ["Loading"] * 10
+
+        """
+
+        def status_callback_fn(message, progress):
+            pass
+
+        status_callback = StatusCallback(status_callback_fn)
+
+        def interaction_callback_fn(pipeline_element_identifier, feedback_request):
+            feedback_request["identifier"] = pipeline_element_identifier
+            self.feedback_request_to_ui.emit(feedback_request)
+
+            self.feedback_mutex.lock()
+            try:
+                self.feedback_cond.wait(self.feedback_mutex)
+            finally:
+                self.feedback_mutex.unlock()
+
+            return self.feedback
+            return None
+
+        interaction_callback = InteractionCallback(interaction_callback_fn)
+
+        with open(context["box_attribute"].collection.docbase_file_path, "rb") as f:
+            document_base = DocumentBase.from_bson(f.read())
+
+        matching_phase(document_base, interaction_callback, status_callback, statistics)
+        """
+        return context

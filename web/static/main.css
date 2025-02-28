@@ -4,14 +4,26 @@
     color: #ffffff;
     padding-left:3px;
     padding-right:3px;
+    line-height: 150%;
 }
 
 .nugget-label {
     position: absolute;
-    top: -10px; /* Adjust as needed */
+    top: -15px; /* Adjust as needed */
     left: 0;
     font-size: 0.6em; /* Adjust as needed */
     line-height: 1.1;
     padding:3px;
     color: #ffffff;
 }
+
+/* HTML: <div class="loader"></div> */
+.loader {
+  width: 200px;
+  aspect-ratio: 1;
+  border-radius: 50%;
+  border: 8px solid;
+  border-color: #000 #0000;
+  animation: l1 1s infinite;
+}
+@keyframes l1 {to{transform: rotate(.5turn)}}

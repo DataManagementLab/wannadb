@@ -1,7 +1,10 @@
 from django.core.management.base import BaseCommand, CommandError
 from django.utils.text import slugify
 
-from web.models import Collection, Document, Nugget, NuggetLabel
+import random
+
+
+from web.models import Collection, Document, Nugget, NuggetLabel, BoxAttribute, BoxAttributeValue
 
 from wannadb.data.data import Attribute
 from wannadb.matching.custom_match_extraction import DummyCustomMatchExtractor
@@ -42,6 +45,12 @@ class Command(BaseCommand):
             self.style.SUCCESS("Created collection")
         )
 
+        for a in document_base.attributes:
+            BoxAttribute.objects.create(
+                name=a.name,
+                collection=collection
+            )
+
         for i, doc in enumerate(document_base.documents):
             name = doc.name.split('\\')[-1]
             document_in_db = Document.objects.create(
@@ -50,6 +59,12 @@ class Command(BaseCommand):
                 text=doc.text,
                 slug=slugify(name)
             )
+            n_to_a = {}
+            for a_name, a_nuggets in doc.attribute_mappings.items():
+                if len(a_nuggets) > 0:
+                    n_to_a[(a_nuggets[0].start_char, a_nuggets[0].end_char)] = a_name
+            print(n_to_a)
+
             nuggets_imported = 0
             for nugget in doc.nuggets:
                 # Search for corresponding label in db
@@ -59,7 +74,7 @@ class Command(BaseCommand):
                 except NuggetLabel.DoesNotExist:
                     label = NuggetLabel.objects.create(name=label_name, color="#000000")
 
-                Nugget.objects.create(
+                n = Nugget.objects.create(
                     document=document_in_db,
                     start=nugget.start_char,
                     end=nugget.end_char,
@@ -67,6 +82,17 @@ class Command(BaseCommand):
                     label=label
                 )
                 nuggets_imported += 1
+
+                r = (nugget.start_char, nugget.end_char)
+                if r in n_to_a.keys():
+                    BoxAttributeValue.objects.create(
+                        document=document_in_db,
+                        box_attribute=BoxAttribute.objects.get(name=n_to_a[r], collection=collection),
+                        nugget=n,
+                        confidence=random.uniform(0.01, 0.8),
+                        #confidence=1 - nugget["CachedDistanceSignal"]
+                    )
+
             self.stdout.write(
                 self.style.SUCCESS(f"Imported document {doc.name} with {nuggets_imported} nuggets")
             )

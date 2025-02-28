@@ -8,7 +8,7 @@ class Collection(models.Model):
 
     name = models.CharField(max_length=255)
     slug = models.SlugField()
-    docbase_file_path = models.FilePathField(path="/", allow_files=False, allow_folders=True, blank=True)
+    docbase_file_path = models.CharField(max_length=255, blank=True)
 
     def __str__(self):
         return self.name
@@ -37,6 +37,7 @@ class BoxAttribute(models.Model):
     class Meta:
         verbose_name = "Box Attribute"
         verbose_name_plural = "Box Attributes"
+        unique_together = ("name", "collection")
 
     name = models.CharField(max_length=255)
     collection = models.ForeignKey(Collection, on_delete=models.CASCADE)

@@ -8,12 +8,19 @@
       <li class="breadcrumb-item active">{{ collection.name }}</li>
     </ol>
 
-    <h2>Collection: {{ collection.name }}</h2>
+    <h2 class="mb-4">Collection: {{ collection.name }}</h2>
 
     <!-- TODO Display collapsed table here -->
 
     {% for doc in collection.document_set.all %}
-        <h3><a href="{% url "document" slug=doc.slug %}">{{ doc.title }}</a></h3>
-        <p>{{ doc.text | truncatewords:20 }}</p>
+        <div class="mb-4">
+            <h4><a href="{% url "document" slug=doc.slug %}">{{ doc.title }}</a></h4>
+            <p class="mb-1">{{ doc.text | truncatewords:20 }}</p>
+            <p class="font-monospace" style="font-size: small;">
+            {% for row in doc.box %}
+                <b>{{ row.box_attribute.name }}:</b> {{ row.value }} &nbsp;&nbsp;
+            {% endfor %}
+            </p>
+        </div>
     {% endfor %}
 {% endblock %}
