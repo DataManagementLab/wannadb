@@ -49,13 +49,22 @@ def not_found_error(error):
 @app.route('/')
 @app.route('/DEBUG')
 def index():
-	html_code = """
-    <html lang="ts">
-        <body>
-            <form>
-                <p>hello</p>
-            </form>
-        </body>
-    </html>
-    """
+	routes = [
+		rule.rule for rule in app.url_map.iter_rules()
+		if "dev" not in str(rule.rule)
+	]
+	html_code = f"""
+	<html lang="ts">
+		<title>WannaDB Backend</title>
+		<body>
+			<form>
+				<h1>Backend for WannaDB</h1>
+				<p>
+				The following routes can be accessed:<br>
+				{'<br>'.join(routes)}
+				</p
+			</form>
+		</body>
+	</html>
+	"""
 	return render_template_string(html_code)

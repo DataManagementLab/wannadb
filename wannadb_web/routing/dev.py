@@ -1,9 +1,8 @@
 from flask import Blueprint, make_response
 
 from wannadb_web.postgres.queries import _getDocument
-from wannadb_web.postgres.transactions import createUserTable, createDocumentsTable, createOrganisationTable, \
-	createMembershipTable, \
-	dropTables, dropSchema, createSchema
+from wannadb_web.postgres.transactions import createDocumentBaseTable, createUserTable, createDocumentsTable, createOrganisationTable, \
+	createMembershipTable, dropTables, dropSchema, createSchema
 
 dev_routes = Blueprint('dev_routes', __name__, url_prefix='/dev')
 
@@ -15,13 +14,14 @@ def create_tables(schema):
 		createUserTable(schema)
 		createOrganisationTable(schema)
 		createMembershipTable(schema)
+		createDocumentBaseTable(schema)
 		createDocumentsTable(schema)
 		return f'create Tables in {schema} successfully'
 	except Exception as e:
 		print(f"create Tables in {schema} failed because: \n", e)
 
 
-@dev_routes.route('/dropTables/<schema>', methods=['POST'])
+@dev_routes.route('/dropTables/<schema>', methods=['POST']) # potential vulnerability
 def drop_tables(schema):
 	try:
 		dropTables(schema)

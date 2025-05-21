@@ -95,7 +95,11 @@ def create_organisation():
 	organisation_id, error = addOrganisation(organisation_name, authorization)
 	if error is None:
 		return make_response({'organisation_id': organisation_id}, 200)
-	return make_response({"error": error}, 409)
+	if error == "name already exists.":
+		return make_response({"error": error}, 409)
+	if error == "Authentication failed.":
+		return make_response({"error": error}, 401)
+	return make_response({"error": error}, 422)
 
 
 @user_management.route('/leaveOrganisation', methods=['POST'])

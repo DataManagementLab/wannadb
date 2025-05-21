@@ -114,6 +114,62 @@ def checkOrganisationAuthorisation(organisationName: str, userName: str):
 		return None
 
 
+def get_base_id(base_name: str, org_id: int):
+	select_query = sql.SQL(
+		"SELECT id from document_bases "
+		"WHERE name = (%s) AND organisation_id = (%s)"
+	)
+
+	result = execute_query(select_query, (base_name, org_id))
+	if isinstance(result[0], int):
+		return int(result[0])
+	if result[0] is None:
+		return None
+
+
+def get_document_base_data(base_name: str, organisation_id: int):
+	select_query = sql.SQL(
+		"SELECT id, name, attributes from document_bases "
+		"WHERE name = (%s) AND organisation_id = (%s)"
+	)
+
+	result = execute_query(select_query, (base_name, organisation_id))
+	print(result)
+	if not result:
+		return None
+
+	data = {
+		'id': result[0][0],
+		'name': result[0][1],
+		'attributes': str(result[0][2]).replace('{', '').replace('}', '').split(","),
+		"documents": []
+	}
+
+	select_documents_query = sql.SQL(
+		"SELECT id, name, content from documents "
+		"WHERE documentbaseid = (%s)"
+	)
+
+	result = execute_query(select_documents_query, (data["id"],))
+
+	if not result:
+		documents = []
+	else:
+		print(result)
+		documents = [
+			{
+				"id": res[0],
+				"name": res[1],
+				"content": res[2]
+			}
+			for res in result if res[2]
+		]
+
+	data["documents"] = documents
+
+	return data
+
+
 def _getDocument(documentId: int):
 	select_query = sql.SQL("""SELECT content,content_byte 
 								from documents 
@@ -151,6 +207,8 @@ def getDocument_by_name(document_name: str, organisation_id: int, user_id: int) 
 							 """)
 
 	result = execute_query(select_query, (document_name, user_id, organisation_id,))
+	if result is None:
+		raise Exception("No document with that name found")
 	if len(result) == 1:
 		document = result[0]
 		id = document[0]
@@ -232,30 +290,19 @@ def getDocumentsForOrganization(organisation_id: int):
 		})
 	return doc_array
 
-def getDocumentBaseForOrganization(organisation_id: int):
+def getDocumentBasesForOrganization(organisation_id: int):
 
-	select_query = sql.SQL("""SELECT id, name,content,content_byte
-						 FROM documents
+	select_query = sql.SQL("""SELECT id, name, attributes
+						 FROM document_bases
 
-						 WHERE organisationid = (%s)
+						 WHERE organisation_id = (%s)
 						 """)
 	result = execute_query(select_query, (organisation_id,))
 
-	if result is None or len(result) == 0:
+	if result is None or not result:
 		return []
 
-	doc_array = []
-
-	for document in result:
-		id = document[0]
-		name = document[1]
-		if document[3] == None:
-			continue
-		content = document[3]
-		doc_array.append({
-			"id": id,
-			"name": name,
-		})
+	doc_array = [{"id": id, "name": name, "attributes": attributes} for id, name, attributes in result]
 	return doc_array
 
 

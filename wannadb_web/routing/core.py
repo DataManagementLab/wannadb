@@ -27,13 +27,17 @@ Example:
 
 Author: Leon Wenderoth
 """
+import asyncio
 import logging.config
 import pickle
 from typing import Optional
 
+from wannadb_web.postgres.queries import get_document_base_data
+from wannadb_web.postgres.transactions import addDocumentBase
+
 from flask import Blueprint, make_response, request
 from celery.result import AsyncResult
-from wannadb.data.data import Attribute, Document, InformationNugget
+from wannadb.data.data import Attribute, Document, InformationNugget, DocumentBase
 from wannadb.statistics import Statistics
 from wannadb_web.Redis.RedisCache import RedisCache
 from wannadb_web.util import tokenDecode
@@ -64,7 +68,7 @@ def create_document_base():
         "attributes": "plane,car,bike"
     }
     """
-	form = request.form
+	form = request.get_json()
 	authorization = form.get("authorization")
 	organisation_id: Optional[int] = form.get("organisationId")
 	base_name = form.get("baseName")
@@ -78,17 +82,41 @@ def create_document_base():
 	if _token is False:
 		return make_response({"error": "invalid token"}, 401)
 
-	attributes_strings = attributes_strings.split(",")
+	attributes = attributes_strings.split(",")
 	document_ids = document_ids.split(",")
 
 	statistics = Statistics(False)
 	user_id = _token.id
 
 	statisticsDump = pickle.dumps(statistics)
-	task = CreateDocumentBase().apply_async(args=(user_id, document_ids, attributes_strings, statisticsDump,
+	task = CreateDocumentBase().apply_async(args=(user_id, document_ids, attributes, statisticsDump,
 												  base_name, organisation_id))
 
-	return make_response({'task_id': task.id}, 202)
+	doc_base_id = addDocumentBase(base_name, attributes, organisation_id, document_ids)
+	if doc_base_id < 0:
+		return make_response({"error": "Duplicated Entry!" if doc_base_id == -409 else "An error occured!"}, -doc_base_id)
+
+	return make_response({'task_id': task.id, 'id': doc_base_id}, 202)
+
+@core_routes.route('/document_base/<organisation_id>/<base_name>', methods=['GET'])
+def get_document_base(organisation_id: int, base_name: str):
+	"""
+	Endpoint for retrieving a document base using it's name und organisation id
+	"""
+	authorization = request.headers.get("Authorization")
+	if (authorization is None or organisation_id is None or base_name is None):
+		return make_response({'error': 'missing parameters'}, 400)
+	
+	_token = tokenDecode(authorization)
+
+	if _token is False:
+		return make_response({'error': 'invalid token'}, 401)
+	
+	document_base = get_document_base_data(base_name, organisation_id)
+	if document_base is None:
+		return make_response({'error': 'document base not found'}, 404)
+	
+	return make_response({"data": document_base}, 200)
 
 @core_routes.route('/document_base/load', methods=['POST'])
 def load_document_base():
@@ -105,7 +133,7 @@ def load_document_base():
         "baseName": "your_document_base_name",
     }
     """
-	form = request.form
+	form = request.get_json()
 	authorization = form.get("authorization")
 	organisation_id: Optional[int] = form.get("organisationId")
 	base_name = form.get("baseName")
@@ -137,7 +165,7 @@ def interactive_document_base():
         "baseName": "your_document_base_name",
     }
     """
-	form = request.form
+	form = request.get_json()
 	authorization = form.get("authorization")
 	organisation_id: Optional[int] = form.get("organisationId")
 	base_name = form.get("baseName")
@@ -172,7 +200,7 @@ def document_base_attribute_add():
         "attributes": "plane,car,bike"
     }
     """
-	form = request.form
+	form = request.get_json()
 	authorization = form.get("authorization")
 	organisation_id = form.get("organisationId")
 	base_name = form.get("baseName")
@@ -189,7 +217,7 @@ def document_base_attribute_add():
 
 
 	attributes = []
-	for att in attributes_string:
+	for att in attributes_strings:
 		attributes.append(Attribute(att))
 
 	statistics = Statistics(False)
@@ -217,7 +245,7 @@ def document_base_attribute_update():
         "attributes": "plane,car,bike"
     }
     """
-	form = request.form
+	form = request.get_json()
 	authorization = form.get("authorization")
 	organisation_id = form.get("organisationId")
 	base_name = form.get("baseName")
@@ -230,7 +258,7 @@ def document_base_attribute_update():
 	if _token is False:
 		return make_response({"error": "invalid token"}, 401)
 
-	attributes_string = attributes_string.split(",")
+	attributes_strings = attributes_string.split(",")
 
 	#attributes = []
 	#for att in attributes_string:
@@ -242,7 +270,7 @@ def document_base_attribute_update():
 
 	task = DocumentBaseUpdateAttributes().apply_async(args=(
      														user_id, 
-                   											attributes_string,
+                   											attributes_strings,
 												  			base_name, 
                  											organisation_id
                             							))
