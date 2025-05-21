@@ -34,10 +34,13 @@ def dropTables(schema):
 	"""
 		Returns: None
 	"""
-	drop_table_query = sql.SQL(f"DROP TABLE IF EXISTS {schema}.users CASCADE;\n"
-							   f"DROP TABLE IF EXISTS {schema}.documents CASCADE;\n"
-							   f"DROP TABLE IF EXISTS {schema}.membership CASCADE;\n"
-							   f"DROP TABLE IF EXISTS {schema}.organisations CASCADE;")
+	drop_table_query = sql.SQL(
+		f"DROP TABLE IF EXISTS {schema}.users CASCADE;\n"
+		f"DROP TABLE IF EXISTS {schema}.documents CASCADE;\n"
+		f"DROP TABLE IF EXISTS {schema}.membership CASCADE;\n"
+		f"DROP TABLE IF EXISTS {schema}.organisations CASCADE;\n"
+		f"DROP TABLE IF EXISTS {schema}.document_bases CASCADE;\n"
+	)
 	execute_transaction(drop_table_query, commit=True)
 
 
@@ -65,6 +68,7 @@ def createDocumentsTable(schema):
 		content_byte   bytea,
 		organisationid bigint NOT NULL,
 		userid bigint NOT NULL,
+		documentbaseid bigint NULL,
 		CONSTRAINT dokumentid PRIMARY KEY (id),
 		CONSTRAINT documents_organisationid_fkey FOREIGN KEY (organisationid)
 			REFERENCES {schema}.organisations (id) MATCH SIMPLE
@@ -75,11 +79,33 @@ def createDocumentsTable(schema):
 			REFERENCES {schema}.users (id) MATCH SIMPLE
 			ON UPDATE CASCADE 
 			ON DELETE CASCADE 
-			NOT VALID
+			NOT VALID,
+		CONSTRAINT douments_documentbase_fkey FOREIGN KEY (documentbaseid)
+			REFERENCES {schema}.documentbase (id) MATCH SIMPLE
+			ON UPDATE CASCADE
+			ON DELETE CASCADE
 	)
 
 	TABLESPACE pg_default;""")
 	execute_transaction(create_table_query, commit=True, fetch=False)
+
+	add_docBase_column_query = sql.SQL(f"""
+	DO $$ 
+	BEGIN
+		IF NOT EXISTS (SELECT 1 FROM information_schema.columns 
+				WHERE table_schema = '{schema}' 
+				AND table_name = 'documents' 
+				AND column_name = 'documentbaseid') THEN
+			ALTER TABLE {schema}.documents ADD COLUMN documentbaseid bigint;
+			ALTER TABLE {schema}.documents ADD CONSTRAINT douments_documentbase_fkey FOREIGN KEY (documentbaseid)
+				REFERENCES {schema}.document_bases (id) MATCH SIMPLE
+				ON UPDATE CASCADE
+				ON DELETE CASCADE;
+		END IF;
+	END $$;
+	""")
+	execute_transaction(add_docBase_column_query, commit=True, fetch=False)
+
 
 
 def createMembershipTable(schema):
@@ -113,6 +139,27 @@ CREATE INDEX IF NOT EXISTS fki_organisationid
     ON {schema}.membership USING btree
     (organisationid ASC NULLS LAST)
     TABLESPACE pg_default;""")
+	execute_transaction(create_table_query, commit=True, fetch=False)
+
+
+def createDocumentBaseTable(schema):
+	create_table_query = sql.SQL(f"""CREATE TABLE IF NOT EXISTS {schema}.document_bases
+		(
+			id bigint NOT NULL GENERATED ALWAYS AS IDENTITY ( INCREMENT 1 START 1 MINVALUE 1 MAXVALUE 9223372036854775807 CACHE 1 ),
+			name text COLLATE pg_catalog."default" NOT NULL,
+			attributes text NOT NULL DEFAULT '[]',
+			organisation_id bigint NOT NULL,
+			CONSTRAINT documentbaseid PRIMARY KEY (id),
+			CONSTRAINT documentbase_name_key UNIQUE (name, organisation_id),
+			CONSTRAINT documentbase_organisationid_fkey FOREIGN KEY (organisation_id)
+				REFERENCES {schema}.organisations (id) MATCH SIMPLE
+				ON UPDATE CASCADE 
+				ON DELETE CASCADE
+		)
+
+		TABLESPACE pg_default;
+
+		""")
 	execute_transaction(create_table_query, commit=True, fetch=False)
 
 
@@ -197,6 +244,8 @@ def deleteUser(user: str, password: str):
 def addOrganisation(organisationName: str, sessionToken: str):
 	try:
 		token: Token = tokenDecode(sessionToken)
+		if token is None:
+			return None, "Authentication failed."
 		userid = token.id
 		insert_query = sql.SQL("with a as (INSERT INTO organisations (name) VALUES (%s) returning id) "
 							   "INSERT INTO membership (userid,organisationid) select (%s),id from a returning organisationid")
@@ -209,6 +258,7 @@ def addOrganisation(organisationName: str, sessionToken: str):
 
 	except Exception as e:
 		print("addOrganisation failed because: \n", e)
+		return None, f"addOrganisation failed because: \n{e}"
 
 
 def leaveOrganisation(organisationId: int, sessionToken: str):
@@ -352,25 +402,64 @@ def adjUserAuthorisation(organisationName: str, sessionToken: str, userToAdjust:
 		print("adjUserAuthorisation failed because: \n", e)
 
 
-def addDocument(name: str, content: Union[str, bytes], organisationId: int, userid: int):
+def addDocument(name: str, content: Union[str, bytes], organisationId: int, userid: int, base_id: int=None):
 	try:
-
 		if isinstance(content, str):
-			insert_data_query = sql.SQL("INSERT INTO documents (name, content, organisationid, userid) "
-										"VALUES (%s, %s, %s, %s) returning id;")
-			string_data_to_insert = (name, content, organisationId, userid)
-			response = execute_transaction(insert_data_query, string_data_to_insert, commit=True)
-			return int(response[0][0])
+			if base_id is None:
+				insert_data_query = sql.SQL("INSERT INTO documents (name, content, organisationid, userid) "
+											"VALUES (%s, %s, %s, %s) returning id;")
+				data_to_insert = (name, content, organisationId, userid)
+			else:
+				insert_data_query = sql.SQL("INSERT INTO documents (name, content, organisationid, userid, documentbaseid) "
+											"VALUES (%s, %s, %s, %s, %s) returning id;")
+				data_to_insert = (name, content, organisationId, userid, base_id)
 		elif isinstance(content, bytes):
-			insert_data_query = sql.SQL("INSERT INTO documents (name, content_byte, organisationid, userid) "
-										"VALUES (%s, %s, %s, %s) returning id;")
-			byte_data_to_insert = (name, content, organisationId, userid)
-			response = execute_transaction(insert_data_query, byte_data_to_insert, commit=True)
-			return int(response[0][0])
+			logger.debug("----- byte file creation -----")
+			if base_id is None:
+				insert_data_query = sql.SQL("INSERT INTO documents (name, content_byte, organisationid, userid) "
+											"VALUES (%s, %s, %s, %s) returning id;")
+				data_to_insert = (name, content, organisationId, userid)
+			else:
+				insert_data_query = sql.SQL("INSERT INTO documents (name, content_byte, organisationid, userid, documentbaseid) "
+											"VALUES (%s, %s, %s, %s, %s) returning id;")
+				data_to_insert = (name, content, organisationId, userid, base_id)
+		response = execute_transaction(insert_data_query, data_to_insert, commit=True)
+		if not response:
+			return "error occured"
+		return int(response[0][0])
 
 	except IntegrityError as i:
 		logger.error(str(i))
-		return -1
+		return None
 
 	except Exception as e:
 		logger.error(str(e))
+		return None
+
+
+def addDocumentBase(name: str, attributes: list[str], orgId: int, documents: list[int]):
+	try:
+		insert_data_query = sql.SQL(
+			"INSERT INTO document_bases (name, attributes, organisation_id) "
+			"VALUES (%s,%s,%s) returning id;"
+		)
+		data = (name, attributes, orgId)
+		response = execute_transaction(insert_data_query, data, commit=True)
+		docBase_id = int(response[0][0])
+		print(docBase_id)
+		for id in documents:
+			update_query = sql.SQL(
+				"UPDATE documents "
+				"SET documentbaseid = %s "
+				"WHERE id = %s;"
+			)
+			data = (docBase_id, id)
+			execute_transaction(update_query, data, commit=True, fetch=False)
+		return docBase_id
+
+	except IntegrityError as i:
+		logger.error(str(i))
+		return -409
+	except Exception as e:
+		logger.log(str(e))
+		return -500
