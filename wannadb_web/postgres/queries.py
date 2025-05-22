@@ -90,10 +90,13 @@ def checkPassword(user: str, password: str):
 	select_query = sql.SQL("SELECT password,id as pw FROM users WHERE username = %s ")
 
 	result = execute_query(select_query, (user,))
+	if result is None:
+		return False
 	_password, _id = result[0]
 
 	if _password:
-		stored_password = bytes(_password)
+		print(_password)
+		stored_password = bytes(_password, 'utf-8')
 		check = bcrypt.checkpw(password.encode('utf-8'), stored_password)
 		if check:
 			return int(_id)

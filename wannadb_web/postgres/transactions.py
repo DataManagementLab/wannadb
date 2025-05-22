@@ -81,7 +81,7 @@ def createDocumentsTable(schema):
 			ON DELETE CASCADE 
 			NOT VALID,
 		CONSTRAINT douments_documentbase_fkey FOREIGN KEY (documentbaseid)
-			REFERENCES {schema}.documentbase (id) MATCH SIMPLE
+			REFERENCES {schema}.document_bases (id) MATCH SIMPLE
 			ON UPDATE CASCADE
 			ON DELETE CASCADE
 	)
