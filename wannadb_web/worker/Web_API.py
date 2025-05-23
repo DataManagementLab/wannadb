@@ -29,6 +29,7 @@ from wannadb_web.postgres.transactions import addDocument
 from wannadb_web.worker.data import Signals, CustomMatchFeedback, NuggetMatchFeedback, NoMatchFeedback
 
 logger = logging.getLogger(__name__)
+TIMEOUT = 600  # 10 minutes
 
 
 class WannaDB_WebAPI:
@@ -55,7 +56,7 @@ class WannaDB_WebAPI:
 			feedback_request["identifier"] = pipeline_element_identifier
 
 			start_time = time.time()
-			while (time.time() - start_time) < 300:
+			while (time.time() - start_time) < TIMEOUT:
 				msg = self.signals.match_feedback.msg
 
 
@@ -269,12 +270,11 @@ class WannaDB_WebAPI:
 			print(self.document_base.attributes)
 
 			status = updateDocumentContent(self.document_id, self.document_base.to_bson())
-			if status is False:
+			if not status:
 				logger.error(f"Document base could not be saved to BSON! Document {self.document_id} does not exist!")
-			elif status is True:
+			else:
 				logger.info(f"Document base saved to BSON with ID {self.document_id}.")
 				self.signals.status.emit(f"Document base saved to BSON with ID {self.document_id}.")
-			logger.error("Document base could not be saved to BSON!")
 			return
 		except Exception as e:
 			logger.error(str(e))

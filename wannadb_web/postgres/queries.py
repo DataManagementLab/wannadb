@@ -90,7 +90,7 @@ def checkPassword(user: str, password: str):
 	select_query = sql.SQL("SELECT password,id as pw FROM users WHERE username = %s ")
 
 	result = execute_query(select_query, (user,))
-	if result is None:
+	if result is None or not result:
 		return False
 	_password, _id = result[0]
 
