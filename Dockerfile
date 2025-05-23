@@ -1,4 +1,4 @@
-FROM python:3.9-slim-buster as build
+FROM python:3.11-slim-buster as build
 
 ENV PYTHONUNBUFFERED 1
 ENV PYTHONDONTWRITEBYTECODE 1
@@ -21,7 +21,7 @@ WORKDIR /home/wannadb
 RUN pip install --upgrade pip
 
 # install torch
-RUN pip install --use-pep517 torch==1.10.0
+RUN pip install --use-pep517 torch==2.4.1
 
 # Install dependencies
 COPY core-requirements.txt core-requirements.txt
