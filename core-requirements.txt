@@ -187,7 +187,7 @@ psutil==6.0.0
     # via accelerate
 pyarrow==17.0.0
     # via datasets
-pydantic==2.8.2
+pydantic==1.10.13
     # via
     #   confection
     #   spacy
