@@ -754,7 +754,7 @@ class SuggestionListItemWidget(CustomScrollableListItem, VisualizationProvidingI
 
         self.certainty_label = QLabel()
         self.certainty_label.setFont(CODE_FONT)
-        self.layout.addWidget(self.certainty_label), 0, 1
+        self.layout.addWidget(self.certainty_label, 0, 1)
         if not self.visualizations:
             self.certainty_label.hide()
 

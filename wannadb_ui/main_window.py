@@ -108,7 +108,7 @@ class MainWindow(QMainWindow):
     def statistics_to_ui(self, statistics):
         logger.debug("Called slot 'statistics_to_ui'.")
 
-        self.statistics = statisticsf
+        self.statistics = statistics
 
     @pyqtSlot(SQLiteCacheDB)
     def cache_db_to_ui(self, cache_db):
@@ -737,10 +737,6 @@ class MainWindow(QMainWindow):
         self.open_general_info = QAction("&Open general info", self)
         self.open_general_info.setStatusTip("Open popup providing some general information about the application.")
         self.open_general_info.triggered.connect(self.open_general_info_task)
-
-        self.open_usage_info = QAction("&Open usage info", self)
-        self.open_usage_info.setStatusTip("Open usage popup providing some usage information.")
-        self.open_usage_info.triggered.connect(self.open_usage_info_task)
 
 
         # set up the menu bar

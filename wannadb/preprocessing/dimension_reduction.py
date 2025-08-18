@@ -47,7 +47,7 @@ class PCAReducer(DimensionReducer):
             status_callback: BaseStatusCallback,
             statistics: Statistics
     ) -> None:
-        #Assume that all embeddings have same number of features
+        # Assume that all embeddings have same number of features
         attribute_embeddings = [attribute[LabelEmbeddingSignal] for attribute in document_base.attributes]
         nugget_embeddings = [nugget[TextEmbeddingSignal] for nugget in document_base.nuggets]
         all_embeddings = attribute_embeddings + nugget_embeddings
