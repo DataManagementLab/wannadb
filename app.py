@@ -27,8 +27,7 @@ app.config.from_mapping(
 )
 app.config['DEBUG'] = True
 # Register the Extensions
-CORS(app)
-#toolbar = DebugToolbarExtension(app)
+# #toolbar = DebugToolbarExtension(app)
 
 
 
@@ -37,6 +36,9 @@ app.register_blueprint(main_routes)
 app.register_blueprint(user_management)
 app.register_blueprint(dev_routes)
 app.register_blueprint(core_routes)
+
+CORS(app, origins=["*"], supports_credentials=True, resources={r"/*": {"origins": "*"}}) # Allow all origins for CORS, should be restricted in production
+
 
 
 @app.errorhandler(404)
