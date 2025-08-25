@@ -166,7 +166,6 @@ class Attribute:
         return isinstance(other, Attribute) and self._name == other._name and self._signals == other._signals
     
     def toJSON(self):
-        print("toJSON")
         return {
             "name": self._name
         }
