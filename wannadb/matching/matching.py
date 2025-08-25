@@ -336,6 +336,15 @@ class RankingBasedMatcher(BaseMatcher):
                     continue_matching = False
                 elif feedback_result["message"] == "no-match-in-document":
                     statistics[attribute.name]["num_no_match_in_document"] += 1
+                    # Ensure nugget is an InformationNugget (as WebApp works with json serialization)
+                    if not isinstance(feedback_result["nugget"], InformationNugget):
+                        for _doc in document_base.documents:
+                            if _doc.name == feedback_result["nugget"]["document"]["name"]:
+                                for _nugget in _doc.nuggets:
+                                    if _nugget.start_char == feedback_result["nugget"]["start_char"] and \
+                                            _nugget.end_char == feedback_result["nugget"]["end_char"]:
+                                        feedback_result["nugget"] = _nugget
+                                        break
                     d = feedback_result["nugget"].document
                     if d in remaining_documents:
                         remaining_documents.remove(d)
