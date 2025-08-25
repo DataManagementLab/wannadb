@@ -282,6 +282,15 @@ class RankingBasedMatcher(BaseMatcher):
                     continue_matching = False
                 elif feedback_result["message"] == "no-match-in-document":
                     statistics[attribute.name]["num_no_match_in_document"] += 1
+                    # Ensure nugget is an InformationNugget (as WebApp works with json serialization)
+                    if not isinstance(feedback_result["nugget"], InformationNugget):
+                        for _doc in document_base.documents:
+                            if _doc.name == feedback_result["nugget"]["document"]["name"]:
+                                for _nugget in _doc.nuggets:
+                                    if _nugget.start_char == feedback_result["nugget"]["start_char"] and \
+                                            _nugget.end_char == feedback_result["nugget"]["end_char"]:
+                                        feedback_result["nugget"] = _nugget
+                                        break
                     d = feedback_result["nugget"].document
                     if d in remaining_documents:
                         remaining_documents.remove(d)
@@ -425,6 +434,20 @@ class RankingBasedMatcher(BaseMatcher):
 
                 elif feedback_result["message"] == "is-match":
                     statistics[attribute.name]["num_confirmed_match"] += 1
+                    # Ensure nugget is an InformationNugget (as WebApp works with json serialization)
+                    if not isinstance(feedback_result["nugget"], InformationNugget):
+                        for _doc in document_base.documents:
+                            if _doc.name == feedback_result["nugget"]["document"]["name"]:
+                                for _nugget in _doc.nuggets:
+                                    if _nugget.start_char == int(feedback_result["nugget"]["start_char"]) and \
+                                            _nugget.end_char == int(feedback_result["nugget"]["end_char"]):
+                                        feedback_result["nugget"] = _nugget
+                                        break
+                                else:
+                                    logger.warning(f"Found no matching nugget in document {_doc.name}")
+                                break
+                        else:
+                            logger.warning(f"Found no matching document for nugget {feedback_result['nugget']}. ")
                     feedback_result["nugget"].document.attribute_mappings[attribute.name] = [feedback_result["nugget"]]
                     doc = feedback_result["nugget"].document
                     try:
@@ -458,7 +481,7 @@ class RankingBasedMatcher(BaseMatcher):
                         # threshold adjustment: if the confirmed nugget's distance is larger than the threshold, update
                         # the threshold to the maximum cached distance of all nuggets that are below in the ranked list,
                         # but were above the threshold before
-                        if feedback_result["not-a-match"] is None:  # nugget from original list confirmed
+                        if feedback_result.get("not-a-match") is None:  # nugget from original list confirmed
                             if feedback_result["nugget"][CachedDistanceSignal] > self._max_distance:
                                 nugget_ix = -1
                                 for ix, nugget in enumerate(feedback_nuggets):
