@@ -12,7 +12,7 @@ from wannadb.statistics import Statistics
 from wannadb_web.Redis.RedisCache import RedisCache
 from wannadb_web.postgres.queries import getDocuments
 from wannadb_web.worker.Web_API import WannaDB_WebAPI
-from wannadb_web.worker.data import Signals, NoMatchFeedback, NuggetMatchFeedback, CustomMatchFeedback
+from wannadb_web.worker.data import DoAttributeRanking, ReloadDocumentBase, Signals, NoMatchFeedback, NuggetMatchFeedback, CustomMatchFeedback, SkipAttributeRanking
 from wannadb_web.worker.util import State
 
 logging.basicConfig(level=logging.DEBUG, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
@@ -313,6 +313,35 @@ class DocumentBaseInteractiveTablePopulation(BaseTask):
 			return self
 
 
+class DocumentBaseStartRanking(BaseTask):
+	name = "DocumentBaseStartRanking"
+
+	def run(self, user_id: int, do_attribute: bool):
+		self._signals = Signals(str(user_id))
+		self._redis_client = RedisCache(str(user_id))
+		self.load()
+
+		if do_attribute:
+			self._signals.match_feedback.emit(DoAttributeRanking())
+		else:
+			self._signals.match_feedback.emit(SkipAttributeRanking())
+		self.update(State.SUCCESS)
+		return self
+	
+
+class ReloadDocumentBaseTask(BaseTask):
+	name = "ReloadDocumentBase"
+
+	def run(self, user_id: int):
+		self._signals = Signals(str(user_id))
+		self._redis_client = RedisCache(str(user_id))
+		self.load()
+
+		self._signals.match_feedback.emit(ReloadDocumentBase())
+		self.update(State.SUCCESS)
+		return self
+
+
 class DocumentBaseGetOrderedNuggets(BaseTask):
 	name = "DocumentBaseGetOrderedNuggets"
 
@@ -334,7 +363,7 @@ class DocumentBaseConfirmNugget(BaseTask):
 	name = "DocumentBaseConfirmNugget"
 
 	def run(self, user_id: int, base_name: str, organisation_id: int,
-			document_name: str, document_text: str, nugget: Union[str, InformationNugget],
+			document_name: str, document_text: str, nugget: Optional[str],
 			start_index: Union[int, None], end_index: Union[int, None], interactive_call_task_id: str):
 		"""
 		:param user_id: user id
@@ -352,8 +381,39 @@ class DocumentBaseConfirmNugget(BaseTask):
 		self.load()
 
 		document = Document(document_name, document_text)
-		if start_index is None and end_index is None and isinstance(nugget, InformationNugget):
+		if nugget is None:
+			nugget = InformationNugget(document=document, start_char=start_index, end_char=end_index)
+		else:
 			self._signals.match_feedback.emit(no_match(nugget))
+		# no need to update the document base the doc will be saved in the interactive call
+		self.update(State.SUCCESS)
+		return self
+	
+
+class DocumentBaseNoMatchForDocument(BaseTask):
+	name = "DocumentBaseNoMatchForDocument"
+
+	def run(self, user_id: int, base_name: str, organisation_id: int,
+			document_name: str, document_text: str, nugget: Optional[str],
+			start_index: Union[int, None], end_index: Union[int, None], interactive_call_task_id: str):
+		"""
+		:param user_id: user id
+		:param base_name: name of base document
+		:param organisation_id: organisation id of the document base
+		:param document_name: name of the document
+		:param document_text: text of the document
+		:param nugget: the Nugget that gets confirmed
+		:param start_index: start of the nugget in the document (optional) if start and end is None the nugget is not in the document
+		:param end_index: end of the nugget in the document (optional) if start and end is None the nugget is not in the document
+		:param interactive_call_task_id: the same task id that's used for interactive call
+		"""
+		self._signals = Signals(str(user_id))
+		self._redis_client = RedisCache(str(user_id))
+		self.load()
+
+		document = Document(document_name, document_text)
+		if nugget is None:
+			nugget = InformationNugget(document=document, start_char=start_index, end_char=end_index)
 		else:
 			self._signals.match_feedback.emit(match_feedback(nugget, document, start_index, end_index))
 		# no need to update the document base the doc will be saved in the interactive call

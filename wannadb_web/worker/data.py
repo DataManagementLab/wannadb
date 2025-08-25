@@ -1,4 +1,5 @@
 import abc
+from collections.abc import Iterable
 import json
 import pickle
 from abc import abstractmethod, ABC
@@ -16,7 +17,7 @@ logger: logging.Logger = logging.getLogger(__name__)
 @dataclass
 class _BaseSignal:
 	identifier:str
-	signal="not serializable"
+	signal:str
 
 	def to_json(self):
 		return {
@@ -25,7 +26,7 @@ class _BaseSignal:
 		}
 
 def convert_signal(signal: BaseSignal) -> _BaseSignal:
-	return _BaseSignal(signal.identifier)
+	return _BaseSignal(identifier=signal.identifier, signal=str(signal))
 
 @dataclass
 class _InformationNugget:
@@ -67,7 +68,7 @@ def convert_to_nuggets(nuggets: list[InformationNugget]):
 class _Document:
 	name:str
 	text:str
-	attribute_mappings = "not implemented yet"
+	attribute_mappings: dict[str,list[InformationNugget]]
 	signals:dict[str,BaseSignal]
 	nuggets:list[InformationNugget]
 
@@ -75,7 +76,7 @@ class _Document:
 		return {
 		"name": self.name,
 		"text": self.text,
-		"attribute_mappings": "not implemented yet",
+		"attribute_mappings": {name: [convert_to_nugget(nugget).to_json() for nugget in nuggets] for name, nuggets in self.attribute_mappings.items()},
 		"signals": [{"name": name, "signal": convert_signal(signal)} for name, signal in
 					self.signals.items()],
 		"nuggets": [convert_to_nugget(nugget).to_json() for nugget in self.nuggets]
@@ -83,7 +84,7 @@ class _Document:
 
 
 def convert_to_document(document: Document):
-	return _Document(document.name,document.text,document.signals,document.nuggets)
+	return _Document(document.name,document.text,document.attribute_mappings, document.signals,document.nuggets)
 
 
 @dataclass
@@ -204,13 +205,49 @@ class NoMatchFeedback:
 	def to_json(self):
 		return {"message": self.message, "nugget": convert_to_nugget(self.nugget).to_json(),
 				"not_a_match": convert_to_nugget(self.not_a_match).to_json()}
+	
+
+@dataclass
+class StopMatching:
+	message = "stop-interactive-matching"
+
+	def to_json(self):
+		return {"message": self.message}
+	
+
+@dataclass
+class DoAttributeRanking:
+	message = "start-ranking"
+
+	def to_json(self):
+		return {
+			"message": self.message,
+			"do-attribute": True,
+		}
+	
+@dataclass
+class SkipAttributeRanking:
+	message = "skip-ranking"
+
+	def to_json(self):
+		return {
+			"message": self.message,
+			"do-attribute": False,
+		}
+	
+class ReloadDocumentBase:
+	message = "reload-document-base"
+
+	def to_json(self):
+		return {"message": self.message}
 
 
 class _MatchFeedback(Emitable):
 
 	@property
-	def msg(self) -> Union[CustomMatchFeedback, NuggetMatchFeedback, NoMatchFeedback, None]:
+	def msg(self) -> Union[CustomMatchFeedback, NuggetMatchFeedback, NoMatchFeedback, DoAttributeRanking, SkipAttributeRanking, None]:
 		msg = self.redis.get(self.type)
+		msg = msg.decode("utf-8") if isinstance(msg, bytes) else msg
 		if isinstance(msg, str) and msg.startswith("{"):
 			m = json.loads(msg)
 			if "message" in m and m["message"] == "custom-match":
@@ -219,6 +256,14 @@ class _MatchFeedback(Emitable):
 				return NuggetMatchFeedback(m["nugget"], None)
 			elif "message" in m and m["message"] == "no-match-in-document":
 				return NoMatchFeedback(m["nugget"], m["not_a_match"])
+			elif "message" in m and m["message"] == "stop-interactive-matching":
+				return StopMatching()
+			elif "message" in m and m["message"] == "start-ranking":
+				return DoAttributeRanking()
+			elif "message" in m and m["message"] == "skip-ranking":
+				return SkipAttributeRanking()
+			elif "message" in m and m["message"] == "reload-document-base":
+				return ReloadDocumentBase()
 		return None
 
 	def to_json(self):
@@ -230,6 +275,7 @@ class _MatchFeedback(Emitable):
 		if status is None:
 			self.redis.delete(self.type)
 			return
+		logger.info(f"Emitting match feedback: {status}")
 		if isinstance(status, CustomMatchFeedback):
 			self.redis.set(self.type, json.dumps(
 				{"message": status.message, "document": convert_to_document(status.document).to_json(), "start": status.start,
@@ -240,9 +286,17 @@ class _MatchFeedback(Emitable):
 			self.redis.set(self.type, json.dumps(
 				{"message": status.message, "nugget": convert_to_nugget(status.nugget).to_json(),
 				 "not_a_match": convert_to_nugget(status.not_a_match).to_json()}))
+		elif isinstance(status, StopMatching):
+			self.redis.set(self.type, json.dumps({"message": status.message}))
+		elif isinstance(status, DoAttributeRanking):
+			self.redis.set(self.type, json.dumps({"message": status.message, "do-attribute": True}))
+		elif isinstance(status, SkipAttributeRanking):
+			self.redis.set(self.type, json.dumps({"message": status.message, "do-attribute": False}))
+		elif isinstance(status, ReloadDocumentBase):
+			self.redis.set(self.type, json.dumps({"message": status.message}))
 		else:
 			raise TypeError("status must be of type CustomMatchFeedback or NuggetMatchFeedback or NoMatchFeedback or None")
-
+		
 
 class _State(Emitable):
 
@@ -347,10 +401,12 @@ class _Feedback(Emitable):
 		return json.loads(self.msg)
 
 	def emit(self, status: dict[str, Any]):
-		print("Status: " + str(status))
 		for key, value in status.items():
 			if isinstance(value, Attribute):
 				status[key] = value.toJSON()
+			if isinstance(value, Iterable) and not isinstance(value, str):
+				if all(isinstance(item, InformationNugget) for item in value):
+					status[key] = [convert_to_nugget(item).to_json() for item in value]
 		self.redis.set(self.type, json.dumps(status))
 
 
