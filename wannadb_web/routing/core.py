@@ -43,8 +43,8 @@ from wannadb_web.Redis.RedisCache import RedisCache
 from wannadb_web.util import tokenDecode
 from wannadb_web.worker.data import Signals
 
-from wannadb_web.worker.tasks import CreateDocumentBase, BaseTask, DocumentBaseAddAttributes, DocumentBaseConfirmNugget, DocumentBaseInteractiveTablePopulation, DocumentBaseLoad, \
-	DocumentBaseUpdateAttributes, DocumentBaseGetOrderedNuggets
+from wannadb_web.worker.tasks import CreateDocumentBase, BaseTask, DocumentBaseAddAttributes, DocumentBaseConfirmNugget, DocumentBaseInteractiveTablePopulation, DocumentBaseLoad, DocumentBaseNoMatchForDocument, DocumentBaseStartRanking, \
+	DocumentBaseUpdateAttributes, DocumentBaseGetOrderedNuggets, ReloadDocumentBaseTask
 
 
 core_routes = Blueprint('core_routes', __name__, url_prefix='/core')
@@ -317,6 +317,61 @@ def task_update(task_id: str):
 
 	signals.feedback_request_from_ui.emit(request.json.get("feedback"))
 
+@core_routes.route('/document_base/do_current_attribute', methods=['POST'])
+def document_base_do_current_attribute():
+	"""
+    Endpoint for giving feedback on doing the current attribute of a document base.
+
+    Example Form Payload:
+    {
+		"authorization": "your_authorization_token",
+		"do-attribute": true
+    }
+    """
+	form = request.get_json()
+	authorization = form.get("authorization")
+	do_attribute = form.get("doAttribute")
+	if authorization is None or do_attribute is None:
+		return make_response({"error": "missing parameters"}, 400)
+
+	_token = tokenDecode(authorization)
+
+	if _token is False:
+		return make_response({"error": "invalid token"}, 401)
+
+	user_id = _token.id
+
+	task = DocumentBaseStartRanking().apply_async(args=(user_id, do_attribute))
+
+	return make_response({'task_id': task.id}, 202)
+
+
+@core_routes.route('/document_base/reload', methods=['POST'])
+def reload_document_base():
+	"""
+    Endpoint for reloading the document base.
+
+    Example Form Payload:
+    {
+		"authorization": "your_authorization_token",
+    }
+    """
+	form = request.get_json()
+	authorization = form.get("authorization")
+	if authorization is None:
+		return make_response({"error": "missing parameters"}, 400)
+
+	_token = tokenDecode(authorization)
+
+	if _token is False:
+		return make_response({"error": "invalid token"}, 401)
+
+	user_id = _token.id
+
+	task = ReloadDocumentBaseTask().apply_async(args=(user_id,))
+
+	return make_response({'task_id': task.id}, 202)
+
 
 @core_routes.route('/document_base/order/nugget', methods=['POST'])
 def sort_nuggets():
@@ -334,7 +389,7 @@ def sort_nuggets():
         "documentContent": "your_document_content",
     }
     """
-	form = request.form
+	form = request.get_json()
 	authorization = form.get("authorization")
 	organisation_id: Optional[int] = form.get("organisationId")
 	base_name = form.get("baseName")
@@ -378,7 +433,7 @@ def confirm_nugget_custom():
         "interactiveCallTaskId": "interactive_call_task_id"
     }
     """
-	form = request.form
+	form = request.get_json()
  
 	authorization = form.get("authorization")
 	organisation_id: Optional[int] = form.get("organisationId")
@@ -443,7 +498,8 @@ def confirm_nugget_match():
         "interactiveCallTaskId": "interactive_call_task_id"
     }
     """
-	form = request.form
+	print("confirm_nugget_match called")
+	form = request.get_json()
  
 	authorization = form.get("authorization")
 	organisation_id: Optional[int] = form.get("organisationId")
@@ -452,9 +508,9 @@ def confirm_nugget_match():
 	document_name = form.get("documentName")
 	document_content = form.get("documentContent")
 	nugget_text = form.get("nuggetText")
-	start_index: Optional[int]  = form.get("startIndex")
-	end_index: Optional[int]  = form.get("endIndex")
-	
+	start_index: Optional[int]  = int(form.get("startIndex")) if form.get("startIndex") is not None else None
+	end_index: Optional[int]  = int(form.get("endIndex")) if form.get("endIndex") is not None else None
+
 	i_task_id = form.get("interactiveCallTaskId")
 
 	if (organisation_id is None 
@@ -485,8 +541,8 @@ def confirm_nugget_match():
                                                       	base_name, 
                                                        	organisation_id, 
                                                         document_name, 
-                                                        document_content, 
-                                                        nugget,
+                                                        document_content,
+														None,
                                                         start_index,
                                                         end_index,
                                                         i_task_id
@@ -494,39 +550,51 @@ def confirm_nugget_match():
 	
 	return make_response({'task_id': task.id}, 202)
 
-@core_routes.route('/document_base/confirm/nugget/multi_match', methods=['POST'])
-def confirm_nugget_multi_match():
+@core_routes.route('/document_base/confirm/nugget/none', methods=['POST'])
+def confirm_no_match_in_document():
 	"""
-	Endpoint to confirm multiple matched nuggets.
+    Endpoint to confirm no match for a nugget in a document.
 
-	Example Form Payload:
-	{
-		"authorization": "your_author
-		"organisationId": "your_organisation_id",
-		"baseName": "your_document_base_name",
-		"matches": [{
-			"documentName": "your_document_name",
-			"documentContent": "your_document_content",
-			"nuggetText": "nugget_as_text",
-			"startIndex": "start_index_of_nugget",
-			"endIndex": "end_index_of_nugget"
-		}],
-		"interactiveCallTaskId": "interactive_call_task_id"
-	}
-	"""
-	form = request.form
+    Example Form Payload:
+    {
+		"authorization": "your_authorization_token"
+        "organisationId": "your_organisation_id",
+        "baseName": "your_document_base_name",
+        "documentName": "your_document_name",
+        "documentContent": "your_document_content",
+        "nuggetText": "nugget_as_text",
+        "startIndex": "start_index_of_nugget",
+        "endIndex": "end_index_of_nugget",
+        "interactiveCallTaskId": "interactive_call_task_id"
+    }
+    """
+	print("confirm_no_match_in_document called")
+	form = request.get_json()
 
 	authorization = form.get("authorization")
 	organisation_id: Optional[int] = form.get("organisationId")
 	base_name = form.get("baseName")
-	matches = form.get("matches")
+
+	document_name = form.get("documentName")
+	document_content = form.get("documentContent")
+	nugget_text = form.get("nuggetText")
+	start_index: Optional[int]  = int(form.get("startIndex")) if form.get("startIndex") is not None else None
+	end_index: Optional[int]  = int(form.get("endIndex")) if form.get("endIndex") is not None else None
+
 	i_task_id = form.get("interactiveCallTaskId")
 
 	if (organisation_id is None
-			or base_name is None
-			or matches is None
-			or authorization is None
-			or i_task_id is None):
+     	or base_name is None
+      	or document_name is None
+       	or document_content is None
+        or authorization is None
+        or nugget_text is None
+        or start_index is None
+        or end_index is None
+        or i_task_id is None):
+
+		print("Missing parameters: ")
+		print(f"organisation_id: {organisation_id}, base_name: {base_name}, document_name: {document_name}, document_content: {document_content}, authorization: {authorization}, nugget_text: {nugget_text}, start_index: {start_index}, end_index: {end_index}, i_task_id: {i_task_id}")
 
 		return make_response({"error": "missing parameters"}, 400)
 
@@ -537,43 +605,16 @@ def confirm_nugget_multi_match():
 
 	user_id = _token.id
 
-	if not isinstance(matches, list):
-		return make_response({"error": "matches must be a list"}, 400)
-	
-	tasks = []
-	
-	for match in matches:
+	task = DocumentBaseNoMatchForDocument().apply_async(args=(
+     													user_id,
+                                                      	base_name,
+                                                       	organisation_id,
+                                                        document_name,
+                                                        document_content,
+                                                        nugget_text,
+                                                        start_index,
+                                                        end_index,
+                                                        i_task_id
+                                                    ))
 
-		document_name = match.get("documentName")
-		document_content = match.get("documentContent")
-		nugget_text = match.get("nuggetText")
-		start_index = match.get("startIndex")
-		end_index = match.get("endIndex")
-
-		if (document_name is None
-				or document_content is None
-				or nugget_text is None
-				or start_index is None
-				or end_index is None):
-
-			return make_response({"error": "missing parameters"}, 400)
-
-		document = Document(document_name, document_content)
-
-		nugget = InformationNugget(document, start_index, end_index)
-
-		task = DocumentBaseConfirmNugget().apply_async(args=(
-			user_id,
-			base_name,
-			organisation_id,
-			document_name,
-			document_content,
-			nugget,
-			start_index,
-			end_index,
-			i_task_id
-		))
-
-		tasks.append(task.id)
-
-	return make_response({'task_ids': [task.id for task in tasks]}, 202)
+	return make_response({'task_id': task.id}, 202)

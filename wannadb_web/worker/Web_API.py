@@ -26,7 +26,7 @@ from wannadb_web.SQLite.Cache_DB import SQLiteCacheDBWrapper
 from wannadb_web.postgres.queries import getDocument_by_name, getDocumentByNameAndContent, updateDocumentContent, \
 	getDocument
 from wannadb_web.postgres.transactions import addDocument
-from wannadb_web.worker.data import Signals, CustomMatchFeedback, NuggetMatchFeedback, NoMatchFeedback
+from wannadb_web.worker.data import DoAttributeRanking, ReloadDocumentBase, Signals, CustomMatchFeedback, NuggetMatchFeedback, NoMatchFeedback, SkipAttributeRanking
 
 logger = logging.getLogger(__name__)
 TIMEOUT = 600  # 10 minutes
@@ -59,20 +59,29 @@ class WannaDB_WebAPI:
 			while (time.time() - start_time) < TIMEOUT:
 				msg = self.signals.match_feedback.msg
 
-
 				self.signals.feedback_request_to_ui.emit(feedback_request)
+				self.signals.document_base_to_ui.emit(self.document_base)
 
 				if msg is not None:
 					self.signals.status.emit("Feedback received from UI")
 					self.signals.match_feedback.emit(None)
+					start_time = time.time()  # reset timer after receiving feedback
 					if isinstance(msg, CustomMatchFeedback):
 						return {"message": "custom-match", "document": msg.document, "start": msg.start}
 					elif isinstance(msg, NuggetMatchFeedback):
 						return {"message": "is-match", "nugget": msg.nugget, "not_a_match": msg.not_a_match}
 					elif isinstance(msg, NoMatchFeedback):
 						return {"message": "no-match-in-document", "nugget": msg.nugget, "not_a_match": msg.not_a_match}
+					elif isinstance(msg, DoAttributeRanking):
+						return {"message": "start-ranking", "do-attribute": True}
+					elif isinstance(msg, SkipAttributeRanking):
+						return {"message": "skip-ranking", "do-attribute": False}
+					elif isinstance(msg, ReloadDocumentBase):
+						self.signals.document_base_to_ui.emit(self.document_base)
 					else:
-						raise TypeError("Unknown match_feedback type!")
+						logger.error(f"Unknown message type: {type(msg)}")
+						self.signals.error.emit(Exception(f"Unknown message type: {type(msg)}"))
+						return None
 				time.sleep(1)
 			raise TimeoutError("no match_feedback in time provided")
 
@@ -146,9 +155,16 @@ class WannaDB_WebAPI:
 		self.signals.status.emit("get_ordered_nuggets_by_doc_name")
 		for document in self.document_base.documents:
 			if document.name == document_name:
-				document_obj = Document(document_name, document_content)
+				print("sorted nuggets")
+				print(document.nuggets[0].__dict__["_signals"].keys())
+				"""if not all(hasattr(nugget, CachedDistanceSignal) for nugget in document.nuggets):
+					logger.error(f"Document \"{document_name}\" does not have nuggets with CachedDistanceSignal!")
+					self.signals.error.emit(
+						Exception(f"Document \"{document_name}\" does not have nuggets with CachedDistanceSignal!"))
+					return
+				logger.debug(f"Emitting ordered nuggets for document {document_name}.")
 				self.signals.ordert_nuggets.emit(
-					list(sorted(document_obj.nuggets, key=lambda x: x[CachedDistanceSignal])))
+					list(sorted(document.nuggets, key=lambda x: x[CachedDistanceSignal])))"""
 				return
 		logger.error(f"Document \"{document_name}\" not found in document base!")
 		self.signals.error.emit(Exception(f"Document \"{document_name}\" not found in document base!"))
