@@ -12,7 +12,7 @@ from wannadb.statistics import Statistics
 from wannadb_web.Redis.RedisCache import RedisCache
 from wannadb_web.postgres.queries import getDocuments
 from wannadb_web.worker.Web_API import WannaDB_WebAPI
-from wannadb_web.worker.data import DoAttributeRanking, ReloadDocumentBase, Signals, NoMatchFeedback, NuggetMatchFeedback, CustomMatchFeedback, SkipAttributeRanking
+from wannadb_web.worker.data import DoAttributeRanking, ReloadDocumentBase, Signals, NoMatchFeedback, NuggetMatchFeedback, CustomMatchFeedback, SkipAttributeRanking, StopMatching
 from wannadb_web.worker.util import State
 
 logging.basicConfig(level=logging.DEBUG, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
@@ -311,6 +311,12 @@ class DocumentBaseInteractiveTablePopulation(BaseTask):
 			api.update_document_base_to_bson()
 			self.update(State.SUCCESS)
 			return self
+		else:
+			self.update(State.ERROR)
+			if api.signals.error.msg == str(TimeoutError('no match_feedback in time provided')):
+				# if timeout occurs, we stll want to update the document base
+				api.update_document_base_to_bson()
+			return self
 
 
 class DocumentBaseStartRanking(BaseTask):
@@ -327,7 +333,20 @@ class DocumentBaseStartRanking(BaseTask):
 			self._signals.match_feedback.emit(SkipAttributeRanking())
 		self.update(State.SUCCESS)
 		return self
-	
+
+
+class DocumentBaseStopMatching(BaseTask):
+	name = "DocumentBaseStopMatching"
+
+	def run(self, user_id: int):
+		self._signals = Signals(str(user_id))
+		self._redis_client = RedisCache(str(user_id))
+		self.load()
+
+		self._signals.match_feedback.emit(StopMatching())
+		self.update(State.SUCCESS)
+		return self
+
 
 class ReloadDocumentBaseTask(BaseTask):
 	name = "ReloadDocumentBase"

@@ -26,7 +26,7 @@ from wannadb_web.SQLite.Cache_DB import SQLiteCacheDBWrapper
 from wannadb_web.postgres.queries import getDocument_by_name, getDocumentByNameAndContent, updateDocumentContent, \
 	getDocument
 from wannadb_web.postgres.transactions import addDocument
-from wannadb_web.worker.data import DoAttributeRanking, ReloadDocumentBase, Signals, CustomMatchFeedback, NuggetMatchFeedback, NoMatchFeedback, SkipAttributeRanking
+from wannadb_web.worker.data import DoAttributeRanking, ReloadDocumentBase, Signals, CustomMatchFeedback, NuggetMatchFeedback, NoMatchFeedback, SkipAttributeRanking, StopMatching
 
 logger = logging.getLogger(__name__)
 TIMEOUT = 600  # 10 minutes
@@ -78,6 +78,8 @@ class WannaDB_WebAPI:
 						return {"message": "skip-ranking", "do-attribute": False}
 					elif isinstance(msg, ReloadDocumentBase):
 						self.signals.document_base_to_ui.emit(self.document_base)
+					elif isinstance(msg, StopMatching):
+						return {"message": "stop-interactive-matching"}
 					else:
 						logger.error(f"Unknown message type: {type(msg)}")
 						self.signals.error.emit(Exception(f"Unknown message type: {type(msg)}"))
