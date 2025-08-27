@@ -43,7 +43,7 @@ from wannadb_web.Redis.RedisCache import RedisCache
 from wannadb_web.util import tokenDecode
 from wannadb_web.worker.data import Signals
 
-from wannadb_web.worker.tasks import CreateDocumentBase, BaseTask, DocumentBaseAddAttributes, DocumentBaseConfirmNugget, DocumentBaseInteractiveTablePopulation, DocumentBaseLoad, DocumentBaseNoMatchForDocument, DocumentBaseStartRanking, \
+from wannadb_web.worker.tasks import CreateDocumentBase, BaseTask, DocumentBaseAddAttributes, DocumentBaseConfirmNugget, DocumentBaseInteractiveTablePopulation, DocumentBaseLoad, DocumentBaseNoMatchForDocument, DocumentBaseStartRanking, DocumentBaseStopMatching, \
 	DocumentBaseUpdateAttributes, DocumentBaseGetOrderedNuggets, ReloadDocumentBaseTask
 
 
@@ -618,3 +618,31 @@ def confirm_no_match_in_document():
                                                     ))
 
 	return make_response({'task_id': task.id}, 202)
+
+
+@core_routes.route('/document_base/feedback/stop', methods=['POST'])
+def stop_feedback():
+	"""
+	Endpoint to stop feedback for a document.
+
+	header: {
+		"Authorization": "your_authorization_token"
+	}
+	no payload is required
+	"""
+	authorization = request.headers.get("Authorization")
+
+	if (authorization is None):
+		return make_response({"error": "missing header fields"}, 400)
+
+	_token = tokenDecode(authorization)
+
+	if _token is False:
+		return make_response({"error": "invalid token"}, 401)
+
+	user_id = _token.id
+
+	task = DocumentBaseStopMatching().apply_async(args=(user_id,))
+
+	return make_response({'task_id': task.id}, 202)
+

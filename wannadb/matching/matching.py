@@ -280,6 +280,7 @@ class RankingBasedMatcher(BaseMatcher):
                 if feedback_result["message"] == "stop-interactive-matching":
                     statistics[attribute.name]["stopped_matching_by_hand"] = True
                     continue_matching = False
+                    print("Stopping interactive matching by user request.")
                 elif feedback_result["message"] == "no-match-in-document":
                     statistics[attribute.name]["num_no_match_in_document"] += 1
                     # Ensure nugget is an InformationNugget (as WebApp works with json serialization)

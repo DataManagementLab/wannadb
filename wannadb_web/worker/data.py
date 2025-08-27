@@ -241,11 +241,17 @@ class ReloadDocumentBase:
 	def to_json(self):
 		return {"message": self.message}
 
+class StopMatching:
+	message = "stop-interactive-matching"
+
+	def to_json(self):
+		return {"message": self.message}
+
 
 class _MatchFeedback(Emitable):
 
 	@property
-	def msg(self) -> Union[CustomMatchFeedback, NuggetMatchFeedback, NoMatchFeedback, DoAttributeRanking, SkipAttributeRanking, None]:
+	def msg(self) -> Union[CustomMatchFeedback, NuggetMatchFeedback, NoMatchFeedback, DoAttributeRanking, SkipAttributeRanking, StopMatching, None]:
 		msg = self.redis.get(self.type)
 		msg = msg.decode("utf-8") if isinstance(msg, bytes) else msg
 		if isinstance(msg, str) and msg.startswith("{"):
@@ -271,7 +277,7 @@ class _MatchFeedback(Emitable):
 			return {}
 		return self.msg.to_json()
 
-	def emit(self, status: Union[CustomMatchFeedback, NuggetMatchFeedback, NoMatchFeedback, None]):
+	def emit(self, status: Union[CustomMatchFeedback, NuggetMatchFeedback, NoMatchFeedback, StopMatching, DoAttributeRanking, SkipAttributeRanking, ReloadDocumentBase, None]):
 		if status is None:
 			self.redis.delete(self.type)
 			return
@@ -295,8 +301,11 @@ class _MatchFeedback(Emitable):
 		elif isinstance(status, ReloadDocumentBase):
 			self.redis.set(self.type, json.dumps({"message": status.message}))
 		else:
-			raise TypeError("status must be of type CustomMatchFeedback or NuggetMatchFeedback or NoMatchFeedback or None")
-		
+			raise TypeError(
+				"Status must be of type CustomMatchFeedback, NuggetMatchFeedback, NoMatchFeedback, StopMatching, DoAttributeRanking, SkipAttributeRanking, ReloadDocumentBase, or None\n" \
+				f"Got: {type(status)}"
+				)
+
 
 class _State(Emitable):
 
