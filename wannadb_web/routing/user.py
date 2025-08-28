@@ -118,7 +118,7 @@ def leave_organisation():
 
 @user_management.route('/getOrganisations', methods=['GET'])
 def get_organisations():
-	authorization = request.headers.get("authorization")
+	authorization = request.headers.get("Authorization")
 	token = tokenDecode(authorization)
 	if token is None:
 		return make_response({}, 401)
@@ -133,7 +133,7 @@ def get_organisations():
 
 @user_management.route('/getOrganisationName/<_id>', methods=['GET'])
 def get_organisation_name(_id):
-	authorization = request.headers.get("authorization")
+	authorization = request.headers.get("Authorization")
 	token = tokenDecode(authorization)
 	if token is None:
 		return make_response({}, 401)
@@ -149,7 +149,7 @@ def get_organisation_name(_id):
 
 @user_management.route('/getOrganisationNames', methods=['GET'])
 def get_organisation_names():
-	authorization = request.headers.get("authorization")
+	authorization = request.headers.get("Authorization")
 	token = tokenDecode(authorization)
 	if token is None:
 		return make_response({}, 401)
@@ -164,7 +164,7 @@ def get_organisation_names():
 
 @user_management.route('/addUserToOrganisation', methods=['POST'])
 def add_user_to_organisation():
-	authorization = request.headers.get("authorization")
+	authorization = request.headers.get("Authorization")
 	token = tokenDecode(authorization)
 	if token is None:
 		return make_response({'error': 'no authorization'}, 401)
@@ -182,7 +182,7 @@ def add_user_to_organisation():
 
 @user_management.route('/getOrganisationMembers/<_id>', methods=['GET'])
 def get_organisation_members(_id):
-	authorization = request.headers.get("authorization")
+	authorization = request.headers.get("Authorization")
 	token = tokenDecode(authorization)
 	if token is None:
 		return make_response({'error': 'no authorization'}, 401)
@@ -200,7 +200,7 @@ def get_organisation_members(_id):
 
 @user_management.route('/get/user/suggestion/<_prefix>', methods=['GET'])
 def get_user_suggestion(_prefix):
-	authorization = request.headers.get("authorization")
+	authorization = request.headers.get("Authorization")
 	token = tokenDecode(authorization)
 	if token is None:
 		return make_response({'error': 'no authorization'}, 401)

@@ -59,9 +59,13 @@ def create_document_base():
 
 	This endpoint is used to create a document base from a list of document ids and a list of attributes.
 
+	Header:
+    {
+        "Authorization": "your_authorization_token"
+    }
+
     Example Form Payload:
     {
-		"authorization": "your_authorization_token"
         "organisationId": "your_organisation_id",
         "baseName": "your_document_base_name",
         "document_ids": "1, 2, 3",
@@ -69,7 +73,7 @@ def create_document_base():
     }
     """
 	form = request.get_json()
-	authorization = form.get("authorization")
+	authorization = request.headers.get("Authorization")
 	organisation_id: Optional[int] = form.get("organisationId")
 	base_name = form.get("baseName")
 	document_ids: Optional[list[int]] = form.get("document_ids")
@@ -126,15 +130,19 @@ def load_document_base():
 
 	This endpoint is used to load a document base from a name and an organisation id.
 
+	Header:
+    {
+        "Authorization": "your_authorization_token"
+    }
+
     Example Form Payload:
     {
-		"authorization": "your_authorization_token"
         "organisationId": "your_organisation_id",
         "baseName": "your_document_base_name",
     }
     """
 	form = request.get_json()
-	authorization = form.get("authorization")
+	authorization = request.headers.get("Authorization")
 	organisation_id: Optional[int] = form.get("organisationId")
 	base_name = form.get("baseName")
 	if (organisation_id is None or base_name is None
@@ -158,15 +166,19 @@ def interactive_document_base():
 
 	This endpoint is used to load a document base from a name and an organisation id.
 
+	Header:
+	{
+		"Authorization": "your_authorization_token"
+	}
+
     Example Form Payload:
     {
-		"authorization": "your_authorization_token"
         "organisationId": "your_organisation_id",
         "baseName": "your_document_base_name",
     }
     """
 	form = request.get_json()
-	authorization = form.get("authorization")
+	authorization = request.headers.get("Authorization")
 	organisation_id: Optional[int] = form.get("organisationId")
 	base_name = form.get("baseName")
  
@@ -192,16 +204,19 @@ def document_base_attribute_add():
 
 	This endpoint is used to add attributes to a document base from a list of attributes.
 
+	Header:
+	{
+		"Authorization": "your_authorization_token"
+	}
     Example Form Payload:
     {
-		"authorization": "your_authorization_token"
         "organisationId": "your_organisation_id",
         "baseName": "your_document_base_name",
         "attributes": "plane,car,bike"
     }
     """
 	form = request.get_json()
-	authorization = form.get("authorization")
+	authorization = request.headers.get("Authorization")
 	organisation_id = form.get("organisationId")
 	base_name = form.get("baseName")
 	attributes_string = form.get("attributes")
@@ -237,16 +252,19 @@ def document_base_attribute_update():
 
 	This endpoint is used to update the attributes of a document base from a list of attributes.
 
+	Header:
+	{
+		"Authorization": "your_authorization_token"
+	}
     Example Form Payload:
     {
-		"authorization": "your_authorization_token"
         "organisationId": "your_organisation_id",
         "baseName": "your_document_base_name",
         "attributes": "plane,car,bike"
     }
     """
 	form = request.get_json()
-	authorization = form.get("authorization")
+	authorization = request.headers.get("Authorization")
 	organisation_id = form.get("organisationId")
 	base_name = form.get("baseName")
 	attributes_string = form.get("attributes")
@@ -322,14 +340,17 @@ def document_base_do_current_attribute():
 	"""
     Endpoint for giving feedback on doing the current attribute of a document base.
 
+	Header:
+	{
+		"Authorization": "your_authorization_token"
+	}
     Example Form Payload:
     {
-		"authorization": "your_authorization_token",
 		"do-attribute": true
     }
     """
 	form = request.get_json()
-	authorization = form.get("authorization")
+	authorization = request.headers.get("Authorization")
 	do_attribute = form.get("doAttribute")
 	if authorization is None or do_attribute is None:
 		return make_response({"error": "missing parameters"}, 400)
@@ -351,13 +372,14 @@ def reload_document_base():
 	"""
     Endpoint for reloading the document base.
 
-    Example Form Payload:
+    Header:
     {
-		"authorization": "your_authorization_token",
+        "Authorization": "your_authorization_token"
     }
+	No Body Parameters
     """
 	form = request.get_json()
-	authorization = form.get("authorization")
+	authorization = request.headers.get("Authorization")
 	if authorization is None:
 		return make_response({"error": "missing parameters"}, 400)
 
@@ -380,9 +402,12 @@ def sort_nuggets():
 
 	This endpoint is used to create a document base from a list of document ids and a list of attributes.
 
+	Header:
+	{
+		"Authorization": "your_authorization_token"
+	}
     Example Form Payload:
     {
-		"authorization": "your_authorization_token"
         "organisationId": "your_organisation_id",
         "baseName": "your_document_base_name",
         "documentName": "your_document_name",
@@ -390,7 +415,7 @@ def sort_nuggets():
     }
     """
 	form = request.get_json()
-	authorization = form.get("authorization")
+	authorization = request.headers.get("Authorization")
 	organisation_id: Optional[int] = form.get("organisationId")
 	base_name = form.get("baseName")
 	document_name = form.get("documentName")
@@ -420,9 +445,12 @@ def confirm_nugget_custom():
 	"""
     Endpoint to confirm a custom nugget.
 
+	Header:
+    {
+        "Authorization": "your_authorization_token"
+    }
     Example Form Payload:
     {
-		"authorization": "your_authorization_token"
         "organisationId": "your_organisation_id",
         "baseName": "your_document_base_name",
         "documentName": "your_document_name",
@@ -434,8 +462,8 @@ def confirm_nugget_custom():
     }
     """
 	form = request.get_json()
- 
-	authorization = form.get("authorization")
+
+	authorization = request.headers.get("Authorization")
 	organisation_id: Optional[int] = form.get("organisationId")
 	base_name = form.get("baseName")
  
@@ -485,9 +513,12 @@ def confirm_nugget_match():
 	"""
     Endpoint to confirm a match nugget.
 
+	Header:
+    {
+        "Authorization": "your_authorization_token"
+    }
     Example Form Payload:
     {
-		"authorization": "your_authorization_token"
         "organisationId": "your_organisation_id",
         "baseName": "your_document_base_name",
         "documentName": "your_document_name",
@@ -500,8 +531,8 @@ def confirm_nugget_match():
     """
 	print("confirm_nugget_match called")
 	form = request.get_json()
- 
-	authorization = form.get("authorization")
+
+	authorization = request.headers.get("Authorization")
 	organisation_id: Optional[int] = form.get("organisationId")
 	base_name = form.get("baseName")
  
@@ -555,9 +586,12 @@ def confirm_no_match_in_document():
 	"""
     Endpoint to confirm no match for a nugget in a document.
 
+	Header:
+    {
+        "Authorization": "your_authorization_token"
+    }
     Example Form Payload:
     {
-		"authorization": "your_authorization_token"
         "organisationId": "your_organisation_id",
         "baseName": "your_document_base_name",
         "documentName": "your_document_name",
@@ -571,7 +605,7 @@ def confirm_no_match_in_document():
 	print("confirm_no_match_in_document called")
 	form = request.get_json()
 
-	authorization = form.get("authorization")
+	authorization = request.headers.get("Authorization")
 	organisation_id: Optional[int] = form.get("organisationId")
 	base_name = form.get("baseName")
 
