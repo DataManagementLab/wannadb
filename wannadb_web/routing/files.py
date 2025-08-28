@@ -17,7 +17,7 @@ def upload_files():
 	files = request.files.getlist('file')
 	form = request.form
 
-	authorization = request.headers.get("authorization")
+	authorization = request.headers.get("Authorization")
 	organisation_id = int(form.get("organisationId"))
 
 	base_name = form.get("baseName")
@@ -56,7 +56,7 @@ def upload_files():
 
 @main_routes.route('/organization/get/files/<_id>', methods=['GET'])
 def get_files_for_organization(_id):
-	authorization = request.headers.get("authorization")
+	authorization = request.headers.get("Authorization")
 	org_id = int(_id)
 
 	token = tokenDecode(authorization)
@@ -70,7 +70,7 @@ def get_files_for_organization(_id):
 
 @main_routes.route('/organization/get/documentbase/<_id>', methods=['GET'])
 def get_documentbase_for_organization(_id):
-	authorization = request.headers.get("authorization")
+	authorization = request.headers.get("Authorization")
 	org_id = int(_id)
 
 	token = tokenDecode(authorization)
@@ -84,7 +84,7 @@ def get_documentbase_for_organization(_id):
 
 @main_routes.route('/update/file/content', methods=['POST'])
 def update_file_content():
-	authorization = request.headers.get("authorization")
+	authorization = request.headers.get("Authorization")
  
 	token = tokenDecode(authorization)
 	if token is None:
@@ -101,7 +101,7 @@ def update_file_content():
 
 @main_routes.route('/file/delete', methods=['POST'])
 def delete_file():
-	authorization = request.headers.get("authorization")
+	authorization = request.headers.get("Authorization")
  
 	token = tokenDecode(authorization)
 	if token is None:
@@ -118,7 +118,7 @@ def delete_file():
 @main_routes.route('/get/file/<_id>', methods=['GET'])
 def get_file(_id):
  
-	authorization = request.headers.get("authorization")
+	authorization = request.headers.get("Authorization")
 	document_id = int(_id)
 
 	token = tokenDecode(authorization)
