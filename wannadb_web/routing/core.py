@@ -375,7 +375,6 @@ def reload_document_base():
     }
 	No Body Parameters
     """
-	form = request.get_json()
 	authorization = request.headers.get("Authorization")
 	if authorization is None:
 		return make_response({"error": "missing parameters"}, 400)
@@ -629,8 +628,6 @@ def confirm_nugget_multi_match():
 
 	if _token is False:
 		return make_response({"error": "invalid token"}, 401)
-
-	return make_response({"error": "not implemented yet"}, 501)
 
 	user_id = _token.id
 
