@@ -43,7 +43,7 @@ from wannadb_web.Redis.RedisCache import RedisCache
 from wannadb_web.util import tokenDecode
 from wannadb_web.worker.data import Signals
 
-from wannadb_web.worker.tasks import CreateDocumentBase, BaseTask, DocumentBaseAddAttributes, DocumentBaseConfirmNugget, DocumentBaseInteractiveTablePopulation, DocumentBaseLoad, DocumentBaseNoMatchForDocument, DocumentBaseStartRanking, DocumentBaseStopMatching, \
+from wannadb_web.worker.tasks import CreateDocumentBase, BaseTask, DocumentBaseAddAttributes, DocumentBaseConfirmMultipleNuggets, DocumentBaseConfirmNugget, DocumentBaseInteractiveTablePopulation, DocumentBaseLoad, DocumentBaseNoMatchForDocument, DocumentBaseStartRanking, DocumentBaseStopMatching, \
 	DocumentBaseUpdateAttributes, DocumentBaseGetOrderedNuggets, ReloadDocumentBaseTask
 
 
@@ -579,6 +579,78 @@ def confirm_nugget_match():
                                                         i_task_id
                                                     ))
 	
+	return make_response({'task_id': task.id}, 202)
+
+@core_routes.route('/document_base/confirm/nugget/multiple', methods=['POST'])
+def confirm_nugget_multi_match():
+	"""
+	Endpoint to confirm multiple match nuggets in a document.
+
+	Header:
+    {
+        "Authorization": "your_authorization_token"
+    }
+    Example Form Payload:
+    {
+        "organisationId": "your_organisation_id",
+        "baseName": "your_document_base_name",
+        "nuggets": [
+            {
+                "documentName": "your_document_name_1",
+				"documentContent": "your_document_content_1",
+                "text": "nugget_as_text_1",
+                "startIndex": "start_index_of_nugget_1",
+                "endIndex": "end_index_of_nugget_1",
+            },
+            {
+                "documentName": "your_document_name_2",
+                "documentContent": "your_document_content_2",
+                "text": "nugget_as_text_2",
+                "startIndex": "start_index_of_nugget_2",
+                "endIndex": "end_index_of_nugget_2",
+            }
+        ],
+		"interactiveCallTaskId": "interactive_call_task_id"
+    }
+	"""
+	form = request.get_json()
+
+	authorization = request.headers.get("Authorization")
+	organisation_id: Optional[int] = form.get("organisationId")
+	base_name = form.get("baseName")
+
+	nuggets = form.get("nuggets")
+
+	if (organisation_id is None
+       or base_name is None
+       or authorization is None
+       or nuggets is None):
+
+		return make_response({"error": "missing parameters"}, 400)
+
+	_token = tokenDecode(authorization)
+
+	if _token is False:
+		return make_response({"error": "invalid token"}, 401)
+
+	return make_response({"error": "not implemented yet"}, 501)
+
+	user_id = _token.id
+
+	documents_and_nuggets = [(
+		nugget.get("documentName"),
+		nugget.get("documentContent"),
+		nugget.get("startIndex"),
+		nugget.get("endIndex")
+	) for nugget in nuggets]
+
+	task = DocumentBaseConfirmMultipleNuggets().apply_async(args=(
+		user_id,
+		base_name,
+		organisation_id,
+		documents_and_nuggets
+	))
+
 	return make_response({'task_id': task.id}, 202)
 
 @core_routes.route('/document_base/confirm/nugget/none', methods=['POST'])

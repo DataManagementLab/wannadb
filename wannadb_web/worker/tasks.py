@@ -12,7 +12,7 @@ from wannadb.statistics import Statistics
 from wannadb_web.Redis.RedisCache import RedisCache
 from wannadb_web.postgres.queries import getDocuments
 from wannadb_web.worker.Web_API import WannaDB_WebAPI
-from wannadb_web.worker.data import DoAttributeRanking, ReloadDocumentBase, Signals, NoMatchFeedback, NuggetMatchFeedback, CustomMatchFeedback, SkipAttributeRanking, StopMatching
+from wannadb_web.worker.data import DoAttributeRanking, MultiNuggetsMatchFeedback, ReloadDocumentBase, Signals, NoMatchFeedback, NuggetMatchFeedback, CustomMatchFeedback, SkipAttributeRanking, StopMatching
 from wannadb_web.worker.util import State
 
 logging.basicConfig(level=logging.DEBUG, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
@@ -409,6 +409,35 @@ class DocumentBaseConfirmNugget(BaseTask):
 		return self
 	
 
+class DocumentBaseConfirmMultipleNuggets(BaseTask):
+	name = "DocumentBaseConfirmMultipleNuggets"
+
+	def run(self, user_id: int, base_name: str, organisation_id: int,
+			documents_and_nuggets: list[tuple[str, str, int, int]],
+			interactive_call_task_id: str):
+		"""
+		:param user_id: user id
+		:param base_name: name of base document
+		:param organisation_id: organisation id of the document base
+		:param document_name: name of the document
+		:param document_text: text of the document
+		:param nuggets: list of nuggets to confirm
+		:param interactive_call_task_id: the same task id that's used for interactive call
+		"""
+		self._signals = Signals(str(user_id))
+		self._redis_client = RedisCache(str(user_id))
+		self.load()
+
+		nuggets = [
+			InformationNugget(document=Document(name, text), start_char=start, end_char=end)
+			for name, text, start, end in documents_and_nuggets
+		]
+		self._signals.match_feedback.emit(multi_match_feedback(nuggets))
+		# no need to update the document base the doc will be saved in the interactive call
+		self.update(State.SUCCESS)
+		return self
+
+
 class DocumentBaseNoMatchForDocument(BaseTask):
 	name = "DocumentBaseNoMatchForDocument"
 
@@ -468,6 +497,11 @@ def match_feedback(nugget: Union[str, InformationNugget], document: Document,
 	if isinstance(nugget, InformationNugget):
 		return NuggetMatchFeedback(nugget, None)
 	raise Exception("Invalid nugget type")
+
+def multi_match_feedback(nuggets: list[InformationNugget]):
+	logger.debug("multi_match_feedback")
+	return MultiNuggetsMatchFeedback(nuggets)
+
 
 
 def no_match(nugget: InformationNugget) -> NoMatchFeedback:
