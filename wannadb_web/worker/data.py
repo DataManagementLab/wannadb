@@ -197,6 +197,16 @@ class NuggetMatchFeedback:
 
 
 @dataclass
+class MultiNuggetsMatchFeedback:
+	message = "multi-match"
+	nuggets: list[InformationNugget]
+	not_a_match: None
+
+	def to_json(self):
+		return {"message": self.message, "nuggets": [convert_to_nugget(nugget).to_json() for nugget in self.nuggets], "not_a_match": self.not_a_match}
+
+
+@dataclass
 class NoMatchFeedback:
 	message = "no-match-in-document"
 	nugget: InformationNugget
