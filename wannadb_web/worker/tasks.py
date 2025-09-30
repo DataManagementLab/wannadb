@@ -402,8 +402,8 @@ class DocumentBaseConfirmNugget(BaseTask):
 		document = Document(document_name, document_text)
 		if nugget is None:
 			nugget = InformationNugget(document=document, start_char=start_index, end_char=end_index)
-		else:
-			self._signals.match_feedback.emit(no_match(nugget))
+
+		self._signals.match_feedback.emit(match_feedback(nugget, document, start_index, end_index))
 		# no need to update the document base the doc will be saved in the interactive call
 		self.update(State.SUCCESS)
 		return self
@@ -462,18 +462,15 @@ class DocumentBaseNoMatchForDocument(BaseTask):
 		document = Document(document_name, document_text)
 		if nugget is None:
 			nugget = InformationNugget(document=document, start_char=start_index, end_char=end_index)
-		else:
-			self._signals.match_feedback.emit(match_feedback(nugget, document, start_index, end_index))
+	
+		self._signals.match_feedback.emit(no_match(nugget))
 		# no need to update the document base the doc will be saved in the interactive call
 		self.update(State.SUCCESS)
 		return self
 
 
 def nugget_exist(nugget: str, document: Document, start_index: int, end_index: int):
-	print("start: ", start_index, "end: ", end_index)
 	try:
-		print("doc "+document.text[start_index:end_index])
-		print("nug "+nugget)
 		if document.text[start_index:end_index] == nugget:
 			return True
 	except IndexError:
@@ -485,7 +482,6 @@ def nugget_exist(nugget: str, document: Document, start_index: int, end_index: i
 
 def match_feedback(nugget: Union[str, InformationNugget], document: Document,
 				   start_index: Optional[int] = None, end_index: Optional[int] = None) -> Union[NuggetMatchFeedback, CustomMatchFeedback]:
-	logger.debug("match_feedback")
 	if isinstance(nugget, str):
 		if document is None:
 			logger.error("The document is missing in document base")
@@ -501,8 +497,6 @@ def match_feedback(nugget: Union[str, InformationNugget], document: Document,
 def multi_match_feedback(nuggets: list[InformationNugget]):
 	logger.debug("multi_match_feedback")
 	return MultiNuggetsMatchFeedback(nuggets)
-
-
 
 def no_match(nugget: InformationNugget) -> NoMatchFeedback:
 	return NoMatchFeedback(nugget, nugget)

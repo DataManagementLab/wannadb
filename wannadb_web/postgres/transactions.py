@@ -224,7 +224,7 @@ def changePassword(user: str, old_password: str, new_password: str):
 			execute_transaction(update_query, (pwHash, user), commit=True)
 
 	except Exception as e:
-		print("changePassword failed because: \n", e)
+		logger.error(f"changePassword failed because: \n{e}")
 
 
 def deleteUser(user: str, password: str):
@@ -257,7 +257,7 @@ def addOrganisation(organisationName: str, sessionToken: str):
 		return None, "name already exists."
 
 	except Exception as e:
-		print("addOrganisation failed because: \n", e)
+		logger.error("addOrganisation failed because: \n", e)
 		return None, f"addOrganisation failed because: \n{e}"
 
 
@@ -286,7 +286,7 @@ def leaveOrganisation(organisationId: int, sessionToken: str):
 		execute_transaction(delete_query, [organisationId], commit=True, fetch=False)
 		return True, None
 	except Exception as e:
-		print("leaveOrganisation failed because: \n", e)
+		logger.error(f"leaveOrganisation failed because: \n{e}")
 		return False, e
 
 
@@ -324,7 +324,7 @@ INSERT INTO membership (userid, organisationid)
 		return None, "name already exists."
 
 	except Exception as e:
-		print("addUserToOrganisation failed because: \n", e)
+		logger.error(f"addUserToOrganisation failed because: \n{e}")
 
 
 def addUserToOrganisation2(organisationId: int, newUser: str):
@@ -343,7 +343,7 @@ def addUserToOrganisation2(organisationId: int, newUser: str):
 	except IntegrityError:
 		return None, "User already in organisation"
 	except Exception as e:
-		print("addUserToOrganisation2w failed because: \n", e)
+		logger.error(f"addUserToOrganisation2 failed because: \n{e}")
 		return None, 'Unknown error'
 
 
@@ -370,7 +370,7 @@ def removeUserFromOrganisation(organisationName: str, sessionToken: str, userToR
 							commit=True)
 
 	except Exception as e:
-		print("removeUserFromOrganisation failed because: \n", e)
+		logger.error(f"removeUserFromOrganisation failed because: \n{e}")
 
 
 def adjUserAuthorisation(organisationName: str, sessionToken: str, userToAdjust: str, newAuthorisation: int):
@@ -399,7 +399,7 @@ def adjUserAuthorisation(organisationName: str, sessionToken: str, userToAdjust:
 							commit=True)
 
 	except Exception as e:
-		print("adjUserAuthorisation failed because: \n", e)
+		logger.error(f"adjUserAuthorisation failed because: \n{e}")
 
 
 def addDocument(name: str, content: Union[str, bytes], organisationId: int, userid: int, base_id: int=None):
@@ -446,7 +446,6 @@ def addDocumentBase(name: str, attributes: list[str], orgId: int, documents: lis
 		data = (name, attributes, orgId)
 		response = execute_transaction(insert_data_query, data, commit=True)
 		docBase_id = int(response[0][0])
-		print(docBase_id)
 		for id in documents:
 			update_query = sql.SQL(
 				"UPDATE documents "

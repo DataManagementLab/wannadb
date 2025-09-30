@@ -12,7 +12,6 @@ user_management = Blueprint('user_management', __name__)
 
 @user_management.route('/register', methods=['POST'])
 def register():
-	print("entered register")
 	data = request.get_json()
 	username = data.get('username')
 	password = data.get('password')

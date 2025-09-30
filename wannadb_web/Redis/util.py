@@ -8,10 +8,8 @@ CACHE_PORT = int(os.environ.get("CACHE_PORT", 6379))
 CACHE_DB = int(os.environ.get("CACHE_DB", 0))
 CACHE_PASSWORD = int(os.environ.get("CACHE_PASSWORD", 0))
 
-print(CACHE_HOST, CACHE_PORT, CACHE_DB, CACHE_PASSWORD)
-
 logger = logging.getLogger(__name__)
-
+logger.debug(f"Redis Cache Config - Host: {CACHE_HOST}, Port: {CACHE_PORT}, DB: {CACHE_DB}, Password: {CACHE_PASSWORD}")
 
 def connectRedis():
 	try:

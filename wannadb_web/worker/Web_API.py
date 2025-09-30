@@ -132,6 +132,7 @@ class WannaDB_WebAPI:
 		return
 
 	def get_ordert_nuggets(self, document_id: int):
+		logger.warning("get_ordert_nuggets is deprecated, use get_ordered_nuggets_by_doc_name instead!")
 		document = getDocument(document_id, self.user_id)
 		if document is None:
 			logger.error(f"Document with id {document_id} not found!")
@@ -148,6 +149,7 @@ class WannaDB_WebAPI:
 		self.signals.error.emit(Exception(f"Document \"{document_name}\" not found in document base!"))
 
 	def get_ordered_nuggets_by_doc_name(self, document_name: str, document_content: str):
+		logger.warning("It is recommended to not use get_ordered_nuggets_by_doc_name!")
 		document = getDocumentByNameAndContent(document_name, document_content, self.user_id)
 		if document is None:
 			logger.error(f"Document {document_name} not found!")
@@ -157,8 +159,6 @@ class WannaDB_WebAPI:
 		self.signals.status.emit("get_ordered_nuggets_by_doc_name")
 		for document in self.document_base.documents:
 			if document.name == document_name:
-				print("sorted nuggets")
-				print(document.nuggets[0].__dict__["_signals"].keys())
 				"""if not all(hasattr(nugget, CachedDistanceSignal) for nugget in document.nuggets):
 					logger.error(f"Document \"{document_name}\" does not have nuggets with CachedDistanceSignal!")
 					self.signals.error.emit(
@@ -280,12 +280,12 @@ class WannaDB_WebAPI:
 			self.signals.error.emit(Exception("Document ID not set!"))
 			return
 		try:
-			print("BASE")
-			print(self.document_base)
-			print("ID")
-			print(self.document_id)
-			print("ATT")
-			print(self.document_base.attributes)
+			logger.info("BASE")
+			logger.info(self.document_base)
+			logger.info("ID")
+			logger.info(self.document_id)
+			logger.info("ATT")
+			logger.info(self.document_base.attributes)
 
 			status = updateDocumentContent(self.document_id, self.document_base.to_bson())
 			if not status:

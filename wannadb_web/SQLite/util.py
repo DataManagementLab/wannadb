@@ -1,6 +1,8 @@
+import logging
 import sqlite3
 from sqlite3 import Error
 
+logger = logging.getLogger(__name__)
 
 def create_connection(db_file, user_id):
 	""" create a database connection to the SQLite database
@@ -16,7 +18,7 @@ def create_connection(db_file, user_id):
 		conn.row_factory = sqlite3.Row
 		return conn
 	except Error as e:
-		print(e)
+		logger.error(e)
 
 	return conn
 
