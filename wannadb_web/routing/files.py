@@ -40,7 +40,6 @@ def upload_files():
 		content_type = file.content_type
 		if 'text/plain' in content_type:
 			filename = file.filename
-			print("name:" + filename) 
 			content = str(file.stream.read().decode('utf-8'))
 			document_id = addDocument(filename, content, organisation_id, token.id, base_id)
 			document_ids.append(document_id)

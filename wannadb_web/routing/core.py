@@ -528,7 +528,6 @@ def confirm_nugget_match():
         "interactiveCallTaskId": "interactive_call_task_id"
     }
     """
-	print("confirm_nugget_match called")
 	form = request.get_json()
 
 	authorization = request.headers.get("Authorization")
@@ -671,7 +670,6 @@ def confirm_no_match_in_document():
         "interactiveCallTaskId": "interactive_call_task_id"
     }
     """
-	print("confirm_no_match_in_document called")
 	form = request.get_json()
 
 	authorization = request.headers.get("Authorization")
@@ -695,9 +693,6 @@ def confirm_no_match_in_document():
         or start_index is None
         or end_index is None
         or i_task_id is None):
-
-		print("Missing parameters: ")
-		print(f"organisation_id: {organisation_id}, base_name: {base_name}, document_name: {document_name}, document_content: {document_content}, authorization: {authorization}, nugget_text: {nugget_text}, start_index: {start_index}, end_index: {end_index}, i_task_id: {i_task_id}")
 
 		return make_response({"error": "missing parameters"}, 400)
 

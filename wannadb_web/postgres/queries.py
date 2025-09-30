@@ -1,9 +1,12 @@
+import logging
 from typing import Union
 
 import bcrypt
 from psycopg2 import sql
 
 from wannadb_web.postgres.util import execute_query, execute_transaction
+
+logger = logging.getLogger(__name__)
 
 
 def getUserID(user: str):
@@ -95,7 +98,6 @@ def checkPassword(user: str, password: str):
 	_password, _id = result[0]
 
 	if _password:
-		print(_password)
 		stored_password = bytes(_password, 'utf-8')
 		check = bcrypt.checkpw(password.encode('utf-8'), stored_password)
 		if check:
@@ -137,7 +139,6 @@ def get_document_base_data(base_name: str, organisation_id: int):
 	)
 
 	result = execute_query(select_query, (base_name, organisation_id))
-	print(result)
 	if not result:
 		return None
 
@@ -158,7 +159,6 @@ def get_document_base_data(base_name: str, organisation_id: int):
 	if not result:
 		documents = []
 	else:
-		print(result)
 		documents = [
 			{
 				"id": res[0],
@@ -325,7 +325,7 @@ def updateDocumentContent(doc_id: int, new_content):
 		execute_transaction(update_query, (new_content, doc_id,), commit=True, fetch=False)
 		return True
 	except Exception as e:
-		print("updateDocumentContent failed because:\n", e)
+		logger.error(f"updateDocumentContent failed because:\n{e}")
 		return False
 
 
@@ -338,7 +338,7 @@ def deleteDocumentContent(doc_id: int):
 		execute_transaction(delete_query, (doc_id,), commit=True, fetch=False)
 		return True
 	except Exception as e:
-		print("updateDocumentContent failed because:\n", e)
+		logger.error(f"updateDocumentContent failed because:\n{e}")
 		return False
 
 

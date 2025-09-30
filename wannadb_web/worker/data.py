@@ -368,7 +368,6 @@ class _Nuggets(Emitable):
 
 	def emit(self, status: list[InformationNugget]):
 		logger.info("emitting Nuggets")
-		print("emitting Nuggets")
 		b:bytes = pickle.dumps(status)
 		if isinstance(b,bytes):
 			self.redis.set(self.type, b)

@@ -1,3 +1,4 @@
+import logging
 from flask import Blueprint, make_response
 
 from wannadb_web.postgres.queries import _getDocument
@@ -6,6 +7,7 @@ from wannadb_web.postgres.transactions import createDocumentBaseTable, createUse
 
 dev_routes = Blueprint('dev_routes', __name__, url_prefix='/dev')
 
+logger = logging.getLogger(__name__)
 
 @dev_routes.route('/createTables/<schema>', methods=['POST'])
 def create_tables(schema):
@@ -18,7 +20,7 @@ def create_tables(schema):
 		createDocumentsTable(schema)
 		return f'create Tables in {schema} successfully'
 	except Exception as e:
-		print(f"create Tables in {schema} failed because: \n", e)
+		logger.error(f"create Tables in {schema} failed because: \n", e)
 
 
 @dev_routes.route('/dropTables/<schema>', methods=['POST']) # potential vulnerability
@@ -28,7 +30,7 @@ def drop_tables(schema):
 		dropSchema(schema)
 		return f'drop Tables in {schema} successfully'
 	except Exception as e:
-		print("drop Tables in {schema} failed because: \n", e)
+		logger.error(f"drop Tables in {schema} failed because: \n", e)
 
 
 @dev_routes.route('/getDocument/<_id>', methods=['GET'])
