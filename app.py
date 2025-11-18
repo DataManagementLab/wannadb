@@ -37,8 +37,12 @@ app.register_blueprint(user_management)
 app.register_blueprint(dev_routes)
 app.register_blueprint(core_routes)
 
-CORS(app, origins=["*"], supports_credentials=True, resources={r"/*": {"origins": "*"}}) # Allow all origins for CORS, should be restricted in production
-
+CORS(
+    app,
+    supports_credentials=True,
+    origins=["http://localhost:3000"],
+    resources={r"/*": {"origins": "http://localhost:3000"}}
+)
 
 
 @app.errorhandler(404)
