@@ -33,17 +33,17 @@ See [EXTRACTORS.md](EXTRACTORS.md) for more information on the interactive extra
 
 This project requires Python 3.10 or newer.
 
-##### 1. Create a virtual environment.
+##### 1. Create a virtual environment
 
-```
+```bash
 python -m venv venv
 source venv/bin/activate
 export PYTHONPATH="."
 ```
 
-##### 2. Install the dependencies.
+##### 2. Install the dependencies
 
-```
+```bash
 pip install --upgrade pip
 pip install --use-pep517 -r requirements.txt
 pip install --use-pep517 pytest
@@ -51,11 +51,11 @@ pip install --use-pep517 pytest
 
 You may have to install `torch` by hand if you want to use CUDA:
 
-https://pytorch.org/get-started/locally/
+<https://pytorch.org/get-started/locally/>
 
-##### 3. Run the tests.
+##### 3. Run the tests
 
-```
+```bash
 pytest
 ```
 
@@ -63,7 +63,7 @@ pytest
 
 The code in this repository is the result of several scientific publications. If you build upon WannaDB, please cite:
 
-```
+```bibtex
 @inproceedings{wannadb@BTW23,
 author = {Hättasch, Benjamin AND Bodensohn, Jan-Micha AND Vogel, Liane AND Urban, Matthias AND Binnig, Carsten},
 title = {WannaDB: Ad-hoc SQL Queries over Text Collections},
@@ -78,7 +78,7 @@ address = {}
 
 If you want to reference specific features/parts, our further publications might be relevant:
 
-```
+```bibtex
 @inproceedings{aset@SIGMOD22,
 author = {H\"{a}ttasch, Benjamin and Bodensohn, Jan-Micha and Binnig, Carsten},
 title = {Demonstrating ASET: Ad-Hoc Structured Exploration of Text Collections},
@@ -98,7 +98,7 @@ series = {SIGMOD '22}
 }
 ```
 
-```
+```bibtex
 @inproceedings{aset@AIDB21,
     author = {H{\"a}ttasch, Benjamin and Bodensohn, Jan-Micha and Binnig, Carsten},
     year = "2021",
@@ -110,7 +110,7 @@ series = {SIGMOD '22}
 }
 ```
 
-```
+```bibtex
 @inproceedings{wannadb@DESIRES21,
     author = {H{\"{a}}ttasch, Benjamin},
     title = "WannaDB: Ad-hoc Structured Exploration of Text Collections Using Queries",
@@ -148,6 +148,7 @@ This repository is structured as follows:
 - `wannadb`, `wannadb_parsql`, and `wannadb_ui` contain the implementation of ASET and the GUI.
 - `scripts` contains helpers, like a stand-alone preprocessing script.
 - `tests` contains pytest tests.
+- `wannadb_web` contains the code base for the backend of WannaDB.
 
 ### Architecture: Core
 
@@ -191,9 +192,19 @@ The `Statistics` object allows you to easily record information during runtime. 
 
 The GUI implementation can be found in the `wannadb_ui` package. `wannadb_api.py` provides an asynchronous API for the `wannadb` library using PyQt's slots and signals mechanism. `main_window.py`, `document_base.py`, and `interactive_window.py` contain different parts of the user interface, and `common.py` contains base classes for some recurring user interface elements.
 
+### Architecture: Backend Database Schema
+
+The diagram below illustrates the backend application’s Entity-Relationship Diagram (ERD), detailing its database structure and relationships.
+
+<picture>
+  <source srcset="doc/WannaDB-Web_DB_ERD_dark.drawio.svg" media="(prefers-color-scheme: dark)">
+  <source srcset="ddoc/WannaDB-Web_DB_ERD_light.drawio.svg" media="(prefers-color-scheme: light)">
+  <img src="doc/WannaDB-Web_DB_ERD_light.drawio.svg" alt="diagram">
+</picture>
+
 ---
 
-# Start the Web-Backend Docker Build
+## Start the Web-Backend Docker Build
 
 To build and start the production environment, use the following commands:
 
