@@ -1,6 +1,8 @@
+# Webserver Structure
+
 ## File Structure
 
-```
+```tree
 .
 ├── entrypoint.sh
 ├── util.py
@@ -36,14 +38,16 @@
 
 ### Web Root Directory
 
-```
+```tree
 ├── entrypoint.sh
 ├── util.py
 ├── __init__.py
 └── .env
    └── .dev
 ```
+
 This section contains the following files:
+
 - `entrypoint.sh`: This is the entrypoint for the webserver.
 - `util.py`: This file provides general functionality for the entire project.
 - `__init__.py`: This is an initialization file.
@@ -53,28 +57,33 @@ This section contains the following files:
 If a production environment configuration is needed, a `.prod` file should be added. Please make sure to update the Dockerfile accordingly to reflect these changes.
 
 ### Postgres
-```
+
+```tree
 Postgres
 ├── queries.py
 ├── transactions.py
 ├── util.py
 └── __init__.py
 ```
+
 Directory related to PostgresSQL database functionality.
 This section provides an abstraction layer for the database connection and queries.
 
 ### Redis
-```
+
+```tree
 Redis
 ├── RedisCache.py
 ├── util.py
 └── __init__.py
 ```
+
 Directory related to Redis cache functionality.
 This section provides an abstraction layer for the Redis cache, allowing for efficient caching of data. It also ensures that the cache is scoped to a specific namespace for the users, preventing any conflicts or data leakage.
 
 ### Routing
-```
+
+```tree
 routing
 ├── core.py
 ├── dev.py
@@ -82,6 +91,7 @@ routing
 ├── user.py
 └── __init__.py
 ```
+
 Directory related to routing functionality for the Flask web server.
 
 - `core.py`: Contains the routes for the main application routes.
@@ -89,21 +99,22 @@ Directory related to routing functionality for the Flask web server.
 - `files.py`: Contains the routes for file uploads and downloads.
 - `user.py`: Contains the routes for user authentication and management.
 
-
 ### SQLite
-```
+
+```tree
 SQLite
 │   ├── Cache_DB.py
 │   ├── util.py
 │   └── __init__.py
 ```
+
 Directory related to SQLite database functionality.
 
 This section provides an abstraction layer for the database connection and queries. It also ensures that the database is scoped to a specific namespace for the users, improving data organization and security.
 
-
 ### Worker
-```
+
+```tree
 worker
     ├── data.py
     ├── tasks.py
@@ -111,6 +122,7 @@ worker
     ├── Web_API.py
     └── __init__.py
 ```
+
 Directory related to worker functionality, background tasks, and asynchronous processing.
 
 - `data.py`: Contains all alert or new types.
