@@ -2,10 +2,10 @@
 from flask import Blueprint, request, make_response
 
 from wannadb_web.util import Token, tokenEncode, tokenDecode
-from wannadb_web.postgres.queries import checkPassword, getMembersOfOrganisation, getOrganisationFromUserId, \
-	getOrganisationIDsFromUserId, getOrganisationName, getUserNameSuggestion
-from wannadb_web.postgres.transactions import (addUser, addOrganisation, addUserToOrganisation2, deleteUser,
-											   leaveOrganisation)
+from wannadb_web.postgres.queries import check_password, get_members_of_organisation, get_organisation_from_user_id, \
+	get_organisation_ids_from_user_id, get_organisation_name, get_username_suggestion
+from wannadb_web.postgres.transactions import (add_user, add_organisation, add_user_to_organisation_new, delete_user,
+											   leave_organisation)
 
 user_management = Blueprint('user_management', __name__)
 
@@ -16,7 +16,7 @@ def register():
 	username = data.get('username')
 	password = data.get('password')
 
-	_id = addUser(username, password)
+	_id = add_user(username, password)
 
 	if _id > 0:
 		user = Token(username, _id)
@@ -36,7 +36,7 @@ def login():
 	username = data.get('username')
 	password = data.get('password')
 
-	pwcheck = checkPassword(username, password)
+	pwcheck = check_password(username, password)
 	if isinstance(pwcheck, Exception):
 		raise pwcheck
 	if isinstance(pwcheck, bool):
@@ -66,7 +66,7 @@ def delete_user():
 		return make_response({'message': 'no authorization '}, 400)
 
 
-	pwcheck = checkPassword(username, password)
+	pwcheck = check_password(username, password)
 	_id = None 
 	if isinstance(pwcheck, Exception):
 		raise pwcheck
@@ -78,7 +78,7 @@ def delete_user():
 	if token.id != _id:
 		return make_response({'message': 'User not authorised '}, 401)
 
-	response = deleteUser(username, password)
+	response = delete_user(username, password)
 
 	if response:
 		return make_response({'message': 'User deleted'}, 204)
@@ -92,7 +92,7 @@ def create_organisation():
 
 	organisation_name = data.get("organisationName")
 
-	organisation_id, error = addOrganisation(organisation_name, authorization)
+	organisation_id, error = add_organisation(organisation_name, authorization)
 	if error is None:
 		return make_response({'organisation_id': organisation_id}, 200)
 	if error == "name already exists.":
@@ -109,7 +109,7 @@ def leave_organisation():
 
 	organisationId = data.get("organisationId")
 
-	success, error = leaveOrganisation(organisationId, authorization)
+	success, error = leave_organisation(organisationId, authorization)
 	if success:
 		return make_response({'status': True}, 200)
 	return make_response({"status": False, "msg": str(error)}, 500)
@@ -122,7 +122,7 @@ def get_organisations():
 	if token is None:
 		return make_response({}, 401)
 
-	organisation_ids, error = getOrganisationIDsFromUserId(token.id)
+	organisation_ids, error = get_organisation_ids_from_user_id(token.id)
 	if error is None:
 		return make_response({'organisation_ids': organisation_ids}, 200)
 	if organisation_ids[0] < 0:
@@ -137,7 +137,7 @@ def get_organisation_name(_id):
 	if token is None:
 		return make_response({}, 401)
 
-	organisation_name = getOrganisationName(_id)
+	organisation_name = get_organisation_name(_id)
 
 	if organisation_name == -1:
 		return make_response({'organisation not found': organisation_name}, 404)
@@ -153,7 +153,7 @@ def get_organisation_names():
 	if token is None:
 		return make_response({}, 401)
 
-	organisations, error = getOrganisationFromUserId(token.id)
+	organisations, error = get_organisation_from_user_id(token.id)
 	if error is None:
 		return make_response({'organisations': organisations}, 200)
 	if organisations <= 0:
@@ -172,7 +172,7 @@ def add_user_to_organisation():
 	organisation_name = data.get("organisationId")
 	new_user = data.get("newUser")
 
-	organisation_id, error = addUserToOrganisation2(organisation_name, new_user)
+	organisation_id, error = add_user_to_organisation_new(organisation_name, new_user)
 
 	if error:
 		return make_response({"error": error}, 409)
@@ -186,7 +186,7 @@ def get_organisation_members(_id):
 	if token is None:
 		return make_response({'error': 'no authorization'}, 401)
 
-	members_raw = getMembersOfOrganisation(_id)
+	members_raw = get_members_of_organisation(_id)
 	if members_raw is None:
 		return make_response({'error': 'organisation ' + _id + ' not found'}, 404)
 
@@ -204,7 +204,7 @@ def get_user_suggestion(_prefix):
 	if token is None:
 		return make_response({'error': 'no authorization'}, 401)
 
-	members_raw = getUserNameSuggestion(_prefix)
+	members_raw = get_username_suggestion(_prefix)
 	result = []
 	for member in members_raw:
 		result.append(member[0])

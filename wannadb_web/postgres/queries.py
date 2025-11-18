@@ -1,5 +1,6 @@
 import logging
 from typing import Union
+from warnings import deprecated
 
 import bcrypt
 from psycopg2 import sql
@@ -9,7 +10,15 @@ from wannadb_web.postgres.util import execute_query, execute_transaction
 logger = logging.getLogger(__name__)
 
 
-def getUserID(user: str):
+def get_user_id(user: str):
+	"""
+    Gets the user ID for a given username.
+    
+    :param user: The username to look up.
+    :type user: str
+    :return: The user ID if found, otherwise None.
+	:rtype: Union[int, None]
+	"""
 	select_query = sql.SQL("SELECT id FROM users WHERE username = %s;")
 	result = execute_query(select_query, (user,))
 	if isinstance(result[0], int):
@@ -17,12 +26,27 @@ def getUserID(user: str):
 	return None
 
 
-def getOrganisationID(organisation_name: str):
+def get_organisation_id(organisation_name: str):
+	"""
+    Gets the organisation ID for a given organisation name.
+    
+    :param organisation_name: The name of the organisation to look up.
+    :type organisation_name: str
+	:return: The organisation ID if found, otherwise None.
+	:rtype: Union[int, None]"""
 	select_query = sql.SQL("SELECT id FROM organisations WHERE name = %s;")
 	return execute_query(select_query, (organisation_name,))
 
 
-def getOrganisationName(organisation_id: int):
+def get_organisation_name(organisation_id: int):
+	"""
+    Gets the organisation name for a given organisation ID.
+    
+    :param organisation_id: The ID of the organisation to look up.
+	:type organisation_id: int
+	:return: The organisation name if found, otherwise -1.
+	:rtype: Union[str, int]
+	"""
 	select_query = sql.SQL("SELECT name FROM organisations WHERE id = %s;")
 	response = execute_query(select_query, (organisation_id,))
 	if response is None:
@@ -30,23 +54,55 @@ def getOrganisationName(organisation_id: int):
 	return str(response[0])
 
 
-def getMembersOfOrganisation(organisation_id: int):
+def get_members_of_organisation(organisation_id: int):
+	"""
+    Gets the usernames of all members in a given organisation.
+    
+    :param organisation_id: The ID of the organisation to look up.
+	:type organisation_id: int
+	:return: A list of usernames of members in the organisation.
+	:rtype: list[str]
+	"""
 	select_query = sql.SQL(
 		"SELECT username FROM users WHERE id IN (SELECT userid FROM membership WHERE organisationid = %s);")
 	return execute_query(select_query, (organisation_id,))
 
 
-def getMemberIDsFromOrganisationID(organisationID: int):
+def get_member_ids_from_organisation_id(organisationID: int):
+	"""
+    Gets the user IDs of all members in a given organisation.
+    
+    :param organisationID: The ID of the organisation to look up.
+	:type organisationID: int
+	:return: A list of user IDs of members in the organisation.
+	:rtype: list[int]
+	"""
 	select_query = sql.SQL("SELECT userid FROM membership WHERE organisationid = %s;")
 	return execute_query(select_query, (organisationID,))
 
 
-def getUserNameSuggestion(prefix: str):
+def get_username_suggestion(prefix: str):
+	"""
+    Gets a list of usernames that start with the given prefix.
+    
+    :param prefix: The prefix to search for.
+	:type prefix: str
+	:return: A list of usernames that start with the prefix.
+	:rtype: list[str]
+	"""
 	select_query = sql.SQL("SELECT username FROM users WHERE username LIKE %s;")
 	return execute_query(select_query, (prefix + "%",))
 
 
-def getOrganisationIDsFromUserId(userID: int):
+def get_organisation_ids_from_user_id(userID: int):
+	"""
+    Gets the organisation IDs associated with a given user ID.
+	
+	:param userID: The ID of the user to look up.
+	:type userID: int
+	:return: A tuple containing a list of organisation IDs or None, and an error message or None.
+	:rtype: tuple[Union[list[int], None], Union[str, Exception, None]]
+	"""
 	try:
 		select_query = sql.SQL("SELECT organisationid FROM membership WHERE userid = %s;")
 		response = execute_query(select_query, (userID,))
@@ -61,7 +117,15 @@ def getOrganisationIDsFromUserId(userID: int):
 		return None, e
 
 
-def getOrganisationFromUserId(user_id: int):
+def get_organisation_from_user_id(user_id: int):
+	"""
+	Gets the organisations associated with a given user ID.
+	
+	:param user_id: The ID of the user to look up.
+	:type user_id: int
+	:return: A tuple containing a list of organisations or None, and an error message or None.
+	:rtype: tuple[Union[list[dict[str, Union[str, int]]], None], Union[str, Exception, None]]
+	"""
 	try:
 		select_query = sql.SQL("""	SELECT organisationid, o.name
 									FROM membership
@@ -80,15 +144,17 @@ def getOrganisationFromUserId(user_id: int):
 		return None, e
 
 
-def checkPassword(user: str, password: str):
-	"""Checks if the password is correct for the given user
+def check_password(user: str, password: str):
+	"""
+ 	Checks if the password is correct for the given user
 
-	Returns:
-		user_id: int (if password is correct)
-		False: bool (if password is incorrect)
-		Exception: Exception (if something went wrong)
-	Raises:
-		None
+	:param user: the username to check
+	:type user: str
+	:param password: the password to check
+	:type password: str
+	:return: user ID if password is correct, False otherwise
+	:rtype: Union[int, bool]
+	:raises Exception: Exception (if something went wrong)
 	"""
 	select_query = sql.SQL("SELECT password,id as pw FROM users WHERE username = %s ")
 
@@ -106,7 +172,17 @@ def checkPassword(user: str, password: str):
 	return False
 
 
-def checkOrganisationAuthorisation(organisationName: str, userName: str):
+def check_organisation_authorisation(organisationName: str, userName: str):
+	"""
+	Checks the authorisation level of a user in a given organisation.
+ 
+	:param organisationName: The name of the organisation.
+	:type organisationName: str
+	:param userName: The username of the user.
+	:type userName: str
+	:return: The authorisation level if found, otherwise None.
+	:rtype: Union[int, None]
+	"""
 	select_query = sql.SQL("SELECT authorisation from membership "
 						   "where userid = (SELECT id from users where username = (%s)) "
 						   "and "
@@ -120,6 +196,16 @@ def checkOrganisationAuthorisation(organisationName: str, userName: str):
 
 
 def get_base_id(base_name: str, org_id: int):
+	"""
+	Gets the document base ID for a given base name and organisation ID.
+ 
+	:param base_name: The name of the document base.
+	:type base_name: str
+	:param org_id: The ID of the organisation.
+	:type org_id: int
+	:return: The document base ID if found, otherwise None.
+	:rtype: Union[int, None]
+	"""
 	select_query = sql.SQL(
 		"SELECT id from document_bases "
 		"WHERE name = (%s) AND organisation_id = (%s)"
@@ -173,7 +259,16 @@ def get_document_base_data(base_name: str, organisation_id: int):
 	return data
 
 
-def _getDocument(documentId: int):
+@deprecated
+def _get_document(documentId: int):
+	"""
+	Get document content by document ID.
+ 
+	:param documentId: The ID of the document to retrieve.
+	:type documentId: int
+	:return: The content of the document as a string or bytes, or None if not found.
+	:rtype: Union[str, bytes, None]
+	"""
 	select_query = sql.SQL("""SELECT content,content_byte 
 								from documents 
 								where id = (%s)""")
@@ -191,17 +286,21 @@ def _getDocument(documentId: int):
 		return None
 
 
-def getDocument_by_name(document_name: str, organisation_id: int, user_id: int) -> tuple[str, Union[str, bytes]]:
+def get_document_by_name(document_name: str, organisation_id: int, user_id: int) -> tuple[str, Union[str, bytes]]:
 	"""
-		Returns:
-			name: str
-			content: str or bytes
-
-		Raises:
-			Exception: if no document with that name is found
-			Exception: if multiple documents with that name are found
+	Gets a document by its name within a specific organisation for a specific user.
+ 
+	:param document_name: The name of the document to retrieve.
+	:type document_name: str
+	:param organisation_id: The ID of the organisation the document belongs to.
+	:type organisation_id: int
+	:param user_id: The ID of the user requesting the document.
+	:type user_id: int
+	:return: A tuple containing the document name and its content (as str or bytes).
+	:rtype: tuple[str, Union[str, bytes]]
+	:raises Exception: if no document with that name is found
+	:raises Exception: if multiple documents with that name are found
 	"""
-
 	select_query = sql.SQL("""SELECT id,content,content_byte
 
 							 FROM documents d
@@ -226,7 +325,17 @@ def getDocument_by_name(document_name: str, organisation_id: int, user_id: int) 
 	raise Exception("No document with that name found")
 
 
-def getDocument(document_id: int, user_id: int):
+def get_document(document_id: int, user_id: int):
+	"""
+	Gets a document by its ID for a specific user.
+ 
+	:param document_id: The ID of the document to retrieve.
+	:type document_id: int
+	:param user_id: The ID of the user requesting the document.
+	:type user_id: int
+	:return: A tuple containing the document name and its content (as str or bytes), or None if not found.
+	:rtype: Union[tuple[str, Union[str, bytes]], None]
+	"""
 	select_query = sql.SQL("""SELECT name,content,content_byte 
 							 FROM documents 
 							 JOIN membership m ON documents.organisationid = m.organisationid
@@ -246,7 +355,22 @@ def getDocument(document_id: int, user_id: int):
 	else:
 		return None
 
-def getDocumentByNameAndContent(doc_name: str, doc_content: str, user_id: int):
+
+@deprecated
+def get_document_by_name_and_content(doc_name: str, doc_content: str, user_id: int):
+	"""
+	Gets a document by its name and content for a specific user.\n
+	**Warning**: This functioned does not work as intended and is therefore deprecated.
+ 
+	:param doc_name: The name of the document to retrieve.
+	:type doc_name: str
+	:param doc_content: The content of the document to retrieve.
+	:type doc_content: str
+	:param user_id: The ID of the user requesting the document.
+	:type user_id: int
+	:return: A tuple containing the document name and its content (as str or bytes), or None if not found.
+	:rtype: Union[tuple[str, Union[str, bytes]], None]
+	"""
 	select_query = sql.SQL("""	SELECT name,content,content_byte 
 							 	FROM documents 
 							 	JOIN membership m ON documents.organisationid = m.organisationid
@@ -268,7 +392,15 @@ def getDocumentByNameAndContent(doc_name: str, doc_content: str, user_id: int):
 		return None
 
 
-def getDocumentsForOrganization(organisation_id: int):
+def get_documents_for_organisation(organisation_id: int):
+	"""
+	Gets all documents for a specific organisation.
+ 
+	:param organisation_id: The ID of the organisation to retrieve documents for.
+	:type organisation_id: int
+	:return: A list of dictionaries containing document IDs, names, and contents.
+	:rtype: list[dict[str, Union[int, str]]]
+	"""
 	select_query = sql.SQL("""SELECT id, name,content,content_byte 
 						 FROM documents 
 						 WHERE organisationid = (%s)
@@ -293,8 +425,16 @@ def getDocumentsForOrganization(organisation_id: int):
 		})
 	return doc_array
 
-def getDocumentBasesForOrganization(organisation_id: int):
 
+def get_document_bases_for_organisation(organisation_id: int):
+	"""
+	Gets all document bases for a specific organisation.
+ 
+	:param organisation_id: The ID of the organisation to retrieve document bases for.
+	:type organisation_id: int
+	:return: A list of dictionaries containing document base IDs, names, and attributes.
+	:rtype: list[dict[str, Union[int, str, list[str]]]]
+	"""
 	select_query = sql.SQL("""SELECT id, name, attributes
 						 FROM document_bases
 
@@ -309,7 +449,17 @@ def getDocumentBasesForOrganization(organisation_id: int):
 	return doc_array
 
 
-def updateDocumentContent(doc_id: int, new_content):
+def update_document_content(doc_id: int, new_content):
+	"""
+	Updates the content of a document by its ID.
+ 
+	:param doc_id: The ID of the document to update.
+	:type doc_id: int
+	:param new_content: The new content to set for the document.
+	:type new_content: Union[str, bytes]
+	:return: True if the update was successful, False otherwise.
+	:rtype: bool
+	"""
 	try:
 		select_query = sql.SQL("""SELECT content, content_byte
 								FROM documents
@@ -329,7 +479,15 @@ def updateDocumentContent(doc_id: int, new_content):
 		return False
 
 
-def deleteDocumentContent(doc_id: int):
+def delete_document_content(doc_id: int):
+	"""
+	Deletes a document by its ID.
+ 
+	:param doc_id: The ID of the document to delete.
+	:type doc_id: int
+	:return: True if the deletion was successful, False otherwise.
+	:rtype: bool
+	"""
 	try:
 		delete_query = sql.SQL("""DELETE
 								FROM documents
@@ -342,7 +500,17 @@ def deleteDocumentContent(doc_id: int):
 		return False
 
 
-def getDocuments(document_ids: list[int], user_id: int):
+def get_documents(document_ids: list[int], user_id: int):
+	"""
+	Gets multiple documents by their IDs for a specific user.
+ 
+	:param document_ids: A list of document IDs to retrieve.
+	:type document_ids: list[int]
+	:param user_id: The ID of the user requesting the documents.
+	:type user_id: int
+	:return: A list of tuples containing document names and their contents (as str or bytes).
+	:rtype: list[tuple[str, Union[str, bytes]]]
+	"""
 	select_query = sql.SQL(f"""SELECT name,content,content_byte 
 							 FROM documents 
 							 JOIN membership m ON documents.organisationid = m.organisationid
@@ -369,7 +537,17 @@ def getDocuments(document_ids: list[int], user_id: int):
 	return [(None,None)]
 
 
-def getDocument_ids(organisation_id: int, user_id: int):
+def get_document_ids(organisation_id: int, user_id: int):
+	"""
+	Gets all document IDs for a specific organisation and user.
+ 
+	:param organisation_id: The ID of the organisation to retrieve documents for.
+	:type organisation_id: int
+	:param user_id: The ID of the user requesting the documents.
+	:type user_id: int
+	:return: A list of tuples containing document names and their contents (as str or bytes).
+	:rtype: list[tuple[str, Union[str, bytes]]]
+	"""
 	select_query = sql.SQL("""SELECT name,content,content_byte 
 									from documents 
 									join membership m on documents.organisationid = m.organisationid
@@ -394,3 +572,31 @@ def getDocument_ids(organisation_id: int, user_id: int):
 					b_documents.append((str(name), bytes(content)))
 				return b_documents
 	return []
+
+
+def get_feedbacks_for_document(document_id: int):
+	"""
+    Retrieves feedback summary for a given document.
+    
+    :param document_id: ID of the document to retrieve feedback for.
+    :type document_id: int
+	:return: A dictionary summarizing feedback counts by attribute and positivity.
+    :rtype: dict[str, dict[str, int]]
+	"""
+	select_query = sql.SQL("""SELECT attribute, positive, count(*)
+								FROM document_feedback 
+								WHERE documentid = (%s)
+								GROUP BY positive, attribute
+							 """)
+	result = execute_query(select_query, (document_id,))
+	feedback_summary = {}
+	if result is None:
+		return feedback_summary
+	for attribute, positive, count in result:
+		if attribute not in feedback_summary:
+			feedback_summary[attribute] = {"positive": 0, "negative": 0}
+		if positive:
+			feedback_summary[attribute]["positive"] += count
+		else:
+			feedback_summary[attribute]["negative"] += count
+	return feedback_summary

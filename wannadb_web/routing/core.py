@@ -32,8 +32,8 @@ import logging.config
 import pickle
 from typing import Optional
 
-from wannadb_web.postgres.queries import get_document_base_data
-from wannadb_web.postgres.transactions import addDocumentBase
+from wannadb_web.postgres.queries import get_document_base_data, get_feedbacks_for_document, get_document_by_name
+from wannadb_web.postgres.transactions import add_feedback, add_document_base
 
 from flask import Blueprint, make_response, request
 from celery.result import AsyncResult
@@ -96,7 +96,7 @@ def create_document_base():
 	task = CreateDocumentBase().apply_async(args=(user_id, document_ids, attributes, statisticsDump,
 												  base_name, organisation_id))
 
-	doc_base_id = addDocumentBase(base_name, attributes, organisation_id, document_ids)
+	doc_base_id = add_document_base(base_name, attributes, organisation_id, document_ids)
 	if doc_base_id < 0:
 		return make_response({"error": "Duplicated Entry!" if doc_base_id == -409 else "An error occured!"}, -doc_base_id)
 
@@ -744,3 +744,100 @@ def stop_feedback():
 
 	return make_response({'task_id': task.id}, 202)
 
+@core_routes.route('/document_base/feedback/public', methods=['POST'])
+def add_public_feedback():
+	"""
+	Endpoint to add public feedback for a document.
+
+	header: {
+		"Authorization": "your_authorization_token"
+	}
+	Example Form Payload:
+	{
+		"organisationId": "your_organisation_id",
+		"baseName": "your_document_base_name",
+		"documentName": "your_document_name",
+		"documentContent": "your_document_content",
+		"nuggetText": "nugget_as_text",
+		"startIndex": "start_index_of_nugget",
+		"endIndex": "end_index_of_nugget",
+		"isPositive": true
+	}
+	"""
+	form = request.get_json()
+
+	authorization = request.headers.get("Authorization")
+	organisation_id: Optional[int] = form.get("organisationId")
+	attribute = form.get("attribute")
+
+	document_name = form.get("documentName")
+	start_index: Optional[int]  = int(form.get("startIndex")) if form.get("startIndex") is not None else None
+	end_index: Optional[int]  = int(form.get("endIndex")) if form.get("endIndex") is not None else None
+	is_positive: bool = form.get("isPositive")
+
+	if (organisation_id is None
+	 	or attribute is None
+	  	or document_name is None
+		or authorization is None
+		or is_positive is None):
+
+		return make_response({"error": "missing parameters"}, 400)
+
+	_token = tokenDecode(authorization)
+
+	if _token is False:
+		return make_response({"error": "invalid token"}, 401)
+
+	user_id = _token.id
+
+	doc_id, _ = get_document_by_name(document_name, organisation_id, user_id=user_id)
+	feedback_id = add_feedback(
+    	document_id=int(doc_id),
+     	user_id=user_id,
+      	positive=is_positive,
+       	attribute=attribute,
+        feedback_start=start_index,
+        feedback_end=end_index
+	)
+ 
+	if feedback_id < 0:
+		return make_response({"error": "An error occured!"}, -feedback_id)
+
+	return make_response({'feedback_id': feedback_id}, 200)
+
+@core_routes.route('/document_base/feedback/public', methods=['GET'])
+def get_public_feedback():
+	"""
+	Endpoint to get public feedback for a document.
+
+	header: {
+		"Authorization": "your_authorization_token"
+	}
+	Example Query Parameters:
+	{
+		"organisationId": "your_organisation_id",
+		"baseName": "your_document_base_name",
+		"documentName": "your_document_name"
+	}
+	"""
+	authorization = request.headers.get("Authorization")
+	organisation_id: Optional[int] = request.args.get("organisationId")
+	document_name = request.args.get("documentName")
+
+	if (organisation_id is None
+	  	or document_name is None
+		or authorization is None):
+
+		return make_response({"error": "missing parameters"}, 400)
+
+	_token = tokenDecode(authorization)
+
+	if _token is False:
+		return make_response({"error": "invalid token"}, 401)
+
+	user_id = _token.id
+
+	doc_id, _ = get_document_by_name(document_name, organisation_id, user_id=user_id)
+	feedback = get_feedbacks_for_document(int(doc_id))
+
+	return make_response({'feedback': feedback}, 200)

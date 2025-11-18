@@ -1,11 +1,11 @@
 from flask import Blueprint, request, make_response
 from flask_cors import cross_origin
 
-from wannadb_web.postgres.queries import deleteDocumentContent, get_base_id, getDocument, getDocumentBasesForOrganization, getDocumentsForOrganization, \
-	updateDocumentContent
+from wannadb_web.postgres.queries import delete_document_content, get_base_id, get_document, get_document_bases_for_organisation, get_documents_for_organisation, \
+	update_document_content
 
 from wannadb_web.util import tokenDecode
-from wannadb_web.postgres.transactions import addDocument
+from wannadb_web.postgres.transactions import add_document
 
 main_routes = Blueprint('main_routes', __name__, url_prefix='/data')
 
@@ -41,7 +41,7 @@ def upload_files():
 		if 'text/plain' in content_type:
 			filename = file.filename
 			content = str(file.stream.read().decode('utf-8'))
-			document_id = addDocument(filename, content, organisation_id, token.id, base_id)
+			document_id = add_document(filename, content, organisation_id, token.id, base_id)
 			document_ids.append(document_id)
 		else:
 			document_ids.append(f"wrong type {content_type}")
@@ -63,7 +63,7 @@ def get_files_for_organization(_id):
 		return make_response({'error': 'no authorization'}, 401)
 
 
-	documents = getDocumentsForOrganization(org_id)
+	documents = get_documents_for_organisation(org_id)
 
 	return make_response(documents, 200)
 
@@ -77,7 +77,7 @@ def get_documentbase_for_organization(_id):
 		return make_response({'error': 'no authorization'}, 401)
 
 
-	document_base = getDocumentBasesForOrganization(org_id)
+	document_base = get_document_bases_for_organisation(org_id)
 
 	return make_response(document_base, 200)
 
@@ -94,7 +94,7 @@ def update_file_content():
 	docId = data.get('documentId')
 	newContent = data.get('newContent')
 
-	status = updateDocumentContent(docId, newContent)
+	status = update_document_content(docId, newContent)
 
 	return make_response({"status": status}, 200)
 
@@ -110,7 +110,7 @@ def delete_file():
 	data = request.get_json()
 	docId = data.get('documentId')
  
-	status = deleteDocumentContent(docId)
+	status = delete_document_content(docId)
 
 	return make_response({"status": status}, 200)
 
@@ -127,7 +127,7 @@ def get_file(_id):
 
 	document_ids: list = []
 
-	document = getDocument(document_id, token.id)
+	document = get_document(document_id, token.id)
 
 	if document is None:
 		return make_response(document_ids, 404)
