@@ -1,6 +1,6 @@
 import logging
 from typing import Union
-from warnings import deprecated
+from deprecated import deprecated
 
 import bcrypt
 from psycopg2 import sql, IntegrityError
