@@ -35,7 +35,7 @@ This project requires Python 3.10 or newer.
 
 ##### 1. Create a virtual environment
 
-```bash
+```shell
 python -m venv venv
 source venv/bin/activate
 export PYTHONPATH="."
@@ -43,7 +43,7 @@ export PYTHONPATH="."
 
 ##### 2. Install the dependencies
 
-```bash
+```shell
 pip install --upgrade pip
 pip install --use-pep517 -r requirements.txt
 pip install --use-pep517 pytest
@@ -55,7 +55,7 @@ You may have to install `torch` by hand if you want to use CUDA:
 
 ##### 3. Run the tests
 
-```bash
+```shell
 pytest
 ```
 
@@ -198,7 +198,7 @@ The diagram below illustrates the backend application’s Entity-Relationship Di
 
 <picture>
   <source srcset="doc/WannaDB-Web_DB_ERD_dark.drawio.svg" media="(prefers-color-scheme: dark)">
-  <source srcset="ddoc/WannaDB-Web_DB_ERD_light.drawio.svg" media="(prefers-color-scheme: light)">
+  <source srcset="doc/WannaDB-Web_DB_ERD_light.drawio.svg" media="(prefers-color-scheme: light)">
   <img src="doc/WannaDB-Web_DB_ERD_light.drawio.svg" alt="diagram">
 </picture>
 
