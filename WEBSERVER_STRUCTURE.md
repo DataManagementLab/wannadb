@@ -2,7 +2,7 @@
 
 ## File Structure
 
-```tree
+```text
 .
 ├── entrypoint.sh
 ├── util.py
@@ -38,7 +38,7 @@
 
 ### Web Root Directory
 
-```tree
+```text
 ├── entrypoint.sh
 ├── util.py
 ├── __init__.py
@@ -58,7 +58,7 @@ If a production environment configuration is needed, a `.prod` file should be ad
 
 ### Postgres
 
-```tree
+```text
 Postgres
 ├── queries.py
 ├── transactions.py
@@ -71,7 +71,7 @@ This section provides an abstraction layer for the database connection and queri
 
 ### Redis
 
-```tree
+```text
 Redis
 ├── RedisCache.py
 ├── util.py
@@ -83,7 +83,7 @@ This section provides an abstraction layer for the Redis cache, allowing for eff
 
 ### Routing
 
-```tree
+```text
 routing
 ├── core.py
 ├── dev.py
@@ -101,7 +101,7 @@ Directory related to routing functionality for the Flask web server.
 
 ### SQLite
 
-```tree
+```text
 SQLite
 │   ├── Cache_DB.py
 │   ├── util.py
@@ -114,7 +114,7 @@ This section provides an abstraction layer for the database connection and queri
 
 ### Worker
 
-```tree
+```text
 worker
     ├── data.py
     ├── tasks.py
