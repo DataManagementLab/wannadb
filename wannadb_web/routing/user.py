@@ -131,7 +131,7 @@ def get_organisations():
 
 
 @user_management.route('/getOrganisationName/<_id>', methods=['GET'])
-def get_organisation_name(_id):
+def get_organisation_name_route(_id):
 	authorization = request.headers.get("Authorization")
 	token = tokenDecode(authorization)
 	if token is None:
