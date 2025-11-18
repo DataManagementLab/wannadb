@@ -10,7 +10,7 @@ from wannadb.data.data import Document, Attribute, InformationNugget
 from wannadb.resources import ResourceManager
 from wannadb.statistics import Statistics
 from wannadb_web.Redis.RedisCache import RedisCache
-from wannadb_web.postgres.queries import getDocuments
+from wannadb_web.postgres.queries import get_documents
 from wannadb_web.worker.Web_API import WannaDB_WebAPI
 from wannadb_web.worker.data import DoAttributeRanking, MultiNuggetsMatchFeedback, ReloadDocumentBase, Signals, NoMatchFeedback, NuggetMatchFeedback, CustomMatchFeedback, SkipAttributeRanking, StopMatching
 from wannadb_web.worker.util import State
@@ -122,7 +122,7 @@ class CreateDocumentBase(BaseTask):
 			self.update(State.ERROR)
 			raise Exception("Invalid statistics")
 
-		docs = getDocuments(document_ids, user_id)
+		docs = get_documents(document_ids, user_id)
 		if docs[0] is tuple[None,None]:
 			raise Exception(f"user with user id:{user_id} has no document with the document_ids: {document_ids}")
 

@@ -1,10 +1,11 @@
 import logging
 from typing import Union
+from warnings import deprecated
 
 import bcrypt
 from psycopg2 import sql, IntegrityError
 from wannadb_web.util import Token, Authorisation, tokenDecode
-from wannadb_web.postgres.queries import checkPassword
+from wannadb_web.postgres.queries import check_password
 from wannadb_web.postgres.util import execute_transaction
 
 logger: logging.Logger = logging.getLogger(__name__)
@@ -12,27 +13,39 @@ logger: logging.Logger = logging.getLogger(__name__)
 
 # WARNING: This is only for development purposes!
 
-def createSchema(schema):
+def create_schema(schema):
 	"""
-	Returns: None
+	Creates a new schema in the database if it does not already exist.
+	
+	:param schema: The name of the schema to create.
+	:type schema: str
+	:return: None
 	"""
 	create_schema_query = sql.SQL(f"CREATE SCHEMA IF NOT EXISTS {schema};")
 	execute_transaction(create_schema_query, commit=True, fetch=False)
 	logger.info(f"Schema {schema} created successfully.")
 
 
-def dropSchema(schema):
+def drop_schema(schema):
 	"""
-		Returns: None
+	Drops a schema in the database if it exists.
+	
+	:param schema: The name of the schema to drop.
+	:type schema: str
+	:return: None
 	"""
 	drop_schema_query = sql.SQL(f"DROP SCHEMA IF EXISTS {schema} CASCADE;")
 	execute_transaction(drop_schema_query, commit=True, fetch=False)
 	logger.info(f"Schema {schema} dropped successfully.")
 
 
-def dropTables(schema):
+def drop_tables(schema):
 	"""
-		Returns: None
+	Drops all tables in the specified schema.
+ 
+	:param schema: The name of the schema containing the tables to drop.
+	:type schema: str
+	:return: None
 	"""
 	drop_table_query = sql.SQL(
 		f"DROP TABLE IF EXISTS {schema}.users CASCADE;\n"
@@ -44,7 +57,14 @@ def dropTables(schema):
 	execute_transaction(drop_table_query, commit=True)
 
 
-def createUserTable(schema):
+def create_user_table(schema):
+	"""
+	Creates the users table in the specified schema.
+ 
+	:param schema: The name of the schema where the users table will be created.
+	:type schema: str
+	:return: None
+	"""
 	create_table_query = sql.SQL(f"""CREATE TABLE IF NOT EXISTS {schema}.users
 	(
     id bigint NOT NULL GENERATED ALWAYS AS IDENTITY ( INCREMENT 1 START 1 MINVALUE 1 MAXVALUE 9223372036854775807 CACHE 1 ),
@@ -59,7 +79,14 @@ def createUserTable(schema):
 	execute_transaction(create_table_query, commit=True, fetch=False)
 
 
-def createDocumentsTable(schema):
+def create_documents_table(schema):
+	"""
+	Creates the documents table in the specified schema.
+ 
+	:param schema: The name of the schema where the documents table will be created.
+	:type schema: str
+	:return: None
+	"""
 	create_table_query = sql.SQL(f"""CREATE TABLE IF NOT EXISTS  {schema}.documents
 	(
 		id bigint NOT NULL GENERATED ALWAYS AS IDENTITY ( INCREMENT 1 START 1 MINVALUE 1 MAXVALUE 9223372036854775807 CACHE 1 ),
@@ -107,8 +134,48 @@ def createDocumentsTable(schema):
 	execute_transaction(add_docBase_column_query, commit=True, fetch=False)
 
 
+def create_document_feedback_table(schema):
+	"""
+	Creates the document_feedback table in the specified schema.
+ 
+	:param schema: The name of the schema where the document_feedback table will be created.
+	:type schema: str
+	:return: None
+	"""
+	create_table_query = sql.SQL(f"""CREATE TABLE IF NOT EXISTS {schema}.document_feedback
+	(
+	id bigint NOT NULL GENERATED ALWAYS AS IDENTITY ( INCREMENT 1 START 1 MINVALUE 1 MAXVALUE 9223372036854775807 CACHE 1 ),
+	documentid bigint NOT NULL,
+	userid bigint NOT NULL,
+	positive boolean NOT NULL,
+	attribute text NOT NULL,
+	feedback_start int NULL,
+	feedback_end int NULL,
+	CONSTRAINT documentfeedbackid PRIMARY KEY (id),
+	CONSTRAINT documentfeedback_documentid_fkey FOREIGN KEY (documentid)
+		REFERENCES {schema}.documents (id) MATCH SIMPLE
+		ON UPDATE CASCADE 
+		ON DELETE CASCADE 
+		NOT VALID,
+	CONSTRAINT documentfeedback_userid_fkey FOREIGN KEY (userid)
+		REFERENCES {schema}.users (id) MATCH SIMPLE
+		ON UPDATE CASCADE 
+		ON DELETE CASCADE 
+		NOT VALID
+);
+TABLESPACE pg_default;
+""")
+	execute_transaction(create_table_query, commit=True, fetch=False)
 
-def createMembershipTable(schema):
+
+def create_membership_table(schema):
+	"""
+	Creates the membership table in the specified schema.
+ 
+	:param schema: The name of the schema where the membership table will be created.
+	:type schema: str
+	:return: None
+	"""
 	create_table_query = sql.SQL(f"""CREATE TABLE IF NOT EXISTS {schema}.membership
 (
     userid bigint NOT NULL,
@@ -142,7 +209,14 @@ CREATE INDEX IF NOT EXISTS fki_organisationid
 	execute_transaction(create_table_query, commit=True, fetch=False)
 
 
-def createDocumentBaseTable(schema):
+def create_document_base_table(schema):
+	"""
+	Creates the document_bases table in the specified schema.
+ 
+	:param schema: The name of the schema where the document_bases table will be created.
+	:type schema: str
+	:return: None
+	"""
 	create_table_query = sql.SQL(f"""CREATE TABLE IF NOT EXISTS {schema}.document_bases
 		(
 			id bigint NOT NULL GENERATED ALWAYS AS IDENTITY ( INCREMENT 1 START 1 MINVALUE 1 MAXVALUE 9223372036854775807 CACHE 1 ),
@@ -163,7 +237,14 @@ def createDocumentBaseTable(schema):
 	execute_transaction(create_table_query, commit=True, fetch=False)
 
 
-def createOrganisationTable(schema):
+def create_organisation_table(schema):
+	"""
+	Creates the organisations table in the specified schema.
+ 
+	:param schema: The name of the schema where the organisations table will be created.
+	:type schema: str
+	:return: None
+	"""
 	create_table_query = sql.SQL(f"""CREATE TABLE IF NOT EXISTS {schema}.organisations
 (
     id bigint NOT NULL GENERATED ALWAYS AS IDENTITY ( INCREMENT 1 START 1 MINVALUE 1 MAXVALUE 9223372036854775807 CACHE 1 ),
@@ -178,13 +259,16 @@ TABLESPACE pg_default;
 	execute_transaction(create_table_query, commit=True, fetch=False)
 
 
-def addUser(user: str, password: str):
+def add_user(user: str, password: str):
 	"""
-
-	Returns: int (user id)
-
-	Raises: Exception
-
+	Adds a new user to the database.
+ 
+	:param user: the username of the new user
+	:type user: str
+	:param password: the password of the new user
+	:type password: str
+	:return: int (user id)
+	:raises: Exception if the user could not be added
 	"""
 
 	pwBytes = password.encode('utf-8')
@@ -203,12 +287,24 @@ def addUser(user: str, password: str):
 	raise Exception("addUser failed because: \n", response)
 
 
-def changePassword(user: str, old_password: str, new_password: str):
+def change_password(user: str, old_password: str, new_password: str):
+	"""
+	Changes the password of an existing user.
+ 
+	:param user: the username of the user
+	:type user: str
+	:param old_password: the current password of the user
+	:type old_password: str
+	:param new_password: the new password of the user
+	:type new_password: str
+	:return: bool
+	:raises: Exception if the password could not be changed
+	"""
 	try:
 		if old_password == new_password:
 			return False
 
-		pwcheck = checkPassword(user, old_password)
+		pwcheck = check_password(user, old_password)
 		if isinstance(pwcheck, Exception):
 			raise pwcheck
 		if isinstance(pwcheck, bool):
@@ -227,8 +323,18 @@ def changePassword(user: str, old_password: str, new_password: str):
 		logger.error(f"changePassword failed because: \n{e}")
 
 
-def deleteUser(user: str, password: str):
-	pwcheck = checkPassword(user, password)
+def delete_user(user: str, password: str):
+	"""
+	Deletes an existing user from the database.
+ 
+	:param user: the username of the user
+	:type user: str
+	:param password: the password of the user
+	:type password: str
+	:return: bool
+	:raises: Exception if the user could not be deleted
+	"""
+	pwcheck = check_password(user, password)
 	if isinstance(pwcheck, Exception):
 		raise pwcheck
 	if isinstance(pwcheck, bool):
@@ -241,7 +347,17 @@ def deleteUser(user: str, password: str):
 			return response
 
 
-def addOrganisation(organisationName: str, sessionToken: str):
+def add_organisation(organisationName: str, sessionToken: str):
+	"""
+	Adds a new organisation to the database.
+ 
+	:param organisationName: Name of the organisation
+	:type organisationName: str
+	:param sessionToken: Session token of the user adding the organisation
+	:type sessionToken: str
+	:return: organisation id or error message
+	:rtype: Union[int, str]
+	"""
 	try:
 		token: Token = tokenDecode(sessionToken)
 		if token is None:
@@ -261,7 +377,17 @@ def addOrganisation(organisationName: str, sessionToken: str):
 		return None, f"addOrganisation failed because: \n{e}"
 
 
-def leaveOrganisation(organisationId: int, sessionToken: str):
+def leave_organisation(organisationId: int, sessionToken: str):
+	"""
+	Allows a user to leave an organisation. If the user is the last member, the organisation is deleted.
+ 
+	:param organisationId: ID of the organisation to leave
+	:type organisationId: int
+	:param sessionToken: Session token of the user leaving the organisation
+	:type sessionToken: str
+	:return: Tuple indicating success status and an optional error message
+	:rtype: Tuple[bool, Union[None, str]]
+	"""
 	try:
 		token: Token = tokenDecode(sessionToken)
 		userid = token.id
@@ -290,7 +416,20 @@ def leaveOrganisation(organisationId: int, sessionToken: str):
 		return False, e
 
 
-def addUserToOrganisation(organisationName: str, sessionToken: str, newUser: str):
+@deprecated
+def add_user_to_organisation(organisationName: str, sessionToken: str, newUser: str):
+	"""
+	Add a user to an organisation.
+ 
+	:param organisationName: Name of the organisation
+	:type organisationName: str
+	:param sessionToken: Session token of the admin user making the change
+	:type sessionToken: str
+	:param newUser: Username of the user to be added
+	:type newUser: str
+	:return: organisation id or error message
+	:rtype: Union[int, str]
+	"""
 	try:
 		token: Token = tokenDecode(sessionToken)
 		userid = token.id
@@ -327,7 +466,18 @@ INSERT INTO membership (userid, organisationid)
 		logger.error(f"addUserToOrganisation failed because: \n{e}")
 
 
-def addUserToOrganisation2(organisationId: int, newUser: str):
+def add_user_to_organisation_new(organisationId: int, newUser: str):
+	"""
+	Add a user to an organisation.
+	Reworked version without session token.
+ 
+	:param organisationId: ID of the organisation
+	:type organisationId: int
+	:param newUser: Username of the user to be added
+	:type newUser: str
+	:return: organisation id or error message
+	:rtype: Union[int, str]
+	"""
 	try:
 		select_id_query = sql.SQL("SELECT id FROM users WHERE username = (%s)")
 		userid = execute_transaction(select_id_query, (newUser,), commit=True)
@@ -347,7 +497,18 @@ def addUserToOrganisation2(organisationId: int, newUser: str):
 		return None, 'Unknown error'
 
 
-def removeUserFromOrganisation(organisationName: str, sessionToken: str, userToRemove: str):
+def remove_user_from_organisation(organisationName: str, sessionToken: str, userToRemove: str):
+	"""
+	Remove a user from an organisation.
+ 
+	:param organisationName: Name of the organisation
+	:type organisationName: str
+	:param sessionToken: Session token of the admin user making the change
+	:type sessionToken: str
+	:param userToRemove: Username of the user to be removed
+	:type userToRemove: str
+	:return: None
+	"""
 	try:
 		token: Token = tokenDecode(sessionToken)
 		userid = token.id
@@ -373,7 +534,20 @@ def removeUserFromOrganisation(organisationName: str, sessionToken: str, userToR
 		logger.error(f"removeUserFromOrganisation failed because: \n{e}")
 
 
-def adjUserAuthorisation(organisationName: str, sessionToken: str, userToAdjust: str, newAuthorisation: int):
+def adjust_user_authorization(organisationName: str, sessionToken: str, userToAdjust: str, newAuthorisation: int):
+	"""
+	Adjust the authorization level of a user within an organisation.
+ 
+	:param organisationName: Name of the organisation
+	:type organisationName: str
+	:param sessionToken: Session token of the admin user making the change
+	:type sessionToken: str
+	:param userToAdjust: Username of the user whose authorization is to be adjusted
+	:type userToAdjust: str
+	:param newAuthorisation: New authorization level to be set
+	:type newAuthorisation: int
+	:return: None
+	"""
 	try:
 		token: Token = tokenDecode(sessionToken)
 		author_userid = token.id
@@ -402,7 +576,23 @@ def adjUserAuthorisation(organisationName: str, sessionToken: str, userToAdjust:
 		logger.error(f"adjUserAuthorisation failed because: \n{e}")
 
 
-def addDocument(name: str, content: Union[str, bytes], organisationId: int, userid: int, base_id: int=None):
+def add_document(name: str, content: Union[str, bytes], organisationId: int, userid: int, base_id: int=None):
+	"""
+	Add a new document to the database.
+ 
+	:param name: Name of the document
+	:type name: str
+	:param content: Content of the document (either as a string or bytes)
+	:type content: Union[str, bytes]
+	:param organisationId: ID of the organisation the document belongs to
+	:type organisationId: int
+	:param userid: ID of the user adding the document
+	:type userid: int
+	:param base_id: Optional ID of the document base to associate with the document
+	:type base_id: int
+	:return: ID of the newly created document or None if an error occurred
+	:rtype: Union[int, None]
+	"""
 	try:
 		if isinstance(content, str):
 			if base_id is None:
@@ -437,7 +627,21 @@ def addDocument(name: str, content: Union[str, bytes], organisationId: int, user
 		return None
 
 
-def addDocumentBase(name: str, attributes: list[str], orgId: int, documents: list[int]):
+def add_document_base(name: str, attributes: list[str], orgId: int, documents: list[int]):
+	"""
+	Add a new document base and associate documents with it.
+ 
+	:param name: Name of the document base
+	:type name: str
+	:param attributes: List of attributes for the document base
+	:type attributes: list[str]
+	:param orgId: ID of the organisation the document base belongs to
+	:type orgId: int
+	:param documents: List of document IDs to associate with the document base
+	:type documents: list[int]
+	:return: ID of the newly created document base or error code (-409 for IntegrityError, -500 for other exceptions)
+	:rtype: int
+	"""
 	try:
 		insert_data_query = sql.SQL(
 			"INSERT INTO document_bases (name, attributes, organisation_id) "
@@ -461,4 +665,41 @@ def addDocumentBase(name: str, attributes: list[str], orgId: int, documents: lis
 		return -409
 	except Exception as e:
 		logger.log(str(e))
+		return -500
+
+
+def add_feedback(document_id: int, user_id: int, positive: bool, attribute: str, feedback_start: int = None, feedback_end: int = None):
+	"""
+	Add a public feedback for a certain attribute to a document.
+ 
+	:param document_id: ID of the document to which the feedback belongs
+	:type document_id: int
+	:param user_id: ID of the user providing the feedback
+	:type user_id: int
+	:param positive: Boolean indicating if the feedback is positive or negative
+	:param positive: bool
+	:param attribute: The attribute the feedback is about
+	:type attribute: str
+	:param feedback_start: Optional start index of the feedback in the document
+	:type feedback_start: int
+	:param feedback_end: Optional end index of the feedback in the document
+	:type feedback_end: int
+	:return: ID of the newly created feedback entry or error code (-409 for IntegrityError, -500 for other exceptions)
+	:rtype: int
+	"""
+	try:
+		insert_data_query = sql.SQL(
+			"INSERT INTO document_feedback (documentid, userid, positive, attribute, feedback_start, feedback_end) "
+			"VALUES (%s, %s, %s, %s, %s, %s) returning id;"
+		)
+		data = (document_id, user_id, positive, attribute, feedback_start, feedback_end)
+		response = execute_transaction(insert_data_query, data, commit=True)
+		feedback_id = int(response[0][0])
+		return feedback_id
+
+	except IntegrityError as i:
+		logger.error(str(i))
+		return -409
+	except Exception as e:
+		logger.error(str(e))
 		return -500

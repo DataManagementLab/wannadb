@@ -23,9 +23,9 @@ from wannadb.preprocessing.other_processing import ContextSentenceCacher
 from wannadb.statistics import Statistics
 from wannadb.status import StatusCallback
 from wannadb_web.SQLite.Cache_DB import SQLiteCacheDBWrapper
-from wannadb_web.postgres.queries import getDocument_by_name, getDocumentByNameAndContent, updateDocumentContent, \
-	getDocument
-from wannadb_web.postgres.transactions import addDocument
+from wannadb_web.postgres.queries import get_document_by_name, get_document_by_name_and_content, update_document_content, \
+	get_document
+from wannadb_web.postgres.transactions import add_document
 from wannadb_web.worker.data import DoAttributeRanking, ReloadDocumentBase, Signals, CustomMatchFeedback, NuggetMatchFeedback, NoMatchFeedback, SkipAttributeRanking, StopMatching
 
 logger = logging.getLogger(__name__)
@@ -133,7 +133,7 @@ class WannaDB_WebAPI:
 
 	def get_ordert_nuggets(self, document_id: int):
 		logger.warning("get_ordert_nuggets is deprecated, use get_ordered_nuggets_by_doc_name instead!")
-		document = getDocument(document_id, self.user_id)
+		document = get_document(document_id, self.user_id)
 		if document is None:
 			logger.error(f"Document with id {document_id} not found!")
 			self.signals.error.emit(Exception(f"Document with id {document_id} not found!"))
@@ -150,7 +150,7 @@ class WannaDB_WebAPI:
 
 	def get_ordered_nuggets_by_doc_name(self, document_name: str, document_content: str):
 		logger.warning("It is recommended to not use get_ordered_nuggets_by_doc_name!")
-		document = getDocumentByNameAndContent(document_name, document_content, self.user_id)
+		document = get_document_by_name_and_content(document_name, document_content, self.user_id)
 		if document is None:
 			logger.error(f"Document {document_name} not found!")
 			self.signals.error.emit(Exception(f"Document {document_name} not found!"))
@@ -221,7 +221,7 @@ class WannaDB_WebAPI:
 			self.sqLiteCacheDBWrapper.reset_cache_db()
 			self.signals.reset()
 
-			document_id, document = getDocument_by_name(self.document_base_name, self.organisation_id, self.user_id)
+			document_id, document = get_document_by_name(self.document_base_name, self.organisation_id, self.user_id)
 			if not isinstance(document, bytes):
 				logger.error("document is not a DocumentBase!")
 				self.signals.error.emit(Exception("document is not a DocumentBase!"))
@@ -251,7 +251,7 @@ class WannaDB_WebAPI:
 		logger.debug("Called function 'save_document_base_to_bson'.")
 
 		try:
-			document_id = addDocument(self.document_base_name, self.document_base.to_bson(), self.organisation_id,
+			document_id = add_document(self.document_base_name, self.document_base.to_bson(), self.organisation_id,
 									  self.user_id)
 
 			if document_id is None:
@@ -287,7 +287,7 @@ class WannaDB_WebAPI:
 			logger.info("ATT")
 			logger.info(self.document_base.attributes)
 
-			status = updateDocumentContent(self.document_id, self.document_base.to_bson())
+			status = update_document_content(self.document_id, self.document_base.to_bson())
 			if not status:
 				logger.error(f"Document base could not be saved to BSON! Document {self.document_id} does not exist!")
 			else:
