@@ -8,3 +8,11 @@
 .json
 .pdf
 .bson
+
+.DS_Store
+
+**/datasets/
+**/executables/
+
+**/event_logs/
+**/logs/
