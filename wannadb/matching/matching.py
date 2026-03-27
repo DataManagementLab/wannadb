@@ -1,5 +1,7 @@
 import abc
 import logging
+import json
+import os
 import random
 import time
 from typing import Any, Dict, List, Callable, Tuple, Counter
@@ -15,6 +17,7 @@ from wannadb.matching.custom_match_extraction import BaseCustomMatchExtractor
 from wannadb.matching.distance import BaseDistance
 from wannadb.statistics import Statistics
 from wannadb.status import BaseStatusCallback
+from wannadb.event_logger import BaseEventLogger, EmptyEventLogger
 
 logger: logging.Logger = logging.getLogger(__name__)
 
@@ -67,6 +70,7 @@ class RankingBasedMatcher(BaseMatcher):
             num_bad_docs: int = 5,
             num_recent_docs: int = 5,
             store_best_guesses: bool = False,
+            event_logger: BaseEventLogger = EmptyEventLogger()
     ) -> None:
         """
         Initialize the RankingBasedMatcher.
@@ -98,6 +102,7 @@ class RankingBasedMatcher(BaseMatcher):
         self.num_bad_docs = num_bad_docs
         self.num_recent_docs = num_recent_docs
         self.store_best_guesses = store_best_guesses
+        self._event_logger = event_logger
 
         # add signals required by the distance function to the signals required by the matcher
         self._add_required_signal_identifiers(self._distance.required_signal_identifiers)
@@ -283,6 +288,15 @@ class RankingBasedMatcher(BaseMatcher):
                 elif feedback_result["message"] == "no-match-in-document":
                     statistics[attribute.name]["num_no_match_in_document"] += 1
                     d = feedback_result["nugget"].document
+                    self._event_logger(
+                        action="no-match-in-document",
+                        document_base=document_base,
+                        attribute=attribute,
+                        document=d,
+                        nugget=feedback_result["nugget"],
+                        max_distance=self._max_distance,
+                        not_a_match=feedback_result["not-a-match"]
+                    )
                     if d in remaining_documents:
                         remaining_documents.remove(d)
                     else:
@@ -356,6 +370,16 @@ class RankingBasedMatcher(BaseMatcher):
                     feedback_result["document"].nuggets.append(confirmed_nugget)
                     feedback_result["document"].attribute_mappings[attribute.name] = [confirmed_nugget]
                     remaining_documents.remove(feedback_result["document"])
+                    
+                    self._event_logger(
+                        action="custom-match",
+                        document_base=document_base,
+                        attribute=attribute,
+                        document=feedback_result["document"],
+                        nugget=confirmed_nugget,
+                        max_distance=self._max_distance,
+                        not_a_match=feedback_result["not-a-match"]
+                    )
 
                     # update the distances for the other documents
                     for document in remaining_documents:
@@ -427,6 +451,15 @@ class RankingBasedMatcher(BaseMatcher):
                     statistics[attribute.name]["num_confirmed_match"] += 1
                     feedback_result["nugget"].document.attribute_mappings[attribute.name] = [feedback_result["nugget"]]
                     doc = feedback_result["nugget"].document
+                    self._event_logger(
+                        action="is-match",
+                        document_base=document_base,
+                        attribute=attribute,
+                        document=doc,
+                        nugget=feedback_result["nugget"],
+                        max_distance=self._max_distance,
+                        not_a_match=feedback_result["not-a-match"]
+                    )
                     try:
                         for d in remaining_documents:
                             if d.name == doc.name:
@@ -465,7 +498,7 @@ class RankingBasedMatcher(BaseMatcher):
                                     if nugget is feedback_result["nugget"]:
                                         nugget_ix = ix
                                         break
-                                assert nugget_ix != -1
+                                assert nugget_ix != -1, f"Feedback nugget {repr(feedback_result['nugget'])} not found in feedback nuggets: {[repr(n) for n in feedback_nuggets]}"
 
                                 if nugget_ix < len(feedback_nuggets) - 1:
                                     max_dist = 0

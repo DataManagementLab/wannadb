@@ -356,6 +356,9 @@ class DocumentBase:
             ", ".join(repr(attribute) for attribute in self._attributes)
         )
 
+    def __hash__(self) -> int:
+        return hash((tuple(d.name for d in self._documents), tuple(a.name for a in self._attributes)))
+    
     def __eq__(self, other) -> bool:
         return (
                 isinstance(other, DocumentBase)
@@ -558,12 +561,15 @@ class DocumentBase:
         logger.info(f"Validated document base consistency in {tack - tick} seconds.")
         return True
 
-    def to_bson(self) -> bytes:
+    def to_bson(self, save_attribute_mappings: bool = True) -> bytes:
         """
         Serialize the document base to a BSON byte string.
 
         https://pymongo.readthedocs.io/en/stable/api/bson/index.html
 
+        :param save_attribute_mappings: whether the attribute mappings should be saved in the BSON representation,
+                                        this is needed for the matching replay, where the attribute mappings are not
+                                        relevant and can be reconstructed from the history of match decisions. Default is True.
         :return: BSON byte representation of the document base
         """
         tick: float = time.time()
@@ -602,18 +608,19 @@ class DocumentBase:
                 "signals": {}
             }
 
-            # serialize the attribute mappings
-            for name, nuggets in document.attribute_mappings.items():
-                nugget_ids: List[int] = []
-                for nugget in nuggets:
-                    for idx, doc_nugget in enumerate(document.nuggets):
-                        if nugget is doc_nugget:
-                            nugget_ids.append(idx)
-                            break
-                    else:
-                        assert False, "The document does not contain the nugget that is assigned to the attribute."
+            if save_attribute_mappings:
+                # serialize the attribute mappings
+                for name, nuggets in document.attribute_mappings.items():
+                    nugget_ids: List[int] = []
+                    for nugget in nuggets:
+                        for idx, doc_nugget in enumerate(document.nuggets):
+                            if nugget is doc_nugget:
+                                nugget_ids.append(idx)
+                                break
+                        else:
+                            assert False, "The document does not contain the nugget that is assigned to the attribute."
 
-                serializable_document["attribute_mappings"][name] = nugget_ids
+                    serializable_document["attribute_mappings"][name] = nugget_ids
 
             # serialize the signals
             for signal_identifier, signal in document.signals.items():
@@ -714,3 +721,127 @@ class DocumentBase:
         logger.info(f"Deserialized document base in {tack - tick} seconds.")
 
         return document_base
+
+
+class MatchingEvent:
+    """
+    Event that occurs during the matching process.
+
+    A MatchingEvent encodes an event that occurs during the matching process. It contains all information about the event,
+    such as the document base, the attribute for which a match is searched, the document and nugget for which a match has
+    been found or not found, and the feedback result of the user interaction.
+    """
+
+    def __init__(
+            self,
+            action: str,
+            document_base: DocumentBase,
+            attribute: Attribute,
+            document: Document,
+            nugget: Optional[InformationNugget],
+            max_distance: float,
+            not_a_match: Optional[InformationNugget] = None,
+            revert_event_id: Optional[int] = None
+    ) -> None:
+        """
+        Initialize the MatchingEvent.
+        
+        :param action: action that was performed, e.g., "match-found", "no-match-in-document", "no-match-in-base"
+        :type action: str
+        :param document_base: the document base for which the event occurred
+        :type document_base: DocumentBase
+        :param attribute: the attribute for which the event occurred
+        :type attribute: Attribute
+        :param document: the document for which the event occurred
+        :type document: Document
+        :param nugget: the nugget for which the event occurred (can be None if no match was found)
+        :type nugget: Optional[InformationNugget]
+        :param max_distance: the maximum distance before the match is handled
+        :type max_distance: float
+        :param revert_event_id: the id of the event that is being reverted (if any)
+        :type revert_event_id: Optional[int]
+        """
+        self.action = action
+        self.document_base = document_base
+        self.attribute = attribute
+        self.document = document
+        self.nugget = nugget
+        self.not_a_match = not_a_match
+        self.max_distance = max_distance
+        self.revert_event_id = revert_event_id
+        
+    def to_dict(self) -> Dict[str, Any]:
+        """
+        Convert the MatchingEvent to a dictionary.
+
+        :return: dictionary representation of the MatchingEvent
+        """
+        return {
+            "action": self.action,
+            "attribute": self.attribute.name,
+            "document": self.document.name,
+            "nugget": {
+                "text": self.nugget.text,
+                "start_char": self.nugget.start_char,
+                "end_char": self.nugget.end_char
+            } if self.nugget is not None else None,
+            "not_a_match": {
+                "text": self.not_a_match.text,
+                "start_char": self.not_a_match.start_char,
+                "end_char": self.not_a_match.end_char
+            } if self.not_a_match is not None else None,
+            "max_distance": self.max_distance
+        }
+        
+    @staticmethod
+    def from_dict(data: Dict[str, Any], document_base: DocumentBase) -> "MatchingEvent":
+        """
+        Create a MatchingEvent from a dictionary.
+
+        :param data: dictionary representation of the MatchingEvent
+        :type data: Dict[str, Any]
+        :param document_base: the DocumentBase object to which the MatchingEvent belongs (needed to resolve the attribute, document, and nugget objects)
+        :type document_base: DocumentBase
+        :return: MatchingEvent created from the dictionary
+        :rtype: MatchingEvent
+        :raises ValueError: if the attribute, document, or nugget specified in the dictionary cannot be found in the document base
+        """
+        for _attribute in document_base.attributes:
+            if _attribute.name == data["attribute"]:
+                attribute = _attribute
+                break
+        else:
+            raise ValueError(f"Attribute '{data['attribute']}' not found in document base.")
+        for _document in document_base.documents:
+            if _document.name == data["document"]:
+                document = _document
+                break
+        else:
+            raise ValueError(f"Document '{data['document']}' not found in document base.")
+        if data["nugget"] is not None:
+            for _nugget in document.nuggets:
+                if _nugget.text == data["nugget"]["text"] and _nugget.start_char == data["nugget"]["start_char"] and _nugget.end_char == data["nugget"]["end_char"]:
+                    nugget = _nugget
+                    break
+            else:
+                raise ValueError(f"Nugget '{data['nugget']}' not found in document '{document.name}'.")
+        else:
+            nugget = None
+        if data["not_a_match"] is not None:
+            for _nugget in document.nuggets:
+                if _nugget.text == data["not_a_match"]["text"] and _nugget.start_char == data["not_a_match"]["start_char"] and _nugget.end_char == data["not_a_match"]["end_char"]:
+                    not_a_match = _nugget
+                    break
+            else:
+                raise ValueError(f"Not-a-match nugget '{data['not_a_match']}' not found in document '{document.name}'.")
+        else:
+            not_a_match = None
+        return MatchingEvent(
+            action=data["action"],
+            document_base=document_base,
+            attribute=attribute,
+            document=document,
+            nugget=nugget,
+            not_a_match=not_a_match,
+            max_distance=data["max_distance"]
+        )
