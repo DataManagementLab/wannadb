@@ -100,7 +100,7 @@ class RankingBasedMatchingReplayer(BaseReplayer):
         :param store_best_guesses: whether to store the best guesses for each feedback round
         """
         super(RankingBasedMatchingReplayer, self).__init__()
-        self.matcher = RankingBasedMatcher(
+        self.matcher = RankingBasedMatchingReplayer(
             distance=distance,
             max_num_feedback=max_num_feedback,
             len_ranked_list=len_ranked_list,
@@ -203,7 +203,8 @@ class RankingBasedMatchingReplayer(BaseReplayer):
         :type event: MatchingEvent
         """
         return {
-            "message": "is-match",
+            "message": "replay-next-event",
+            "action": "is-match",
             "nugget": event.nugget,
             "not-a-match": event.not_a_match
         }
@@ -220,7 +221,8 @@ class RankingBasedMatchingReplayer(BaseReplayer):
         """
         logger.warning("No-match-in-document event does not contain a 'not_a_match' nugget. Skipping replay of this event.")
         return {
-            "message": "no-match-in-document",
+            "message": "replay-next-event",
+            "action": "no-match-in-document",
             "nugget": event.nugget,
             "not-a-match": event.not_a_match
         }
@@ -242,13 +244,15 @@ class RankingBasedMatchingReplayer(BaseReplayer):
         """
         if not custom_nuggets_saved_in_history:
             return {
-                "message": "custom-match",
+                "message": "replay-next-event",
+                "action": "custom-match",
                 "document": event.document.name,
                 "start": event.nugget.start_char,
                 "end": event.nugget.end_char,
             }
         return {
-            "message": "is-match",
+            "message": "replay-next-event",
+            "action": "is-match",
             "nugget": event.nugget,
             "not-a-match": event.not_a_match
         }

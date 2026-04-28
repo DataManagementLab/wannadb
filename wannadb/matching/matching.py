@@ -260,10 +260,9 @@ class RankingBasedMatcher(BaseMatcher):
                     self._on_custom_match(
                         document_base=document_base,
                         attribute=attribute,
-                        document=feedback_result["nugget"].document,
+                        document=feedback_result["document"],
                         start=feedback_result["start"],
                         end=feedback_result["end"],
-                        no_match_nugget=feedback_result["not-a-match"],
                         remaining_documents=remaining_documents,
                         docs_with_added_nuggets=docs_with_added_nuggets,
                         statistics=statistics,
@@ -441,7 +440,6 @@ class RankingBasedMatcher(BaseMatcher):
         document: Document,
         start: int,
         end: int,
-        no_match_nugget: InformationNugget,
         remaining_documents: List[Document],
         docs_with_added_nuggets: Counter[Document],
         statistics: Statistics,
@@ -490,7 +488,7 @@ class RankingBasedMatcher(BaseMatcher):
             document=document,
             nugget=confirmed_nugget,
             max_distance=self._max_distance,
-            not_a_match=no_match_nugget
+            not_a_match=None
         )
 
         # update the distances for the other documents
@@ -758,5 +756,33 @@ class ReplayMatcher(RankingBasedMatcher):
                         replay=True
                     )
                 elif feedback_result["action"] == "is-match":
-                    feedback_result["nugget"].document.attribute_mappings[attribute.name] = [feedback_result["nugget"]]
+                    self._on_is_match(
+                        document_base=document_base,
+                        attribute=attribute,
+                        document=feedback_result["nugget"].document,
+                        nugget=feedback_result["nugget"],
+                        no_match_nugget=feedback_result["not-a-match"],
+                        statistics=statistics,
+                        distances_based_on_label=distances_based_on_label,
+                        remaining_documents=remaining_documents,
+                        docs_with_added_nuggets=docs_with_added_nuggets,
+                        feedback_nuggets=None,  # not available during replay
+                        feedback_nuggets_old_cached_distances=None,  # not available during replay
+                        replay=True
+                    )
+                elif feedback_result["action"] == "custom-match":
+                    self._on_custom_match(
+                        document_base=document_base,
+                        attribute=attribute,
+                        document=feedback_result["document"],
+                        start=feedback_result["start"],
+                        end=feedback_result["end"],
+                        remaining_documents=remaining_documents,
+                        docs_with_added_nuggets=docs_with_added_nuggets,
+                        statistics=statistics,
+                        interaction_callback=interaction_callback,
+                        status_callback=status_callback,
+                        distances_based_on_label=distances_based_on_label,
+                        replay=True
+                    )
                 
