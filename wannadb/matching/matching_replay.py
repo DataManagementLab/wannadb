@@ -7,7 +7,7 @@ from wannadb.event_logger import event_folder
 from wannadb.interaction import BaseInteractionCallback, InteractionCallback
 from wannadb.statistics import Statistics
 from wannadb.status import BaseStatusCallback
-from wannadb.matching.matching import RankingBasedMatcher
+from wannadb.matching.matching import RankingBasedMatcher, ReplayMatcher
 from wannadb.matching.distance import BaseDistance
 from wannadb.configuration import BasePipelineElement, Pipeline
 from wannadb.matching.custom_match_extraction import BaseCustomMatchExtractor
@@ -100,7 +100,7 @@ class RankingBasedMatchingReplayer(BaseReplayer):
         :param store_best_guesses: whether to store the best guesses for each feedback round
         """
         super(RankingBasedMatchingReplayer, self).__init__()
-        self.matcher = RankingBasedMatchingReplayer(
+        self.matcher = ReplayMatcher(
             distance=distance,
             max_num_feedback=max_num_feedback,
             len_ranked_list=len_ranked_list,
@@ -128,24 +128,12 @@ class RankingBasedMatchingReplayer(BaseReplayer):
             :param data: data associated with the interaction
             :return: response to the interaction based on the stored history
             """
-            if "do-attribute-request" in data.keys():
-                logger.debug(f"Received attribute request for attribute '{data['do-attribute-request']}' during interaction replay.")
-                return {
-                    "do-attribute": True,
-                }
-            if self.current_attribute != data.get("attribute", self.current_attribute):
-                self.current_attribute = data.get("attribute", self.current_attribute)
-                logger.warning(f"Current attribute in interaction replay changed to '{self.current_attribute}'. Resetting replay stack for the new attribute.")
-                self.stack = list(filter(lambda x: x[1].attribute == self.current_attribute, self.enumerated_history.copy()))
+            if not "replay-event-request" in data.keys():
+                return self._stop_matching()
             if len(self.stack) == 0:
                 logger.warning(f"No more interactions in history for attribute '{self.current_attribute}'.")
                 return self._stop_replay()
-            idx, next = self.stack.pop(0) if len(self.stack) > 0 else (None, None)
-            while (next is not None and
-                   not next.nugget in data.get("nuggets", []) and
-                   not next.not_a_match in data.get("nuggets", [])):
-                logger.warning(f"Next event in replay history (idx {idx}) does not match the nuggets in the current interaction data. This can happen if the same nugget was matched and not matched again in the history, which can lead to ambiguity in the replay process. Skipping this event.\nEvent data: {next.to_dict() if next else 'None'}\nCurrent interaction data: {data}")
-                idx, next = self.stack.pop(0) if len(self.stack) > 0 else (None, None)
+            _, next = self.stack.pop(0) if len(self.stack) > 0 else (None, None)
             if next is None:
                 logger.warning(f"No more interactions in history for attribute '{self.current_attribute}' that match the nuggets in the current interaction data. Stopping replay.\nCurrent interaction data: {data}")
                 return self._stop_replay()
@@ -184,6 +172,7 @@ class RankingBasedMatchingReplayer(BaseReplayer):
         # collect events to skip
         ids_to_skip = set(event.revert_event_id for idx, event in self.enumerated_history if event.action == "revert-event")
         self.enumerated_history = list(filter(lambda x: x[0] not in ids_to_skip, self.enumerated_history))
+        self.stack = self.enumerated_history.copy()
         
         self.matcher(
             document_base=document_base,
@@ -206,7 +195,8 @@ class RankingBasedMatchingReplayer(BaseReplayer):
             "message": "replay-next-event",
             "action": "is-match",
             "nugget": event.nugget,
-            "not-a-match": event.not_a_match
+            "not-a-match": event.not_a_match,
+            "attribute": event.attribute
         }
     
     def _replay_no_match_in_document(
@@ -219,12 +209,13 @@ class RankingBasedMatchingReplayer(BaseReplayer):
         :param event: the no-match-in-document event to replay
         :type event: MatchingEvent
         """
-        logger.warning("No-match-in-document event does not contain a 'not_a_match' nugget. Skipping replay of this event.")
         return {
             "message": "replay-next-event",
             "action": "no-match-in-document",
             "nugget": event.nugget,
-            "not-a-match": event.not_a_match
+            "not-a-match": event.not_a_match,
+            "attribute": event.attribute,
+            "document": event.document
         }
     
     def _replay_custom_match(
@@ -249,12 +240,14 @@ class RankingBasedMatchingReplayer(BaseReplayer):
                 "document": event.document.name,
                 "start": event.nugget.start_char,
                 "end": event.nugget.end_char,
+                "attribute": event.attribute
             }
         return {
             "message": "replay-next-event",
             "action": "is-match",
             "nugget": event.nugget,
-            "not-a-match": event.not_a_match
+            "not-a-match": event.not_a_match,
+            "attribute": event.attribute
         }
         
     def _replay_revert_event(
@@ -273,7 +266,7 @@ class RankingBasedMatchingReplayer(BaseReplayer):
         """
         Stop the replay process.
         """
-        return {"message": "stop-interactive-matching"}
+        return {"message": "stop-replay"}
     
     def _stop_matching(self) -> None:
         """
@@ -303,3 +296,28 @@ class RankingBasedMatchingReplayer(BaseReplayer):
             "num_recent_docs": self.matcher.num_recent_docs,
             "store_best_guesses": self.matcher.store_best_guesses
         }
+        
+    def revert_event(self, document_base: DocumentBase, event_id: int, corrected_decision: Dict[str, Any]) -> None:
+        """
+        Revert a matching event by its ID. The event will be skipped in the replay process, effectively reverting its effect on the matching decisions.
+
+        :param document_base: the document base associated with the event to revert
+        :type document_base: DocumentBase
+        :param event_id: the ID of the event to revert
+        :type event_id: int
+        :param corrected_decision: the corrected decision for the event
+        :type corrected_decision: Dict[str, Any]
+        """
+        with open(f"{event_folder}/{hash(document_base)}_history.jsonl", "a") as f:
+            revert_event = MatchingEvent(
+                action="revert-event",
+                attribute=corrected_decision.get("attribute"),
+                document=corrected_decision.get("document"),
+                nugget=corrected_decision.get("nugget"),
+                not_a_match=corrected_decision.get("not-a-match"),
+                max_distance=corrected_decision.get("max_distance", 0.0),
+                correct_action=corrected_decision.get("action"),
+                revert_event_id=event_id
+            )
+            f.write(json.dumps(revert_event.to_dict()) + "\n")
+            

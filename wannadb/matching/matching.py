@@ -4,7 +4,8 @@ import json
 import os
 import random
 import time
-from typing import Any, Dict, List, Callable, Tuple, Counter, override
+from typing import Any, Dict, List, Callable, Tuple, Counter
+from typing_extensions import override
 
 import numpy as np
 
@@ -254,7 +255,9 @@ class RankingBasedMatcher(BaseMatcher):
                         no_match_nugget=feedback_result["not-a-match"],
                         statistics=statistics,
                         remaining_documents=remaining_documents,
-                        docs_with_added_nuggets=docs_with_added_nuggets
+                        docs_with_added_nuggets=docs_with_added_nuggets,
+                        feedback_nuggets=feedback_nuggets,
+                        feedback_nuggets_old_cached_distances=feedback_nuggets_old_cached_distances
                     )
                 elif feedback_result["message"] == "custom-match":
                     self._on_custom_match(
@@ -685,22 +688,40 @@ class ReplayMatcher(RankingBasedMatcher):
     identifier: str = "replay_matcher"
     
     @override
-    def __init__(self, distance, event_logger: MatchingEventLogger) -> None:
+    def __init__(
+        self,
+        distance,
+        max_num_feedback=0,
+        len_ranked_list=0,
+        max_distance=0.0,
+        num_random_docs=0,
+        sampling_mode="",
+        adjust_threshold=False,
+        nugget_pipeline=Pipeline([]),
+        find_additional_nuggets=lambda confirmed_nugget, remaining_documents: [],
+        num_bad_docs=0,
+        num_recent_docs=0,
+        store_best_guesses=False,
+        event_logger: MatchingEventLogger=EmptyEventLogger()
+    ) -> None:
         """
         Initialize the ReplayMatcher.
 
         :param event_logger: the event logger to use for logging events during replay
         """
-        super(ReplayMatcher, self).__init__(
+        super().__init__(
             distance=distance,
-            max_num_feedback=0,  # no feedback rounds during replay
-            len_ranked_list=0,  # no ranked list during replay
-            max_distance=0.0,  # max distance is not relevant for replaying
-            num_random_docs=0,  # no random documents during replay
-            sampling_mode="",  # no sampling mode during replay
-            adjust_threshold=False,  # no threshold adjustment during replay
-            nugget_pipeline=Pipeline([]),  # no nugget pipeline during replay
-            find_additional_nuggets=lambda confirmed_nugget, remaining_documents: [],  # no additional nugget finding during replay
+            max_num_feedback=max_num_feedback,
+            len_ranked_list=len_ranked_list,
+            max_distance=max_distance,
+            num_random_docs=num_random_docs,
+            sampling_mode=sampling_mode,
+            adjust_threshold=adjust_threshold,
+            nugget_pipeline=nugget_pipeline,
+            find_additional_nuggets=find_additional_nuggets,
+            num_bad_docs=num_bad_docs,
+            num_recent_docs=num_recent_docs,
+            store_best_guesses=store_best_guesses,
             event_logger=event_logger
         )
       
