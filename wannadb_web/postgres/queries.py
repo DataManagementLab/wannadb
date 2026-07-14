@@ -356,22 +356,20 @@ def get_document(document_id: int, user_id: int):
 		return None
 
 
-@deprecated
-def get_document_by_name_and_content(doc_name: str, doc_content: str, user_id: int):
+def get_document_by_name_and_content(doc_name: str, doc_content: Union[str, bytes], user_id: int):
 	"""
-	Gets a document by its name and content for a specific user.\n
-	**Warning**: This functioned does not work as intended and is therefore deprecated.
+	Gets a document by its name and content for a specific user.
  
 	:param doc_name: The name of the document to retrieve.
 	:type doc_name: str
 	:param doc_content: The content of the document to retrieve.
-	:type doc_content: str
+	:type doc_content: Union[str, bytes]
 	:param user_id: The ID of the user requesting the document.
 	:type user_id: int
 	:return: A tuple containing the document name and its content (as str or bytes), or None if not found.
-	:rtype: Union[tuple[str, Union[str, bytes]], None]
+	:rtype: Union[tuple[str, Union[str, bytes]], tuple[None, None]]
 	"""
-	select_query = sql.SQL("""	SELECT name,content,content_byte 
+	select_query = sql.SQL("""	SELECT id, name,content,content_byte 
 							 	FROM documents 
 							 	JOIN membership m ON documents.organisationid = m.organisationid
 							 	WHERE name = (%s) AND m.userid = (%s)
@@ -381,15 +379,16 @@ def get_document_by_name_and_content(doc_name: str, doc_content: str, user_id: i
 	result = execute_query(select_query, (doc_name, user_id, ))
 	if len(result) > 0:
 		for document in result:
-			name = document[0]
-			if document[1]:
-				content = document[1]
-				return str(name), str(content)
-			elif document[2]:
+			name = document[1]
+			if document[2]:
 				content = document[2]
-				return str(name), bytes(content)
-	else:
-		return None
+				if content == doc_content:
+					return int(document[0]), str(name), str(content)
+			elif document[3]:
+				content = document[3]
+				if content == doc_content:
+					return int(document[0]), str(name), bytes(content)
+	return None, None, None
 
 
 def get_documents_for_organisation(organisation_id: int):

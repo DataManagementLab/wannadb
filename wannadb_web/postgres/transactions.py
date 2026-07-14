@@ -162,7 +162,7 @@ def create_document_feedback_table(schema):
 		ON UPDATE CASCADE 
 		ON DELETE CASCADE 
 		NOT VALID
-);
+)
 TABLESPACE pg_default;
 """)
 	execute_transaction(create_table_query, commit=True, fetch=False)

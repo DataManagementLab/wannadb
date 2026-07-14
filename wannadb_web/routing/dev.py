@@ -2,7 +2,7 @@ import logging
 from flask import Blueprint, make_response
 
 from wannadb_web.postgres.queries import _get_document
-from wannadb_web.postgres.transactions import create_document_base_table, create_user_table, create_documents_table, create_organisation_table, \
+from wannadb_web.postgres.transactions import create_document_base_table, create_document_feedback_table, create_user_table, create_documents_table, create_organisation_table, \
 	create_membership_table, drop_tables, drop_schema, create_schema
 
 dev_routes = Blueprint('dev_routes', __name__, url_prefix='/dev')
@@ -18,9 +18,11 @@ def create_tables(schema):
 		create_membership_table(schema)
 		create_document_base_table(schema)
 		create_documents_table(schema)
-		return f'create Tables in {schema} successfully'
+		create_document_feedback_table(schema)
+		return make_response({"message": f"create Tables in {schema} successfully"}, 200)
 	except Exception as e:
 		logger.error(f"create Tables in {schema} failed because: \n", e)
+		return make_response({"message": f"create Tables in {schema} failed", "details": str(e)}, 400)
 
 
 @dev_routes.route('/dropTables/<schema>', methods=['POST']) # potential vulnerability
