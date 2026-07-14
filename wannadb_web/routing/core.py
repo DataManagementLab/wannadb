@@ -32,7 +32,7 @@ import logging.config
 import pickle
 from typing import Optional
 
-from wannadb_web.postgres.queries import get_document_base_data, get_feedbacks_for_document, get_document_by_name
+from wannadb_web.postgres.queries import get_document_base_data, get_document_by_name_and_content, get_feedbacks_for_document, get_document_by_name
 from wannadb_web.postgres.transactions import add_feedback, add_document_base
 
 from flask import Blueprint, make_response, request
@@ -755,7 +755,6 @@ def add_public_feedback():
 	Example Form Payload:
 	{
 		"organisationId": "your_organisation_id",
-		"baseName": "your_document_base_name",
 		"documentName": "your_document_name",
 		"documentContent": "your_document_content",
 		"nuggetText": "nugget_as_text",
@@ -767,19 +766,24 @@ def add_public_feedback():
 	form = request.get_json()
 
 	authorization = request.headers.get("Authorization")
-	organisation_id: Optional[int] = form.get("organisationId")
+	organisation_id = int(form.get("organisationId")) if form.get("organisationId") is not None else None
 	attribute = form.get("attribute")
-
+ 
 	document_name = form.get("documentName")
+	document_content = form.get("documentContent")
+
 	start_index: Optional[int]  = int(form.get("startIndex")) if form.get("startIndex") is not None else None
 	end_index: Optional[int]  = int(form.get("endIndex")) if form.get("endIndex") is not None else None
 	is_positive: bool = form.get("isPositive")
 
 	if (organisation_id is None
 	 	or attribute is None
-	  	or document_name is None
 		or authorization is None
-		or is_positive is None):
+		or is_positive is None
+		or document_name is None
+		or document_content is None):
+
+		print(f"{organisation_id=}, {attribute=}, {document_name=}, {document_content=}, {authorization=}, {is_positive=}")
 
 		return make_response({"error": "missing parameters"}, 400)
 
@@ -789,10 +793,17 @@ def add_public_feedback():
 		return make_response({"error": "invalid token"}, 401)
 
 	user_id = _token.id
-
-	doc_id, _ = get_document_by_name(document_name, organisation_id, user_id=user_id)
+ 
+	document_id, _, _ = get_document_by_name_and_content(
+		document_name,
+		document_content,
+		user_id
+	)
+	if document_id is None:
+		return make_response({"error": "document not found"}, 404)
+ 
 	feedback_id = add_feedback(
-    	document_id=int(doc_id),
+    	document_id=int(document_id),
      	user_id=user_id,
       	positive=is_positive,
        	attribute=attribute,
@@ -805,7 +816,7 @@ def add_public_feedback():
 
 	return make_response({'feedback_id': feedback_id}, 200)
 
-@core_routes.route('/document_base/feedback/public', methods=['GET'])
+@core_routes.route('/document_base/feedback/public/get', methods=['POST'])
 def get_public_feedback():
 	"""
 	Endpoint to get public feedback for a document.
@@ -816,16 +827,15 @@ def get_public_feedback():
 	Example Query Parameters:
 	{
 		"organisationId": "your_organisation_id",
-		"baseName": "your_document_base_name",
-		"documentName": "your_document_name"
+		"documentName": "your_document_name",
+		"documentContent": "your_document_content"
 	}
 	"""
+	form = request.get_json()
 	authorization = request.headers.get("Authorization")
-	organisation_id: Optional[int] = request.args.get("organisationId")
-	document_name = request.args.get("documentName")
+	organisation_id: Optional[int] = form.get("organisationId")
 
 	if (organisation_id is None
-	  	or document_name is None
 		or authorization is None):
 
 		return make_response({"error": "missing parameters"}, 400)
@@ -836,8 +846,15 @@ def get_public_feedback():
 		return make_response({"error": "invalid token"}, 401)
 
 	user_id = _token.id
+ 
+	document_id, _, _ = get_document_by_name_and_content(
+		form.get("documentName"),
+		form.get("documentContent"),
+		user_id
+	)
+	if document_id is None:
+		return make_response({"error": "document not found"}, 404)
 
-	doc_id, _ = get_document_by_name(document_name, organisation_id, user_id=user_id)
-	feedback = get_feedbacks_for_document(int(doc_id))
+	feedback = get_feedbacks_for_document(int(document_id))
 
 	return make_response({'feedback': feedback}, 200)
