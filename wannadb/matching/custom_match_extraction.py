@@ -704,6 +704,8 @@ class FaissSentenceSimilarityExtractor(BaseCustomMatchExtractor):
         resources.MANAGER.load(self.embedding_model_name)
 
         self.detokenizer = TreebankWordDetokenizer()
+        
+        nltk.download('punkt')
 
     def to_config(self) -> Dict[str, Any]:
         """

@@ -1,5 +1,5 @@
 import random
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Tuple
 import logging
 
 from wannadb.interaction import BaseInteractionCallback
@@ -279,11 +279,9 @@ class AutomaticRandomFaultyRankingBasedMatchingFeedback(BaseInteractionCallback)
             logger.debug(rand)
             # check whether nugget matches attribute
             return (
-                correct_decision_match if correct_decision_match is not None
-                else (
-                    correct_decision_match_exists if correct_decision_match_exists is not None
-                    else correct_decision_no_match
-                )
+                correct_decision_match or
+                correct_decision_match_exists or
+                correct_decision_no_match
             )
         else:
             logger.debug(rand)
@@ -314,18 +312,25 @@ class AutomaticRandomFaultyRankingBasedMatchingFeedback(BaseInteractionCallback)
                     "not-a-match": None
                 }
 
-class AutomaticFFaultyCustomMatchesRandomRankingBasedMatchingFeedback(BaseInteractionCallback):
-    """Interaction callback that gives feedback on a random nugget of the ranked list and creates custom matches."""
+class AutomaticFaultyCustomMatchesRandomRankingBasedMatchingFeedback(BaseInteractionCallback):
+    """
+    Interaction callback that gives feedback on a random nugget of the ranked list and creates custom matches.
+    """
 
-    def __init__(self, documents: List[Dict[str, Any]], user_attribute_name2dataset_attribute_name: Dict[str, str]):
+    def __init__(self, documents: List[Dict[str, Any]], user_attribute_name2dataset_attribute_name: Dict[str, str], faulty_probability: float = 0.1):
         self._documents: List[Dict[str, Any]] = documents
         self._user_attribute_name2dataset_attribute_name: Dict[str, str] = user_attribute_name2dataset_attribute_name
+        self._faulty_probability: float = faulty_probability
+        self._num_feedback_given: int = 0
+        self._nr_feedback = 0
+        self._faulty_feedback_list: List[Tuple[int, Dict[str, Any]]] = []
 
     def _call(self, pipeline_element_identifier: str, data: Dict[str, Any]) -> Dict[str, Any]:
         if "do-attribute-request" in data.keys():
             return {
                     "do-attribute": True
                 }
+        self._num_feedback_given += 1
         nuggets = data["nuggets"]
         logger.debug(f"Nuggets: {', '.join(f'{n.document.name}: {n.text}' for n in data['nuggets'])}")
         attribute = data["attribute"]
@@ -339,6 +344,7 @@ class AutomaticFFaultyCustomMatchesRandomRankingBasedMatchingFeedback(BaseIntera
             logger.warning(f"Document {nugget.document.name} not found in documents.")
 
         # check whether nugget matches attribute
+        correct_decision_match, correct_decision_match_exists, correct_decision_custom_match, correct_decision_no_match = None, None, None, None
         for mention in document["mentions"][attribute_name]:
             if consider_overlap_as_match(mention["start_char"], mention["end_char"],
                                          nugget.start_char, nugget.end_char):
@@ -364,8 +370,6 @@ class AutomaticFFaultyCustomMatchesRandomRankingBasedMatchingFeedback(BaseIntera
                             "not-a-match": nugget
                         }
 
-        # there is no matching nugget in nugget's document
-
         # check if the value is mentioned in the document
         if correct_decision_match is None and correct_decision_match_exists is None:
             if document["mentions"][attribute_name] != []:
@@ -390,35 +394,41 @@ class AutomaticFFaultyCustomMatchesRandomRankingBasedMatchingFeedback(BaseIntera
                 "not-a-match": nugget
             }
             
+        self._nr_feedback += 1
         # randomly decide whether the nugget is a match or not
-        if (rand := random.random()) < 0.5:
+        if (rand := random.random()) < (1 - self._faulty_probability):
             logger.debug(rand)
             # check whether nugget matches attribute
             return (
-                correct_decision_match if correct_decision_match is not None
-                else (
-                    correct_decision_match_exists if correct_decision_match_exists is not None
-                    else (
-                        correct_decision_custom_match if correct_decision_custom_match is not None
-                        else correct_decision_no_match
-                    )
-                )
+                correct_decision_match or
+                correct_decision_match_exists or
+                correct_decision_custom_match or
+                correct_decision_no_match
             )
         else:
             logger.debug(rand)
+            correct_decision = (
+                correct_decision_match or
+                correct_decision_match_exists or
+                correct_decision_custom_match or
+                correct_decision_no_match
+            )
             # give faulty feedback
             if correct_decision_match is not None or correct_decision_match_exists is not None and correct_decision_custom_match is not None:
                 # nugget is actually a match, but we indicate no match
                 if random.random() < 0.5:
                     logger.debug(f"{data['max-distance']:.2f} {attribute_name}: '{nugget.text}' ==> FAULTY FEEDBACK: NO MATCH IN DOCUMENT")
+                    self._faulty_feedback_list.append((self._num_feedback_given-1, correct_decision))
                     return {
                         "message": "no-match-in-document",
                         "nugget": nugget,
                         "not-a-match": nugget
                     }
+                # nugget is actually already correctly matched, but we indicate another match
                 else:
                     nug = random.choice([n for n in nugget.document.nuggets if n != nugget])
                     logger.debug(f"{data['max-distance']:.2f} {attribute_name}: '{nugget.text}' ==> FAULTY FEEDBACK: RETURN OTHER MATCHING NUGGET '{nug.text}'")
+                    self._faulty_feedback_list.append((self._num_feedback_given-1, correct_decision))
                     return {
                         "message": "is-match",
                         "nugget": nug,
@@ -427,6 +437,7 @@ class AutomaticFFaultyCustomMatchesRandomRankingBasedMatchingFeedback(BaseIntera
             else:
                 # nugget is actually no match, but we indicate it is a match
                 logger.debug(f"{data['max-distance']:.2f} {attribute_name}: '{nugget.text}' ==> FAULTY FEEDBACK: IS MATCH")
+                self._faulty_feedback_list.append((self._num_feedback_given-1, correct_decision))
                 return {
                     "message": "is-match",
                     "nugget": nugget,

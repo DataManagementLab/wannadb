@@ -741,6 +741,7 @@ class MatchingEvent:
             nugget: Optional[InformationNugget],
             max_distance: float,
             not_a_match: Optional[InformationNugget] = None,
+            correct_action: Optional[str] = None,
             revert_event_id: Optional[int] = None
     ) -> None:
         """
@@ -758,6 +759,10 @@ class MatchingEvent:
         :type nugget: Optional[InformationNugget]
         :param max_distance: the maximum distance before the match is handled
         :type max_distance: float
+        :param not_a_match: the nugget that was not a match (can be None if no match was found)
+        :type not_a_match: Optional[InformationNugget]
+        :param correct_action: the correct action that should have been performed (if any)
+        :type correct_action: Optional[str]
         :param revert_event_id: the id of the event that is being reverted (if any)
         :type revert_event_id: Optional[int]
         """
@@ -768,6 +773,7 @@ class MatchingEvent:
         self.nugget = nugget
         self.not_a_match = not_a_match
         self.max_distance = max_distance
+        self.correct_action = correct_action
         self.revert_event_id = revert_event_id
         
     def to_dict(self) -> Dict[str, Any]:
@@ -790,6 +796,8 @@ class MatchingEvent:
                 "start_char": self.not_a_match.start_char,
                 "end_char": self.not_a_match.end_char
             } if self.not_a_match is not None else None,
+            "correct_action": self.correct_action,
+            "revert_event_id": self.revert_event_id,
             "max_distance": self.max_distance
         }
         
@@ -843,5 +851,7 @@ class MatchingEvent:
             document=document,
             nugget=nugget,
             not_a_match=not_a_match,
-            max_distance=data["max_distance"]
+            max_distance=data["max_distance"],
+            correct_action=None if data["action"] != "revert-event" else data.get("correct_action", None),
+            revert_event_id=data.get("revert_event_id", None)
         )
