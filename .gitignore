@@ -13,6 +13,8 @@
 
 **/datasets/
 **/executables/
+**/executable/
+**/build/
 
 **/event_logs/
 **/logs/
