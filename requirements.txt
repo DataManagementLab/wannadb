@@ -109,6 +109,7 @@ language-data==1.2.0
     # via langcodes
 marisa-trie==1.2.0
     # via language-data
+markdown==3.7
 markdown-it-py==3.0.0
     # via rich
 markupsafe==2.1.5
@@ -328,6 +329,12 @@ xxhash==3.5.0
     # via datasets
 yarl==1.12.1
     # via aiohttp
+
+pyqtgraph==0.13.7
+
+PyOpenGL==3.1.9
+
+PyOpenGL_accelerate==3.1.9
 
 # The following packages are considered to be unsafe in a requirements file:
 # setuptools

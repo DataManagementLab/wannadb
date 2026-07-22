@@ -1,6 +1,7 @@
 import enum
 import logging
 import re
+import wannadb_ui.visualizations as visualizations
 
 from PyQt6.QtCore import QMutex, Qt, QThread, QWaitCondition, pyqtSignal, pyqtSlot
 from PyQt6.QtGui import QAction, QIcon
@@ -9,10 +10,12 @@ from PyQt6.QtWidgets import QFileDialog, QHBoxLayout, QLabel, QMainWindow, QProg
 from wannadb.data.data import DocumentBase
 from wannadb.statistics import Statistics
 from wannadb_parsql.cache_db import SQLiteCacheDB
-from wannadb_ui.common import MENU_FONT, STATUS_BAR_FONT, STATUS_BAR_FONT_BOLD, RED, BLACK, show_confirmation_dialog
+from wannadb_ui.common import MENU_FONT, STATUS_BAR_FONT, STATUS_BAR_FONT_BOLD, RED, BLACK, show_confirmation_dialog, \
+    AvailableVisualizationsLevel
 from wannadb_ui.document_base import DocumentBaseCreatorWidget, DocumentBaseViewerWidget, DocumentBaseCreatingWidget
 from wannadb_ui.interactive_matching import InteractiveMatchingWidget
 from wannadb_ui.start_menu import StartMenuWidget
+from wannadb_ui.common import InformationPopup
 from wannadb_ui.wannadb_api import WannaDBAPI
 
 logger = logging.getLogger(__name__)
@@ -237,6 +240,30 @@ class MainWindow(QMainWindow):
                 # noinspection PyUnresolvedReferences
                 self.save_statistics_to_json.emit(path, self.statistics)
 
+    def update_visualizations_level(self, visualizations_level):
+        logger.info("Execute task 'enable_visualizations_task'.")
+
+        self.visualizations_level = visualizations_level
+
+        self._set_available_visualization_actions()
+
+        for observer in self.visualizations_level_observers:
+            observer.update_shown_visualizations(visualizations_level)
+
+    def enable_accessible_color_palette_task(self):
+        logger.info("Execute task 'enable_accessible_color_palette_task'.")
+        self.accessible_color_palette = True
+        self.interactive_matching_widget.enable_accessible_color_palette()
+        self.enable_accessible_color_palette_action.setEnabled(False)
+        self.disable_accessible_color_palette_action.setEnabled(True)
+        
+    def disable_accessible_color_palette_task(self):
+        logger.info("Execute task 'disable_accessible_color_palette_task'.")
+        self.accessible_color_palette = False
+        self.interactive_matching_widget.disable_accessible_color_palette()
+        self.enable_accessible_color_palette_action.setEnabled(True)
+        self.disable_accessible_color_palette_action.setEnabled(False)
+       
     def show_document_base_creator_widget_task(self):
         logger.info("Execute task 'show_document_base_creator_widget_task'.")
 
@@ -281,6 +308,9 @@ class MainWindow(QMainWindow):
         self.api.feedback = feedback
         self.feedback_cond.wakeAll()
 
+        self._set_available_visualization_actions()
+        self._enable_color_palette_settings()
+
     def interactive_table_population_task(self):
         logger.info("Execute task 'interactive_table_population_task'.")
 
@@ -304,6 +334,25 @@ class MainWindow(QMainWindow):
 
             # noinspection PyUnresolvedReferences
             self.interactive_table_population.emit(self.document_base, self.statistics)
+
+    def open_usage_info_task(self):
+        logger.info("Execute task 'open_usage_info_task'.")
+
+        if self.usage_info_popup.isHidden():
+            self.usage_info_popup.show()
+
+    def open_visualization_info_task(self):
+        logger.info("Execute task 'open_visualization_info_task'.")
+
+        if self.visualization_info_popup.isHidden():
+            self.visualization_info_popup.show()
+
+    def open_general_info_task(self):
+        logger.info("Execute task 'open_general_info_task'.")
+
+        if self.general_info_popup.isHidden():
+            self.general_info_popup.show()
+
 
     ##################
     # controller logic
@@ -335,6 +384,8 @@ class MainWindow(QMainWindow):
         else:
             self.enable_collect_statistics_action.setEnabled(True)
 
+        self._set_available_visualization_actions()
+        self._enable_color_palette_settings()
         self.central_widget_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.document_base_viewer_widget.hide()
         self.document_base_creator_widget.hide()
@@ -366,6 +417,8 @@ class MainWindow(QMainWindow):
         else:
             self.enable_collect_statistics_action.setEnabled(True)
 
+        self._set_available_visualization_actions()
+        self._enable_color_palette_settings()
         self.central_widget_layout.setAlignment(Qt.AlignmentFlag.AlignLeft)
         self.start_menu_widget.hide()
         self.document_base_creation_widget.hide()
@@ -386,6 +439,8 @@ class MainWindow(QMainWindow):
 
         self.disable_global_input()
 
+        self._set_available_visualization_actions()
+        self._enable_color_palette_settings()
         self.central_widget_layout.setAlignment(Qt.AlignmentFlag.AlignLeft)
         self.start_menu_widget.hide()
         self.document_base_creator_widget.hide()
@@ -429,6 +484,8 @@ class MainWindow(QMainWindow):
         else:
             self.enable_collect_statistics_action.setEnabled(True)
 
+        self._set_available_visualization_actions()
+        self._enable_color_palette_settings()
         self.document_base_viewer_widget.enable_input()
 
         self.central_widget_layout.setAlignment(Qt.AlignmentFlag.AlignLeft)
@@ -458,6 +515,8 @@ class MainWindow(QMainWindow):
         else:
             self.enable_collect_statistics_action.setEnabled(True)
 
+        self._set_available_visualization_actions()
+        self._enable_color_palette_settings()
         self.central_widget_layout.setAlignment(Qt.AlignmentFlag.AlignLeft)
         self.start_menu_widget.hide()
         self.document_base_viewer_widget.hide()
@@ -472,6 +531,32 @@ class MainWindow(QMainWindow):
         self.interactive_matching_widget.show()
         self.central_widget_layout.update()
 
+    def _enable_visualization_settings(self):
+        self.enable_visualizations_action.setEnabled(not self.visualizations)
+        self.disable_visualizations_action.setEnabled(self.visualizations)
+
+    def attach_visualization_level_observer(self, observer):
+        self.visualizations_level_observers.append(observer)
+
+
+    def _set_available_visualization_actions(self):
+        if self.visualizations_level == AvailableVisualizationsLevel.DISABLED:
+            self.enable_lvl1_visualizations_action.setEnabled(True)
+            self.enable_lvl2_visualizations_action.setEnabled(True)
+            self.disable_visualizations_action.setEnabled(False)
+        elif self.visualizations_level == AvailableVisualizationsLevel.LEVEL_1:
+            self.enable_lvl1_visualizations_action.setEnabled(False)
+            self.enable_lvl2_visualizations_action.setEnabled(True)
+            self.disable_visualizations_action.setEnabled(True)
+        elif self.visualizations_level == AvailableVisualizationsLevel.LEVEL_2:
+            self.enable_lvl1_visualizations_action.setEnabled(True)
+            self.enable_lvl2_visualizations_action.setEnabled(False)
+            self.disable_visualizations_action.setEnabled(True)
+
+    def _enable_color_palette_settings(self):
+        self.enable_accessible_color_palette_action.setEnabled(not self.accessible_color_palette)
+        self.disable_accessible_color_palette_action.setEnabled(self.accessible_color_palette)
+    
     # noinspection PyUnresolvedReferences
     def __init__(self) -> None:
         super(MainWindow, self).__init__()
@@ -482,8 +567,14 @@ class MainWindow(QMainWindow):
         self.document_base = None
         self.statistics = None
         self.collect_statistics = True
+        self.visualizations_level_observers = list()
+        self.visualizations_level = AvailableVisualizationsLevel.LEVEL_2
+        self.accessible_color_palette = False
         self.attributes_to_match = None
         self.cache_db = None
+        self.usage_info_popup = InformationPopup("Usage Information", "wannadb_ui/resources/info_popups/usage_info.md")
+        self.visualization_info_popup = InformationPopup("Visualization Information", "wannadb_ui/resources/info_popups/visualization_info.md")
+        self.general_info_popup = InformationPopup("Underlying Ideas / Architecture", "wannadb_ui/resources/info_popups/ideas_and_architecture_info.md")
 
         # set up the api_thread and api and connect slots and signals
         self.feedback_mutex = QMutex()
@@ -610,6 +701,44 @@ class MainWindow(QMainWindow):
         self.save_statistics_to_json_action.triggered.connect(self.save_statistics_to_json_task)
         self._all_actions.append(self.save_statistics_to_json_action)
 
+        self.enable_lvl1_visualizations_action = QAction("&Level 1", self)
+        self.enable_lvl1_visualizations_action.setStatusTip("Only grid related visualizations are available.")
+        self.enable_lvl1_visualizations_action.triggered.connect(lambda: self.update_visualizations_level(AvailableVisualizationsLevel.LEVEL_1))
+        self._all_actions.append(self.enable_lvl1_visualizations_action)
+
+        self.enable_lvl2_visualizations_action = QAction("&Level 2", self)
+        self.enable_lvl2_visualizations_action.setStatusTip("All visualizations are available.")
+        self.enable_lvl2_visualizations_action.triggered.connect(lambda: self.update_visualizations_level(AvailableVisualizationsLevel.LEVEL_2))
+        self._all_actions.append(self.enable_lvl2_visualizations_action)
+
+        self.disable_visualizations_action = QAction("&Disable", self)
+        self.disable_visualizations_action.setStatusTip("Disable visualization widgets.")
+        self.disable_visualizations_action.triggered.connect(lambda: self.update_visualizations_level(AvailableVisualizationsLevel.DISABLED))
+        self._all_actions.append(self.disable_visualizations_action)
+        
+        self.enable_accessible_color_palette_action = QAction("&Enable accessible palette", self)
+        self.enable_accessible_color_palette_action.setStatusTip("Change the color palette to accessible.")
+        self.enable_accessible_color_palette_action.triggered.connect(self.enable_accessible_color_palette_task)
+        self._all_actions.append(self.enable_accessible_color_palette_action)
+        
+        self.disable_accessible_color_palette_action = QAction("&Disable accessible palette", self)
+        self.disable_accessible_color_palette_action.setStatusTip("Change the color palette to rgb.")
+        self.disable_accessible_color_palette_action.triggered.connect(self.disable_accessible_color_palette_task)
+        self._all_actions.append(self.disable_accessible_color_palette_action)
+
+        self.open_usage_info = QAction("&Open usage info", self)
+        self.open_usage_info.setStatusTip("Open popup providing some information about the usage of the application.")
+        self.open_usage_info.triggered.connect(self.open_usage_info_task)
+
+        self.open_visualization_info = QAction("&Open visualization info", self)
+        self.open_visualization_info.setStatusTip("Open popup providing some information about the available visualizations.")
+        self.open_visualization_info.triggered.connect(self.open_visualization_info_task)
+
+        self.open_general_info = QAction("&Open general info", self)
+        self.open_general_info.setStatusTip("Open popup providing some general information about the application.")
+        self.open_general_info.triggered.connect(self.open_general_info_task)
+
+
         # set up the menu bar
         self.menubar = self.menuBar()
         self.menubar.setFont(MENU_FONT)
@@ -635,12 +764,33 @@ class MainWindow(QMainWindow):
         self.population_menu.addAction(self.forget_matches_for_attribute_action)
         self.population_menu.addAction(self.forget_matches_action)
 
-        self.statistics_menu = self.menubar.addMenu("&Statistics")
+        self.settings_menu = self.menubar.addMenu("&Settings")
+        self.settings_menu.setFont(MENU_FONT)
+
+        self.statistics_menu = self.settings_menu.addMenu("&Statistics")
         self.statistics_menu.setFont(MENU_FONT)
         self.statistics_menu.addAction(self.enable_collect_statistics_action)
         self.statistics_menu.addAction(self.disable_collect_statistics_action)
         self.statistics_menu.addSeparator()
         self.statistics_menu.addAction(self.save_statistics_to_json_action)
+
+        self.visualizations_menu = self.settings_menu.addMenu("&Visualizations")
+        self.visualizations_menu.setFont(MENU_FONT)
+        self.visualizations_menu.addAction(self.disable_visualizations_action)
+        self.visualizations_menu.addAction(self.enable_accessible_color_palette_action)
+        self.visualizations_menu.addAction(self.disable_accessible_color_palette_action)
+        self.visualizations_menu.addAction(self.enable_lvl1_visualizations_action)
+        self.visualizations_menu.addAction(self.enable_lvl2_visualizations_action)
+
+        self.help_menu = self.menubar.addMenu("&Help")
+        self.help_menu.setFont(MENU_FONT)
+
+        self.general_menu = self.help_menu.addMenu("&General")
+        self.general_menu.addAction(self.open_general_info)
+        self.usage_menu = self.help_menu.addMenu("&Usage")
+        self.usage_menu.addAction(self.open_usage_info)
+        self.visualization_menu = self.help_menu.addMenu("&Visualization")
+        self.visualization_menu.addAction(self.open_visualization_info)
 
         # main UI
         self.central_widget = QWidget(self)
@@ -658,5 +808,9 @@ class MainWindow(QMainWindow):
 
         self.resize(1400, 800)
         self.show()
+
+        # Information popup
+        self.information_popup = InformationPopup("Quick Start Guide", "wannadb_ui/resources/info_popups/splash_screen.md")
+        self.information_popup.show()
 
         logger.info("Initialized MainWindow.")

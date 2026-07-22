@@ -80,7 +80,8 @@ class BaseEmbedder(BasePipelineElement, abc.ABC):
             self._embed_documents(document_base, interaction_callback, status_callback, statistics["documents"])
             status_callback(f"Embedding documents with {self.identifier}...", 1)
             tack: float = time.time()
-            logger.info(f"Embedded {len(document_base.documents)} documents with {self.identifier} in {tack - tick} seconds.")
+            logger.info(
+                f"Embedded {len(document_base.documents)} documents with {self.identifier} in {tack - tick} seconds.")
             statistics["documents"]["runtime"] = tack - tick
 
         # compute embeddings for the nuggets
@@ -94,13 +95,18 @@ class BaseEmbedder(BasePipelineElement, abc.ABC):
         if self.generated_signal_identifiers["nuggets"][0] in nuggets[0].signals.keys():
             # Try to determine if the dimensions are correct (should match those of the embedding of the attributes)
             if len(self.generated_signal_identifiers["attributes"]) > 0:
-                if len(attributes) > 0 and attributes[0].signals[self.generated_signal_identifiers["attributes"][0]].value.shape == nuggets[0].signals[self.generated_signal_identifiers["attributes"][0]].value.shape:
-                    logger.info(f"No need to embedd nuggets again with {self.identifier}, existing embeddings with correct dimensions found.")
+                if len(attributes) > 0 and attributes[0].signals[
+                    self.generated_signal_identifiers["attributes"][0]].value.shape == nuggets[0].signals[
+                    self.generated_signal_identifiers["attributes"][0]].value.shape:
+                    logger.info(
+                        f"No need to embedd nuggets again with {self.identifier}, existing embeddings with correct dimensions found.")
                     return
-                logger.info(f"Dimension missmatch, recomputing embeddings for {self.generated_signal_identifiers['nuggets'][0]} with {self.identifier}.")
+                logger.info(
+                    f"Dimension missmatch, recomputing embeddings for {self.generated_signal_identifiers['nuggets'][0]} with {self.identifier}.")
             else:
                 # Cannot check dimensions, but assuming they are correct do to lack of other evidence
-                logger.info(f"Found existing embeddings for {self.generated_signal_identifiers['nuggets'][0]}, assuming they were created with {self.identifier} (even though dimension check is not possible.")
+                logger.info(
+                    f"Found existing embeddings for {self.generated_signal_identifiers['nuggets'][0]}, assuming they were created with {self.identifier} (even though dimension check is not possible.")
                 return
 
         # If no existing embeddings are found, or dimensions are not matching continue with embedding
@@ -164,6 +170,7 @@ class BaseEmbedder(BasePipelineElement, abc.ABC):
         :param statistics: statistics object to collect statistics
         """
         pass  # default behavior: do nothing
+
 
 ########################################################################################################################
 # actual embedders
@@ -513,13 +520,16 @@ class BERTContextSentenceEmbedder(BaseEmbedder):
                         """
                         prev_candidate_context = None
                         for candidate_start, candidate_end in zip(map(lambda i: max(0, i), count(start_in_context, -1)),
-                                                                  map(lambda i: min(i, len(context_sentence) - 1), count(end_in_context, 1))):
+                                                                  map(lambda i: min(i, len(context_sentence) - 1),
+                                                                      count(end_in_context, 1))):
                             candidate_context = context_sentence[candidate_start:candidate_end]
                             yield prev_candidate_context, candidate_context
                             prev_candidate_context = candidate_context
 
-                    for prev, candidate_context in get_candidate_contexts(context_sentence, start_in_context, end_in_context):
-                        input_ids, token_type_ids, attention_mask, char_to_token = get_encoding_data(candidate_context, device)
+                    for prev, candidate_context in get_candidate_contexts(context_sentence, start_in_context,
+                                                                          end_in_context):
+                        input_ids, token_type_ids, attention_mask, char_to_token = get_encoding_data(candidate_context,
+                                                                                                     device)
                         # The condition will be true at some point
                         # because token_type_ids[0] is monotonically increasing with longer context sentences
                         # and we know that the whole sentence is above the limit
@@ -533,16 +543,19 @@ class BERTContextSentenceEmbedder(BaseEmbedder):
                                 logger.error(error)
                                 raise RuntimeError(error)
                             context_sentence = prev
-                            input_ids, token_type_ids, attention_mask, char_to_token = get_encoding_data(context_sentence, device)
+                            input_ids, token_type_ids, attention_mask, char_to_token = get_encoding_data(
+                                context_sentence, device)
                             break
-                    logger.error(f"==> Using shorter context sentence '{context_sentence}' with {len(token_type_ids[0])} token indices "
-                                 f"for nugget '{context_sentence[start_in_context:end_in_context]}'.")
+                    logger.error(
+                        f"==> Using shorter context sentence '{context_sentence}' with {len(token_type_ids[0])} token indices "
+                        f"for nugget '{context_sentence[start_in_context:end_in_context]}'.")
 
                 return input_ids, token_type_ids, attention_mask, char_to_token, context_sentence
 
-            input_ids, token_type_ids, attention_mask, char_to_token, context_sentence = get_encoding_data_with_limited_tokens_for_context(context_sentence,
-                                                                                                                                           start_in_context,
-                                                                                                                                           end_in_context)
+            input_ids, token_type_ids, attention_mask, char_to_token, context_sentence = get_encoding_data_with_limited_tokens_for_context(
+                context_sentence,
+                start_in_context,
+                end_in_context)
 
             outputs = resources.MANAGER[self._bert_resource_identifier]["model"](
                 input_ids=input_ids,

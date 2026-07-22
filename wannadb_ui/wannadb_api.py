@@ -14,13 +14,14 @@ from wannadb.interaction import EmptyInteractionCallback, InteractionCallback
 from wannadb.matching.custom_match_extraction import FaissSentenceSimilarityExtractor
 from wannadb.matching.distance import SignalsMeanDistance
 from wannadb.matching.matching import RankingBasedMatcher
+from wannadb.preprocessing.dimension_reduction import PCAReducer
 from wannadb.preprocessing.embedding import BERTContextSentenceEmbedder, RelativePositionEmbedder, \
     SBERTTextEmbedder, SBERTLabelEmbedder, SBERTDocumentSentenceEmbedder
 from wannadb.preprocessing.extraction import StanzaNERExtractor, SpacyNERExtractor
 from wannadb.preprocessing.label_paraphrasing import OntoNotesLabelParaphraser, \
     SplitAttributeNameLabelParaphraser
 from wannadb.preprocessing.normalization import CopyNormalizer
-from wannadb.preprocessing.other_processing import ContextSentenceCacher
+from wannadb.preprocessing.other_processing import ContextSentenceCacher, DuplicatedNuggetsCleaner
 from wannadb.statistics import Statistics
 from wannadb.status import StatusCallback
 from wannadb_parsql.cache_db import SQLiteCacheDB
@@ -125,7 +126,10 @@ class WannaDBAPI(QObject):
                 SBERTTextEmbedder("SBERTBertLargeNliMeanTokensResource"),
                 BERTContextSentenceEmbedder("BertLargeCasedResource"),
                 SBERTDocumentSentenceEmbedder("SBERTBertLargeNliMeanTokensResource"),
-                RelativePositionEmbedder()
+                RelativePositionEmbedder(),
+                DuplicatedNuggetsCleaner(),
+                PCAReducer(),
+                #TSNEReducer()
             ])
 
             # run preprocessing phase
@@ -351,6 +355,8 @@ class WannaDBAPI(QObject):
                     ContextSentenceCacher(),
                     SBERTLabelEmbedder("SBERTBertLargeNliMeanTokensResource"),
                     SBERTDocumentSentenceEmbedder("SBERTBertLargeNliMeanTokensResource"),
+                    PCAReducer(),
+                    #TSNEReducer(),
                     RankingBasedMatcher(
                         distance=SignalsMeanDistance(
                             signal_identifiers=[
@@ -375,7 +381,9 @@ class WannaDBAPI(QObject):
                                 SBERTLabelEmbedder("SBERTBertLargeNliMeanTokensResource"),
                                 SBERTTextEmbedder("SBERTBertLargeNliMeanTokensResource"),
                                 BERTContextSentenceEmbedder("BertLargeCasedResource"),
-                                RelativePositionEmbedder()
+                                RelativePositionEmbedder(),
+                                PCAReducer(),
+                                #TSNEReducer()
                             ]
                         ),
                         find_additional_nuggets=FaissSentenceSimilarityExtractor(num_similar_sentences=20, num_phrases_per_sentence=3),

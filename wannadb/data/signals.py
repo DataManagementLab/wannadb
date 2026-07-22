@@ -357,9 +357,37 @@ class LabelEmbeddingSignal(BaseNumpyArraySignal):
 
 
 @register_signal
+class PCADimensionReducedLabelEmbeddingSignal(BaseNumpyArraySignal):
+    """Embedding of the nugget's label or attribute's name reduced to 3 dimensions."""
+    identifier: str = "DimensionReducedLabelEmbeddingSignal"
+    do_serialize: bool = True
+
+
+@register_signal
+class TSNEDimensionReducedLabelEmbeddingSignal(BaseNumpyArraySignal):
+    """Embedding of the nugget's label or attribute's name reduced to 3 dimensions."""
+    identifier: str = "TSNEDimensionReducedLabelEmbeddingSignal"
+    do_serialize: bool = True
+
+
+@register_signal
 class TextEmbeddingSignal(BaseNumpyArraySignal):
     """Embedding of the nugget's text."""
     identifier: str = "TextEmbeddingSignal"
+    do_serialize: bool = True
+
+
+@register_signal
+class PCADimensionReducedTextEmbeddingSignal(BaseNumpyArraySignal):
+    """Embedding of the nugget's text reduced to 3 dimensions."""
+    identifier: str = "PCADimensionReducedTextEmbeddingSignal"
+    do_serialize: bool = True
+
+
+@register_signal
+class TSNEDimensionReducedTextEmbeddingSignal(BaseNumpyArraySignal):
+    """Embedding of the nugget's text reduced to 3 dimensions."""
+    identifier: str = "TSNEDimensionReducedTextEmbeddingSignal"
     do_serialize: bool = True
 
 
@@ -374,4 +402,11 @@ class ContextSentenceEmbeddingSignal(BaseNumpyArraySignal):
 class DocumentSentenceEmbeddingSignal(BaseNumpyArraySignal):
     """Embedding of the sentences of a document."""
     identifier: str = "DocumentSentenceEmbeddingSignal"
+    do_serialize: bool = True
+
+
+@register_signal
+class CurrentThresholdSignal(BaseFloatSignal):
+    """Current threshold associated with an attribute."""
+    identifier: str = "CurrentThresholdSignal"
     do_serialize: bool = True
