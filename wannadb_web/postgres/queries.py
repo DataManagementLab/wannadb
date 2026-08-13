@@ -434,7 +434,7 @@ def get_document_bases_for_organisation(organisation_id: int):
 	:return: A list of dictionaries containing document base IDs, names, and attributes.
 	:rtype: list[dict[str, Union[int, str, list[str]]]]
 	"""
-	select_query = sql.SQL("""SELECT id, name, attributes
+	select_query = sql.SQL("""SELECT id, name, attributes, last_modified
 						 FROM document_bases
 
 						 WHERE organisation_id = (%s)
@@ -444,7 +444,7 @@ def get_document_bases_for_organisation(organisation_id: int):
 	if result is None or not result:
 		return []
 
-	doc_array = [{"id": id, "name": name, "attributes": attributes} for id, name, attributes in result]
+	doc_array = [{"id": id, "name": name, "attributes": attributes, "last_modified": last_modified} for id, name, attributes, last_modified in result]
 	return doc_array
 
 

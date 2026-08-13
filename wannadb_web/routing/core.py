@@ -33,7 +33,7 @@ import pickle
 from typing import Optional
 
 from wannadb_web.postgres.queries import get_document_base_data, get_document_by_name_and_content, get_feedbacks_for_document, get_document_by_name
-from wannadb_web.postgres.transactions import add_feedback, add_document_base
+from wannadb_web.postgres.transactions import add_feedback, add_document_base, delete_document_base_data
 
 from flask import Blueprint, make_response, request
 from celery.result import AsyncResult
@@ -121,6 +121,26 @@ def get_document_base(organisation_id: int, base_name: str):
 		return make_response({'error': 'document base not found'}, 404)
 	
 	return make_response({"data": document_base}, 200)
+
+@core_routes.route('/document_base/<organisation_id>/<base_name>', methods=['DELETE'])
+def delete_document_base(organisation_id: int, base_name: str):
+	"""
+	Endpoint for deleting a document base using it's name and organisation id
+	"""
+	authorization = request.headers.get("Authorization")
+	if (authorization is None or organisation_id is None or base_name is None):
+		return make_response({'error': 'missing parameters'}, 400)
+
+	_token = tokenDecode(authorization)
+
+	if _token is False:
+		return make_response({'error': 'invalid token'}, 401)
+
+	success = delete_document_base_data(base_name, organisation_id)
+	if not success:
+		return make_response({'error': 'document base not found'}, 404)
+
+	return make_response({'message': 'document base deleted'}, 200)
 
 @core_routes.route('/document_base/load', methods=['POST'])
 def load_document_base():
@@ -270,6 +290,7 @@ def document_base_attribute_update():
 	attributes_string = form.get("attributes")
 	if (organisation_id is None or base_name is None or attributes_string is None
 			or authorization is None):
+		print(f"{organisation_id=}, {base_name=}, {attributes_string=}, {authorization=}")
 		return make_response({"error": "missing parameters"}, 400)
 	_token = tokenDecode(authorization)
 
