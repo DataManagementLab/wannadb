@@ -5,7 +5,7 @@ from wannadb_web.util import Token, tokenEncode, tokenDecode
 from wannadb_web.postgres.queries import check_password, get_members_of_organisation, get_organisation_from_user_id, \
 	get_organisation_ids_from_user_id, get_organisation_name, get_username_suggestion
 from wannadb_web.postgres.transactions import (add_user, add_organisation, add_user_to_organisation_new, delete_user,
-											   leave_organisation)
+											   leave_organisation_transaction, remove_user_from_organisation_new)
 
 user_management = Blueprint('user_management', __name__)
 
@@ -102,14 +102,14 @@ def create_organisation():
 	return make_response({"error": error}, 422)
 
 
-@user_management.route('/leaveOrganisation', methods=['POST'])
+@user_management.route('/leaveOrganisation', methods=['DELETE'])
 def leave_organisation():
 	data = request.get_json()
 	authorization = request.headers.get("Authorization")
 
 	organisationId = data.get("organisationId")
 
-	success, error = leave_organisation(organisationId, authorization)
+	success, error = leave_organisation_transaction(organisationId, authorization)
 	if success:
 		return make_response({'status': True}, 200)
 	return make_response({"status": False, "msg": str(error)}, 500)
@@ -177,6 +177,25 @@ def add_user_to_organisation():
 	if error:
 		return make_response({"error": error}, 409)
 	return make_response({'organisation_id': organisation_id}, 200)
+
+
+@user_management.route('/removeUserFromOrganisation', methods=['DELETE'])
+def remove_user_from_organisation():
+	authorization = request.headers.get("Authorization")
+	token = tokenDecode(authorization)
+	if token is None:
+		return make_response({'error': 'no authorization'}, 401)
+
+	data = request.get_json()
+	organisation_id = data.get("organisationId")
+	user_to_remove = data.get("userToRemove")
+	if not organisation_id or not user_to_remove:
+		return make_response({'error': 'missing required fields'}, 400)
+
+	success, error = remove_user_from_organisation_new(organisation_id, user_to_remove)
+	if success:
+		return make_response({'status': True}, 200)
+	return make_response({"status": False, "msg": str(error)}, 500)
 
 
 @user_management.route('/getOrganisationMembers/<_id>', methods=['GET'])

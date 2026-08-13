@@ -223,6 +223,7 @@ def create_document_base_table(schema):
 			name text COLLATE pg_catalog."default" NOT NULL,
 			attributes text NOT NULL DEFAULT '[]',
 			organisation_id bigint NOT NULL,
+			last_modified timestamp without time zone NOT NULL DEFAULT now(),
 			CONSTRAINT documentbaseid PRIMARY KEY (id),
 			CONSTRAINT documentbase_name_key UNIQUE (name, organisation_id),
 			CONSTRAINT documentbase_organisationid_fkey FOREIGN KEY (organisation_id)
@@ -235,6 +236,19 @@ def create_document_base_table(schema):
 
 		""")
 	execute_transaction(create_table_query, commit=True, fetch=False)
+
+	add_last_modified_column_query = sql.SQL(f"""
+	DO $$
+	BEGIN
+		IF NOT EXISTS (SELECT 1 FROM information_schema.columns 
+				WHERE table_schema = '{schema}' 
+				AND table_name = 'document_bases' 
+				AND column_name = 'last_modified') THEN
+			ALTER TABLE {schema}.document_bases ADD COLUMN last_modified timestamp without time zone NOT NULL DEFAULT now();
+		END IF;
+	END $$;
+	""")
+	execute_transaction(add_last_modified_column_query, commit=True, fetch=False)
 
 
 def create_organisation_table(schema):
@@ -377,7 +391,7 @@ def add_organisation(organisationName: str, sessionToken: str):
 		return None, f"addOrganisation failed because: \n{e}"
 
 
-def leave_organisation(organisationId: int, sessionToken: str):
+def leave_organisation_transaction(organisationId: int, sessionToken: str):
 	"""
 	Allows a user to leave an organisation. If the user is the last member, the organisation is deleted.
  
@@ -497,6 +511,7 @@ def add_user_to_organisation_new(organisationId: int, newUser: str):
 		return None, 'Unknown error'
 
 
+@deprecated
 def remove_user_from_organisation(organisationName: str, sessionToken: str, userToRemove: str):
 	"""
 	Remove a user from an organisation.
@@ -532,6 +547,33 @@ def remove_user_from_organisation(organisationName: str, sessionToken: str, user
 
 	except Exception as e:
 		logger.error(f"removeUserFromOrganisation failed because: \n{e}")
+  
+  
+def remove_user_from_organisation_new(organisationId: int, userToRemove: str):
+	"""
+	Remove a user from an organisation.
+	Reworked version without session token.
+ 
+	:param organisationId: ID of the organisation
+	:type organisationId: int
+	:param userToRemove: Username of the user to be removed
+	:type userToRemove: str
+	:return: None
+	"""
+	try:
+		select_id_query = sql.SQL("SELECT id FROM users WHERE username = (%s)")
+		userid = execute_transaction(select_id_query, (userToRemove,), commit=True)
+		if userid is None:
+			return None, "User does not exist"
+
+		delete_query = sql.SQL(
+			"DELETE FROM membership WHERE userid = (%s) AND organisationid = (%s) returning organisationid")
+		execute_transaction(delete_query, (userid[0][0], organisationId), commit=True)
+		return True, None	
+
+	except Exception as e:
+		logger.error(f"removeUserFromOrganisation2 failed because: \n{e}")
+		return False, e
 
 
 def adjust_user_authorization(organisationName: str, sessionToken: str, userToAdjust: str, newAuthorisation: int):
@@ -644,10 +686,10 @@ def add_document_base(name: str, attributes: list[str], orgId: int, documents: l
 	"""
 	try:
 		insert_data_query = sql.SQL(
-			"INSERT INTO document_bases (name, attributes, organisation_id) "
-			"VALUES (%s,%s,%s) returning id;"
+			"INSERT INTO document_bases (name, attributes, organisation_id, admin) "
+			"VALUES (%s,%s,%s,%s) returning id;"
 		)
-		data = (name, attributes, orgId)
+		data = (name, attributes, orgId, None)
 		response = execute_transaction(insert_data_query, data, commit=True)
 		docBase_id = int(response[0][0])
 		for id in documents:
@@ -667,6 +709,37 @@ def add_document_base(name: str, attributes: list[str], orgId: int, documents: l
 		logger.log(str(e))
 		return -500
 
+
+def delete_document_base_data(base_name: str, organisation_id: int):
+	"""
+	Delete a document base and disassociate documents from it.
+ 
+	:param base_name: Name of the document base to delete
+	:type base_name: str
+	:param organisation_id: ID of the organisation the document base belongs to
+	:type organisation_id: int
+	:return: True if deletion was successful, False otherwise
+	:rtype: bool
+	"""
+	try:
+		delete_query = sql.SQL(
+			"DELETE FROM document_bases "
+			"WHERE name = %s AND organisation_id = %s;"
+		)
+		data = (base_name, organisation_id)
+		execute_transaction(delete_query, data, commit=True, fetch=False)
+
+		delete_documents_query = sql.SQL(
+			"DELETE FROM documents "
+			"WHERE documentbaseid IN (SELECT id FROM document_bases WHERE name = %s AND organisation_id = %s);"
+		)
+		execute_transaction(delete_documents_query, data, commit=True, fetch=False)
+
+		return True
+
+	except Exception as e:
+		logger.error(str(e))
+		return False
 
 def add_feedback(document_id: int, user_id: int, positive: bool, attribute: str, feedback_start: int = None, feedback_end: int = None):
 	"""
