@@ -337,7 +337,7 @@ def change_password(user: str, old_password: str, new_password: str):
 		logger.error(f"changePassword failed because: \n{e}")
 
 
-def delete_user(user: str, password: str):
+def delete_user_transaction(user: str, password: str):
 	"""
 	Deletes an existing user from the database.
  
