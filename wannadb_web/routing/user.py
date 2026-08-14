@@ -4,7 +4,7 @@ from flask import Blueprint, request, make_response
 from wannadb_web.util import Token, tokenEncode, tokenDecode
 from wannadb_web.postgres.queries import check_password, get_members_of_organisation, get_organisation_from_user_id, \
 	get_organisation_ids_from_user_id, get_organisation_name, get_username_suggestion
-from wannadb_web.postgres.transactions import (add_user, add_organisation, add_user_to_organisation_new, delete_user,
+from wannadb_web.postgres.transactions import (add_user, add_organisation, add_user_to_organisation_new, delete_user_transaction,
 											   leave_organisation_transaction, remove_user_from_organisation_new)
 
 user_management = Blueprint('user_management', __name__)
@@ -50,7 +50,7 @@ def login():
 							  'token': token}, 200)
 
 
-@user_management.route('/deleteUser/', methods=['POST'])
+@user_management.route('/deleteUser', methods=['DELETE'])
 def delete_user():
 	data = request.get_json()
 	username = data.get('username')
@@ -78,7 +78,7 @@ def delete_user():
 	if token.id != _id:
 		return make_response({'message': 'User not authorised '}, 401)
 
-	response = delete_user(username, password)
+	response = delete_user_transaction(username, password)
 
 	if response:
 		return make_response({'message': 'User deleted'}, 204)
