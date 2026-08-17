@@ -212,10 +212,12 @@ def get_base_id(base_name: str, org_id: int):
 	)
 
 	result = execute_query(select_query, (base_name, org_id))
-	if isinstance(result[0], int):
-		return int(result[0])
-	if result[0] is None:
+	print(f"get_base_id result: {result[0][0]} of type {type(result[0][0])}")  # Debugging line
+	if isinstance(result[0][0], int):
+		return int(result[0][0])
+	if result[0][0] is None:
 		return None
+	return None
 
 
 def get_document_base_data(base_name: str, organisation_id: int):
@@ -444,7 +446,7 @@ def get_document_bases_for_organisation(organisation_id: int):
 	if result is None or not result:
 		return []
 
-	doc_array = [{"id": id, "name": name, "attributes": attributes, "last_modified": last_modified} for id, name, attributes, last_modified in result]
+	doc_array = [{"id": id, "name": name, "attributes": attributes, "lastModified": last_modified} for id, name, attributes, last_modified in result]
 	return doc_array
 
 

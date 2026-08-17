@@ -249,6 +249,25 @@ def create_document_base_table(schema):
 	END $$;
 	""")
 	execute_transaction(add_last_modified_column_query, commit=True, fetch=False)
+ 
+	create_function_query = sql.SQL(f"""
+		CREATE OR REPLACE FUNCTION {schema}.update_last_modified()
+		RETURNS TRIGGER AS $$
+		BEGIN
+		NEW.last_modified = now();
+		RETURN NEW;
+		END;
+		$$ LANGUAGE plpgsql;
+	""")
+	execute_transaction(create_function_query, commit=True, fetch=False)
+ 
+	create_trigger_query = sql.SQL(f"""
+		CREATE TRIGGER IF NOT EXISTS update_last_modified_trigger
+		BEFORE UPDATE ON {schema}.document_bases
+		FOR EACH ROW
+		EXECUTE FUNCTION {schema}.update_last_modified();
+	""")
+	execute_transaction(create_trigger_query, commit=True, fetch=False)
 
 
 def create_organisation_table(schema):
@@ -636,6 +655,15 @@ def add_document(name: str, content: Union[str, bytes], organisationId: int, use
 	:rtype: Union[int, None]
 	"""
 	try:
+		# check if name already exists in the organisation
+		check_query = sql.SQL("SELECT id FROM documents WHERE name = %s AND organisationid = %s;")
+		check_result = execute_transaction(check_query, (name, organisationId), commit=True)
+		counter = 0
+		while check_result:
+			new_name = name + f"({counter})"
+			counter += 1
+			check_result = execute_transaction(check_query, (new_name, organisationId), commit=True)
+		name = new_name if counter > 0 else name
 		if isinstance(content, str):
 			if base_id is None:
 				insert_data_query = sql.SQL("INSERT INTO documents (name, content, organisationid, userid) "
@@ -657,6 +685,7 @@ def add_document(name: str, content: Union[str, bytes], organisationId: int, use
 				data_to_insert = (name, content, organisationId, userid, base_id)
 		response = execute_transaction(insert_data_query, data_to_insert, commit=True)
 		if not response:
+			logger.error("Failed to add document")
 			return "error occured"
 		return int(response[0][0])
 
@@ -686,10 +715,10 @@ def add_document_base(name: str, attributes: list[str], orgId: int, documents: l
 	"""
 	try:
 		insert_data_query = sql.SQL(
-			"INSERT INTO document_bases (name, attributes, organisation_id, admin) "
-			"VALUES (%s,%s,%s,%s) returning id;"
+			"INSERT INTO document_bases (name, attributes, organisation_id) "
+			"VALUES (%s,%s,%s) returning id;"
 		)
-		data = (name, attributes, orgId, None)
+		data = (name, attributes, orgId)
 		response = execute_transaction(insert_data_query, data, commit=True)
 		docBase_id = int(response[0][0])
 		for id in documents:
@@ -706,7 +735,7 @@ def add_document_base(name: str, attributes: list[str], orgId: int, documents: l
 		logger.error(str(i))
 		return -409
 	except Exception as e:
-		logger.log(str(e))
+		logger.error(str(e))
 		return -500
 
 
