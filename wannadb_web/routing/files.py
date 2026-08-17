@@ -22,7 +22,9 @@ def upload_files():
 
 	base_name = form.get("baseName")
 	if (base_name is not None):
+		print(f"base_name: {base_name}")
 		base_id = get_base_id(base_name, organisation_id)
+		print(f"base_id: {base_id}")
 		if base_id is None:
 			# if document base name was passed but no id could be found, we return a 404 for resource not found
 			return make_response({'error': 'document base not found'}, 404)

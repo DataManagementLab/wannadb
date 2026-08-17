@@ -92,14 +92,16 @@ def create_document_base():
 	statistics = Statistics(False)
 	user_id = _token.id
 
-	statisticsDump = pickle.dumps(statistics)
-	task = CreateDocumentBase().apply_async(args=(user_id, document_ids, attributes, statisticsDump,
-												  base_name, organisation_id))
 
 	doc_base_id = add_document_base(base_name, attributes, organisation_id, document_ids)
+
 	if doc_base_id < 0:
 		return make_response({"error": "Duplicated Entry!" if doc_base_id == -409 else "An error occured!"}, -doc_base_id)
 
+
+	statisticsDump = pickle.dumps(statistics)
+	task = CreateDocumentBase().apply_async(args=(user_id, document_ids, attributes, statisticsDump,
+												  base_name, organisation_id))
 	return make_response({'task_id': task.id, 'id': doc_base_id}, 202)
 
 @core_routes.route('/document_base/<organisation_id>/<base_name>', methods=['GET'])
