@@ -345,7 +345,7 @@ def get_document(document_id: int, user_id: int):
 							 """)
 
 	result = execute_query(select_query, (document_id, user_id,))
-	if len(result) > 0:
+	if result and len(result) > 0:
 		for document in result:
 			name = document[0]
 			if document[1]:
@@ -355,7 +355,7 @@ def get_document(document_id: int, user_id: int):
 				content = document[2]
 				return str(name), bytes(content)
 	else:
-		return None
+		return None, None
 
 
 def get_document_by_name_and_content(doc_name: str, doc_content: Union[str, bytes], user_id: int):
@@ -497,7 +497,7 @@ def delete_document_content(doc_id: int):
 		execute_transaction(delete_query, (doc_id,), commit=True, fetch=False)
 		return True
 	except Exception as e:
-		logger.error(f"updateDocumentContent failed because:\n{e}")
+		logger.error(f"deleteDocumentContent failed because:\n{e}")
 		return False
 
 

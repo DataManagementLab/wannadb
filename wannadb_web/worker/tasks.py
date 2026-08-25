@@ -169,6 +169,54 @@ class DocumentBaseLoad(BaseTask):
 		return self
 
 
+class DocumentBaseAddDocument(BaseTask):
+	name = "DocumentBaseAddDocument"
+
+	def run(self, user_id: int, document_name: str, document_content: str, base_name: str, organisation_id: int):
+		self.load()
+		api = WannaDB_WebAPI(user_id, base_name, organisation_id)
+		api.load_document_base_from_bson()
+		api.add_document(Document(document_name, document_content))
+		if api.signals.error.msg is None:
+			api.update_document_base_to_bson()
+			self.update(State.SUCCESS)
+			return self
+		self.update(State.ERROR)
+		return self
+
+
+class DocumentBaseRemoveDocument(BaseTask):
+	name = "DocumentBaseRemoveDocument"
+
+	def run(self, user_id: int, document_name: str, base_name: str, organisation_id: int):
+		self.load()
+		api = WannaDB_WebAPI(user_id, base_name, organisation_id)
+		api.load_document_base_from_bson()
+		api.remove_document(document_name)
+		if api.signals.error.msg is None:
+			api.update_document_base_to_bson()
+			self.update(State.SUCCESS)
+			return self
+		self.update(State.ERROR)
+		return self
+
+
+class DocumentBaseUpdateDocument(BaseTask):
+	name = "DocumentBaseUpdateDocument"
+
+	def run(self, user_id: int, document_name: str, document_content: str, base_name: str, organisation_id: int):
+		self.load()
+		api = WannaDB_WebAPI(user_id, base_name, organisation_id)
+		api.load_document_base_from_bson()
+		api.update_document(Document(document_name, document_content))
+		if api.signals.error.msg is None:
+			api.update_document_base_to_bson()
+			self.update(State.SUCCESS)
+			return self
+		self.update(State.ERROR)
+		return self
+
+
 class DocumentBaseAddAttributes(BaseTask):
 	name = "DocumentBaseAddAttributes"
 
@@ -197,7 +245,7 @@ class DocumentBaseAddAttributes(BaseTask):
 
 
 class DocumentBaseUpdateAttributes(BaseTask):
-	name = "DocumentBaseAddAttributes"
+	name = "DocumentBaseUpdateAttributes"
 
 	def run(self, user_id: int, attributes_strings: list[str], base_name: str, organisation_id: int):
 		self.load()
