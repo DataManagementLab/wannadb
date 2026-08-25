@@ -31,6 +31,8 @@ from wannadb_web.worker.data import DoAttributeRanking, ReloadDocumentBase, Sign
 logger = logging.getLogger(__name__)
 TIMEOUT = 600  # 10 minutes
 
+INPUT_DOCS_COLUMN_NAME = "input_document"
+
 
 class WannaDB_WebAPI:
 
@@ -178,7 +180,7 @@ class WannaDB_WebAPI:
 			self.sqLiteCacheDBWrapper.reset_cache_db()
 
 			document_base = DocumentBase(documents, attributes)
-			self.sqLiteCacheDBWrapper.cache_db.create_input_docs_table("input_document", document_base.documents)
+			self.sqLiteCacheDBWrapper.cache_db.create_input_docs_table(INPUT_DOCS_COLUMN_NAME, document_base.documents)
 
 			if not document_base.validate_consistency():
 				logger.error("Document base is inconsistent!")
@@ -221,7 +223,20 @@ class WannaDB_WebAPI:
 			self.sqLiteCacheDBWrapper.reset_cache_db()
 			self.signals.reset()
 
-			document_id, document = get_document_by_name(self.document_base_name, self.organisation_id, self.user_id)
+			try:
+				document_id, document = get_document_by_name(self.document_base_name, self.organisation_id, self.user_id)
+			except Exception as e:
+				if "No document with that name found" in str(e):
+					logger.error("Document not found!")
+					self.signals.error.emit(Exception("Document not found!"))
+					return
+				elif "Multiple documents with the same name found" in str(e):
+					logger.error("Multiple documents with the same name found!")
+					self.signals.error.emit(Exception("Multiple documents with the same name found!"))
+					return
+				else:
+					raise e
+
 			if not isinstance(document, bytes):
 				logger.error("document is not a DocumentBase!")
 				self.signals.error.emit(Exception("document is not a DocumentBase!"))
@@ -236,7 +251,7 @@ class WannaDB_WebAPI:
 
 			for attribute in document_base.attributes:
 				self.sqLiteCacheDBWrapper.cache_db.create_table_by_name(attribute.name)
-			self.sqLiteCacheDBWrapper.cache_db.create_input_docs_table("input_document", document_base.documents)
+			self.sqLiteCacheDBWrapper.cache_db.create_input_docs_table(INPUT_DOCS_COLUMN_NAME, document_base.documents)
 
 			logger.info(f"Document base loaded from BSON with id {document_id}.")
 			self.document_base = document_base
@@ -251,7 +266,7 @@ class WannaDB_WebAPI:
 		logger.debug("Called function 'save_document_base_to_bson'.")
 
 		try:
-			document_id = add_document(self.document_base_name, self.document_base.to_bson(), self.organisation_id,
+			document_id, _ = add_document(self.document_base_name, self.document_base.to_bson(), self.organisation_id,
 									  self.user_id)
 
 			if document_id is None:
@@ -331,6 +346,64 @@ class WannaDB_WebAPI:
 				writer = csv.writer(buffer, delimiter=",", quotechar='"', quoting=csv.QUOTE_ALL)
 				writer.writerow(headers)
 				writer.writerows(rows)
+		except Exception as e:
+			logger.error(str(e))
+			self.signals.error.emit(e)
+			raise e
+
+	def add_document(self, document: Document):
+		logger.debug("Called function 'add_document'.")
+		if not isinstance(document, Document):
+			logger.error("Document must be of type Document!")
+			self.signals.error.emit(Exception("Document must be of type Document!"))
+			return
+		try:
+			self.document_base.documents.append(document)
+			self.sqLiteCacheDBWrapper.cache_db.add_document_to_input_docs_table(INPUT_DOCS_COLUMN_NAME, len(self.document_base.documents) - 1, document.name)
+			logger.info(f"Document '{document.name}' added to document base.")
+			self.signals.status.emit(f"Document '{document.name}' added to document base.")
+		except Exception as e:
+			logger.error(str(e))
+			self.signals.error.emit(e)
+			raise e
+
+	def remove_document(self, document: Document):
+		logger.debug("Called function 'remove_document'.")
+		if not isinstance(document, Document):
+			logger.error("Document must be of type Document!")
+			self.signals.error.emit(Exception("Document must be of type Document!"))
+			return
+		try:
+			if document in self.document_base.documents:
+				idx = self.document_base.documents.index(document)
+				self.document_base.documents.remove(document)
+				self.sqLiteCacheDBWrapper.cache_db.remove_document_from_input_docs_table(INPUT_DOCS_COLUMN_NAME, idx)
+				logger.info(f"Document '{document.name}' removed from document base.")
+				self.signals.status.emit(f"Document '{document.name}' removed from document base.")
+			else:
+				logger.error(f"Document '{document.name}' not found in document base.")
+				self.signals.error.emit(Exception(f"Document '{document.name}' not found in document base."))
+		except Exception as e:
+			logger.error(str(e))
+			self.signals.error.emit(e)
+			raise e
+
+	def update_document(self, document: Document):
+		logger.debug("Called function 'update_document'.")
+		if not isinstance(document, Document):
+			logger.error("Document must be of type Document!")
+			self.signals.error.emit(Exception("Document must be of type Document!"))
+			return
+		try:
+			for ix, doc in enumerate(self.document_base.documents):
+				if doc.name == document.name:
+					self.document_base.documents[ix] = document
+					self.sqLiteCacheDBWrapper.cache_db.update_document_in_input_docs_table(INPUT_DOCS_COLUMN_NAME, ix, document.name)
+					logger.info(f"Document '{document.name}' updated in document base.")
+					self.signals.status.emit(f"Document '{document.name}' updated in document base.")
+					return
+			logger.error(f"Document '{document.name}' not found in document base.")
+			self.signals.error.emit(Exception(f"Document '{document.name}' not found in document base."))
 		except Exception as e:
 			logger.error(str(e))
 			self.signals.error.emit(e)

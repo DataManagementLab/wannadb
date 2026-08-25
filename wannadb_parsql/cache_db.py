@@ -101,6 +101,19 @@ class SQLiteCacheDB:
         self.create_table_by_name(table_name)
         self.store_many(table_name, ((i, Path(doc.name).name) for i, doc in enumerate(documents)))
 
+    def add_document_to_input_docs_table(self, table_name, document_id, document_name):
+        self.store_many(table_name, [(document_id, Path(document_name).name)])
+
+    def remove_document_from_input_docs_table(self, table_name, document_id):
+        c = self.conn.cursor()
+        c.execute(f''' DELETE FROM {table_name} WHERE {DOCUMENT_ID} = ? ''', (document_id,))
+        self.conn.commit()
+
+    def update_document_in_input_docs_table(self, table_name, document_id, document_name):
+        c = self.conn.cursor()
+        c.execute(f''' UPDATE {table_name} SET value = ? WHERE {DOCUMENT_ID} = ? ''', (Path(document_name).name, document_id))
+        self.conn.commit()
+
     def delete_tables(self, attributes: List[ColumnToken]):
         c = self.conn.cursor()
         for attribute in attributes:

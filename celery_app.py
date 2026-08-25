@@ -3,7 +3,7 @@ import os
 
 from celery import Celery
 
-from wannadb_web.worker.tasks import BaseTask, DocumentBaseAddAttributes, DocumentBaseConfirmMultipleNuggets, DocumentBaseConfirmNugget, DocumentBaseForgetMatches, DocumentBaseForgetMatchesForAttribute, DocumentBaseGetOrderedNuggets, DocumentBaseInteractiveTablePopulation, DocumentBaseLoad, DocumentBaseNoMatchForDocument, DocumentBaseRemoveAttributes, DocumentBaseStartRanking, DocumentBaseStopMatching, DocumentBaseUpdateAttributes, ReloadDocumentBaseTask, TestTask, InitManager, CreateDocumentBase
+from wannadb_web.worker.tasks import BaseTask, DocumentBaseAddAttributes, DocumentBaseAddDocument, DocumentBaseConfirmMultipleNuggets, DocumentBaseConfirmNugget, DocumentBaseForgetMatches, DocumentBaseForgetMatchesForAttribute, DocumentBaseGetOrderedNuggets, DocumentBaseInteractiveTablePopulation, DocumentBaseLoad, DocumentBaseNoMatchForDocument, DocumentBaseRemoveAttributes, DocumentBaseRemoveDocument, DocumentBaseStartRanking, DocumentBaseStopMatching, DocumentBaseUpdateAttributes, DocumentBaseUpdateDocument, ReloadDocumentBaseTask, TestTask, InitManager, CreateDocumentBase
 
 logging.basicConfig(level=logging.DEBUG, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 
@@ -16,6 +16,9 @@ app.register_task(TestTask)
 app.register_task(InitManager)
 app.register_task(CreateDocumentBase)
 app.register_task(DocumentBaseLoad)
+app.register_task(DocumentBaseAddDocument)
+app.register_task(DocumentBaseRemoveDocument)
+app.register_task(DocumentBaseUpdateDocument)
 app.register_task(DocumentBaseAddAttributes)
 app.register_task(DocumentBaseUpdateAttributes)
 app.register_task(DocumentBaseRemoveAttributes)

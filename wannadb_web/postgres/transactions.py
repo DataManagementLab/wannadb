@@ -262,7 +262,9 @@ def create_document_base_table(schema):
 	execute_transaction(create_function_query, commit=True, fetch=False)
  
 	create_trigger_query = sql.SQL(f"""
-		CREATE TRIGGER IF NOT EXISTS update_last_modified_trigger
+		DROP TRIGGER IF EXISTS update_last_modified_trigger ON {schema}.document_bases;
+		
+  		CREATE TRIGGER update_last_modified_trigger
 		BEFORE UPDATE ON {schema}.document_bases
 		FOR EACH ROW
 		EXECUTE FUNCTION {schema}.update_last_modified();
@@ -651,8 +653,8 @@ def add_document(name: str, content: Union[str, bytes], organisationId: int, use
 	:type userid: int
 	:param base_id: Optional ID of the document base to associate with the document
 	:type base_id: int
-	:return: ID of the newly created document or None if an error occurred
-	:rtype: Union[int, None]
+	:return: ID of the newly created document and its name, or None if an error occurred
+	:rtype: Union[Tuple[int, str], Tuple[None, None]]
 	"""
 	try:
 		# check if name already exists in the organisation
@@ -660,8 +662,8 @@ def add_document(name: str, content: Union[str, bytes], organisationId: int, use
 		check_result = execute_transaction(check_query, (name, organisationId), commit=True)
 		counter = 0
 		while check_result:
-			new_name = name + f"({counter})"
 			counter += 1
+			new_name = f"{name}({counter})"
 			check_result = execute_transaction(check_query, (new_name, organisationId), commit=True)
 		name = new_name if counter > 0 else name
 		if isinstance(content, str):
@@ -686,16 +688,16 @@ def add_document(name: str, content: Union[str, bytes], organisationId: int, use
 		response = execute_transaction(insert_data_query, data_to_insert, commit=True)
 		if not response:
 			logger.error("Failed to add document")
-			return "error occured"
-		return int(response[0][0])
+			return "error occured", None
+		return int(response[0][0]), name
 
 	except IntegrityError as i:
 		logger.error(str(i))
-		return None
+		return None, None
 
 	except Exception as e:
 		logger.error(str(e))
-		return None
+		return None, None
 
 
 def add_document_base(name: str, attributes: list[str], orgId: int, documents: list[int]):
