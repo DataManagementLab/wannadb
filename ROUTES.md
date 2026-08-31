@@ -498,7 +498,7 @@ The File Routes category includes various endpoints for managing files within th
 
     ```json
     {
-        "documentId": "document_id",
+        "documentName": "document_name",
         "newContent": "new_content"
     }
     ```

@@ -123,8 +123,10 @@ class RankingBasedMatcher(BaseMatcher):
                 }
             )
 
-            if not feedback_result["do-attribute"]:
+            print(f"Feedback result for attribute '{attribute.name}': {feedback_result}")
+            if not feedback_result.get("do-attribute", False):
                 logger.info(f"Skip attribute '{attribute.name}'.")
+                print(f"Skip attribute '{attribute.name}'.")
                 statistics[attribute.name]["skipped"] = True
                 continue
 
@@ -287,10 +289,16 @@ class RankingBasedMatcher(BaseMatcher):
                         for _doc in document_base.documents:
                             if _doc.name == feedback_result["nugget"]["document"]["name"]:
                                 for _nugget in _doc.nuggets:
-                                    if _nugget.start_char == feedback_result["nugget"]["start_char"] and \
-                                            _nugget.end_char == feedback_result["nugget"]["end_char"]:
+                                    if _nugget.start_char == int(feedback_result["nugget"]["start_char"]) and \
+                                            _nugget.end_char == int(feedback_result["nugget"]["end_char"]):
                                         feedback_result["nugget"] = _nugget
                                         break
+                                else:
+                                    logger.warning(f"Found no matching nugget in document {_doc.name}")
+                                break
+                        else:
+                            logger.warning(f"Found no matching document for nugget {feedback_result['nugget']}. ")
+                    print(feedback_result["nugget"])
                     d = feedback_result["nugget"].document
                     if d in remaining_documents:
                         remaining_documents.remove(d)
@@ -350,6 +358,14 @@ class RankingBasedMatcher(BaseMatcher):
 
                     statistics[attribute.name]["num_confirmed_match"] += 1
 
+                    if not isinstance(feedback_result["document"], Document): # as WebApp works with json serialization
+                        for _doc in document_base.documents:
+                            if _doc.name == feedback_result["document"]["name"]:
+                                feedback_result["document"] = _doc
+                                break
+                        else:
+                            logger.warning(f"Found no matching document for nugget {feedback_result['nugget']}. ")
+                    
                     confirmed_nugget = InformationNugget(feedback_result["document"], feedback_result["start"], feedback_result["end"])
                     logger.info(f"Custom match: '{confirmed_nugget}'")
                     confirmed_nugget[ExtractorNameSignal] = "<CUSTOM_SELECTION>"
@@ -488,7 +504,7 @@ class RankingBasedMatcher(BaseMatcher):
                                     if nugget is feedback_result["nugget"]:
                                         nugget_ix = ix
                                         break
-                                assert nugget_ix != -1
+                                assert nugget_ix != -1, "Confirmed nugget not found in ranked list of nuggets."
 
                                 if nugget_ix < len(feedback_nuggets) - 1:
                                     max_dist = 0
@@ -515,6 +531,19 @@ class RankingBasedMatcher(BaseMatcher):
 
                 elif feedback_result["message"] == "multi-match":
                     for nugget in feedback_result["nuggets"]:
+                        if not isinstance(nugget, InformationNugget):  # as WebApp works with json serialization
+                            for _doc in document_base.documents:
+                                if _doc.name == nugget["document"]["name"]:
+                                    for _nugget in _doc.nuggets:
+                                        if _nugget.start_char == int(nugget["start_char"]) and \
+                                                _nugget.end_char == int(nugget["end_char"]):
+                                            nugget = _nugget
+                                            break
+                                    else:
+                                        logger.warning(f"Found no matching nugget in document {_doc.name}")
+                                    break
+                            else:
+                                logger.warning(f"Found no matching document for nugget {nugget}. ")
                         statistics[attribute.name]["num_confirmed_match"] += 1
                         nugget.document.attribute_mappings[attribute.name] = [nugget]
                         try: remaining_documents.remove(nugget.document)

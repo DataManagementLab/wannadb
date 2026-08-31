@@ -480,7 +480,9 @@ def confirm_nugget_custom():
         "nuggetText": "nugget_as_text",
         "startIndex": "start_index_of_nugget",
         "endIndex": "end_index_of_nugget",
-        "interactiveCallTaskId": "interactive_call_task_id"
+        "noMatchText": "no_match_nugget_as_text",
+        "noMatchStartIndex": "start_index_of_no_match_nugget",
+        "noMatchEndIndex": "end_index_of_no_match_nugget"
     }
     """
 	form = request.get_json()
@@ -494,8 +496,9 @@ def confirm_nugget_custom():
 	nugget_text = form.get("nuggetText")
 	start_index: Optional[int]  = form.get("startIndex")
 	end_index: Optional[int]  = form.get("endIndex")
-	
-	i_task_id = form.get("interactiveCallTaskId")
+	not_a_match_text: Optional[str] = form.get("noMatchText")
+	not_a_match_start_index: Optional[int] = int(form.get("noMatchStartIndex")) if form.get("noMatchStartIndex") is not None else None
+	not_a_match_end_index: Optional[int] = int(form.get("noMatchEndIndex")) if form.get("noMatchEndIndex") is not None else None
 
 	if (organisation_id is None 
      	or base_name is None 
@@ -504,8 +507,10 @@ def confirm_nugget_custom():
         or authorization is None 
         or nugget_text is None 
         or start_index is None 
-        or end_index is None 
-        or i_task_id is None):
+        or end_index is None
+        or not_a_match_text is None
+        or not_a_match_start_index is None
+        or not_a_match_end_index is None):
      
 		return make_response({"error": "missing parameters"}, 400)
 
@@ -525,7 +530,9 @@ def confirm_nugget_custom():
                                                         nugget_text,
                                                         start_index,
                                                         end_index,
-                                                        i_task_id
+                                                        not_a_match_text,
+														not_a_match_start_index,
+														not_a_match_end_index
                                                     ))
 	
 	return make_response({'task_id': task.id}, 202)
@@ -547,8 +554,7 @@ def confirm_nugget_match():
         "documentContent": "your_document_content",
         "nuggetText": "nugget_as_text",
         "startIndex": "start_index_of_nugget",
-        "endIndex": "end_index_of_nugget",
-        "interactiveCallTaskId": "interactive_call_task_id"
+        "endIndex": "end_index_of_nugget"
     }
     """
 	form = request.get_json()
@@ -562,8 +568,9 @@ def confirm_nugget_match():
 	nugget_text = form.get("nuggetText")
 	start_index: Optional[int]  = int(form.get("startIndex")) if form.get("startIndex") is not None else None
 	end_index: Optional[int]  = int(form.get("endIndex")) if form.get("endIndex") is not None else None
-
-	i_task_id = form.get("interactiveCallTaskId")
+	not_a_match_text: Optional[str] = form.get("noMatchText")
+	not_a_match_start_index: Optional[int]  = int(form.get("noMatchStartIndex")) if form.get("noMatchStartIndex") is not None else None
+	not_a_match_end_index: Optional[int]  = int(form.get("noMatchEndIndex")) if form.get("noMatchEndIndex") is not None else None
 
 	if (organisation_id is None 
      	or base_name is None 
@@ -572,9 +579,8 @@ def confirm_nugget_match():
         or authorization is None 
         or nugget_text is None 
         or start_index is None 
-        or end_index is None 
-        or i_task_id is None):
-     
+        or end_index is None):
+
 		return make_response({"error": "missing parameters"}, 400)
 
 	_token = tokenDecode(authorization)
@@ -583,10 +589,6 @@ def confirm_nugget_match():
 		return make_response({"error": "invalid token"}, 401)
 	
 	user_id = _token.id
- 
-	document = Document(document_name, document_content)
- 
-	nugget = InformationNugget(document, start_index, end_index)
 	
 	task = DocumentBaseConfirmNugget().apply_async(args=(
      													user_id, 
@@ -594,10 +596,12 @@ def confirm_nugget_match():
                                                        	organisation_id, 
                                                         document_name, 
                                                         document_content,
-														None,
+                                                        None, # needed here (otherwise custom nugget is used)
                                                         start_index,
                                                         end_index,
-                                                        i_task_id
+                                                        not_a_match_text,
+														not_a_match_start_index,
+														not_a_match_end_index
                                                     ))
 	
 	return make_response({'task_id': task.id}, 202)
@@ -630,8 +634,7 @@ def confirm_nugget_multi_match():
                 "startIndex": "start_index_of_nugget_2",
                 "endIndex": "end_index_of_nugget_2",
             }
-        ],
-		"interactiveCallTaskId": "interactive_call_task_id"
+        ]
     }
 	"""
 	form = request.get_json()
@@ -659,8 +662,8 @@ def confirm_nugget_multi_match():
 	documents_and_nuggets = [(
 		nugget.get("documentName"),
 		nugget.get("documentContent"),
-		nugget.get("startIndex"),
-		nugget.get("endIndex")
+		int(nugget.get("startIndex")) if nugget.get("startIndex") is not None else None,
+		int(nugget.get("endIndex")) if nugget.get("endIndex") is not None else None
 	) for nugget in nuggets]
 
 	task = DocumentBaseConfirmMultipleNuggets().apply_async(args=(
@@ -689,8 +692,7 @@ def confirm_no_match_in_document():
         "documentContent": "your_document_content",
         "nuggetText": "nugget_as_text",
         "startIndex": "start_index_of_nugget",
-        "endIndex": "end_index_of_nugget",
-        "interactiveCallTaskId": "interactive_call_task_id"
+        "endIndex": "end_index_of_nugget"
     }
     """
 	form = request.get_json()
@@ -705,8 +707,6 @@ def confirm_no_match_in_document():
 	start_index: Optional[int]  = int(form.get("startIndex")) if form.get("startIndex") is not None else None
 	end_index: Optional[int]  = int(form.get("endIndex")) if form.get("endIndex") is not None else None
 
-	i_task_id = form.get("interactiveCallTaskId")
-
 	if (organisation_id is None
      	or base_name is None
       	or document_name is None
@@ -714,8 +714,7 @@ def confirm_no_match_in_document():
         or authorization is None
         or nugget_text is None
         or start_index is None
-        or end_index is None
-        or i_task_id is None):
+        or end_index is None):
 
 		return make_response({"error": "missing parameters"}, 400)
 
@@ -734,8 +733,7 @@ def confirm_no_match_in_document():
                                                         document_content,
                                                         nugget_text,
                                                         start_index,
-                                                        end_index,
-                                                        i_task_id
+                                                        end_index
                                                     ))
 
 	return make_response({'task_id': task.id}, 202)

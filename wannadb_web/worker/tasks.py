@@ -109,7 +109,7 @@ class CreateDocumentBase(BaseTask):
 		"""
 		init api
 		"""
-		api = WannaDB_WebAPI(user_id, base_name, organisation_id)
+		api = WannaDB_WebAPI(user_id, base_name, organisation_id, timeout=len(document_ids) * 60)
 
 		"""
 		Creating document base
@@ -192,7 +192,14 @@ class DocumentBaseRemoveDocument(BaseTask):
 		self.load()
 		api = WannaDB_WebAPI(user_id, base_name, organisation_id)
 		api.load_document_base_from_bson()
-		api.remove_document(document_name)
+		_doc = None
+		for doc in api._document_base.documents:
+			if doc.name == document_name:
+				_doc = doc
+				break
+		if _doc is None:
+			raise Exception(f"Document with name {document_name} not found")
+		api.remove_document(_doc)
 		if api.signals.error.msg is None:
 			api.update_document_base_to_bson()
 			self.update(State.SUCCESS)
@@ -429,9 +436,12 @@ class DocumentBaseGetOrderedNuggets(BaseTask):
 class DocumentBaseConfirmNugget(BaseTask):
 	name = "DocumentBaseConfirmNugget"
 
-	def run(self, user_id: int, base_name: str, organisation_id: int,
-			document_name: str, document_text: str, nugget: Optional[str],
-			start_index: Union[int, None], end_index: Union[int, None], interactive_call_task_id: str):
+	def run(
+     	self, user_id: int, base_name: str, organisation_id: int,
+	 	document_name: str, document_text: str, nugget: str,
+	 	start_index: int, end_index: int, not_a_match_text: Optional[str],
+   		not_a_match_start_index: Optional[int], not_a_match_end_index: Optional[int]
+	):
 		"""
 		:param user_id: user id
 		:param base_name: name of base document
@@ -441,17 +451,21 @@ class DocumentBaseConfirmNugget(BaseTask):
 		:param nugget: the Nugget that gets confirmed
 		:param start_index: start of the nugget in the document (optional) if start and end is None the nugget is not in the document
 		:param end_index: end of the nugget in the document (optional) if start and end is None the nugget is not in the document
-		:param interactive_call_task_id: the same task id that's used for interactive call
+		:param not_a_match_text: text of the nugget that is not a match
+		:param not_a_match_start_index: start of the nugget that is not a match
+		:param not_a_match_end_index: end of the nugget that is not a match
 		"""
 		self._signals = Signals(str(user_id))
 		self._redis_client = RedisCache(str(user_id))
 		self.load()
-
+  
 		document = Document(document_name, document_text)
+  
 		if nugget is None:
-			nugget = InformationNugget(document=document, start_char=start_index, end_char=end_index)
+			nugget = InformationNugget(document=document, start_char=int(start_index), end_char=int(end_index))
+		not_a_match = InformationNugget(document=document, start_char=not_a_match_start_index, end_char=not_a_match_end_index) if not_a_match_text else None
 
-		self._signals.match_feedback.emit(match_feedback(nugget, document, start_index, end_index))
+		self._signals.match_feedback.emit(match_feedback(nugget, document, start_index, end_index, not_a_match=not_a_match))
 		# no need to update the document base the doc will be saved in the interactive call
 		self.update(State.SUCCESS)
 		return self
@@ -490,8 +504,9 @@ class DocumentBaseNoMatchForDocument(BaseTask):
 	name = "DocumentBaseNoMatchForDocument"
 
 	def run(self, user_id: int, base_name: str, organisation_id: int,
-			document_name: str, document_text: str, nugget: Optional[str],
-			start_index: Union[int, None], end_index: Union[int, None], interactive_call_task_id: str):
+			document_name: str, document_text: str,
+   			nugget: Optional[str], start_index: Union[int, None], end_index: Union[int, None]
+		):
 		"""
 		:param user_id: user id
 		:param base_name: name of base document
@@ -501,7 +516,6 @@ class DocumentBaseNoMatchForDocument(BaseTask):
 		:param nugget: the Nugget that gets confirmed
 		:param start_index: start of the nugget in the document (optional) if start and end is None the nugget is not in the document
 		:param end_index: end of the nugget in the document (optional) if start and end is None the nugget is not in the document
-		:param interactive_call_task_id: the same task id that's used for interactive call
 		"""
 		self._signals = Signals(str(user_id))
 		self._redis_client = RedisCache(str(user_id))
@@ -509,9 +523,9 @@ class DocumentBaseNoMatchForDocument(BaseTask):
 
 		document = Document(document_name, document_text)
 		if nugget is None:
-			nugget = InformationNugget(document=document, start_char=start_index, end_char=end_index)
+			nugget = InformationNugget(document=document, start_char=int(start_index), end_char=int(end_index))
 	
-		self._signals.match_feedback.emit(no_match(nugget))
+		self._signals.match_feedback.emit(no_match(nugget, document, int(start_index), int(end_index)))
 		# no need to update the document base the doc will be saved in the interactive call
 		self.update(State.SUCCESS)
 		return self
@@ -528,23 +542,45 @@ def nugget_exist(nugget: str, document: Document, start_index: int, end_index: i
 	raise Exception("Nugget does not exist in the given Text")
 
 
-def match_feedback(nugget: Union[str, InformationNugget], document: Document,
-				   start_index: Optional[int] = None, end_index: Optional[int] = None) -> Union[NuggetMatchFeedback, CustomMatchFeedback]:
-	if isinstance(nugget, str):
-		if document is None:
-			logger.error("The document is missing in document base")
-			raise Exception("The document is missing in document base")
-		if start_index is None or end_index is None:
-			logger.error("Start-index or end-index are missing to find the custom nugget")
-			raise Exception("Start-index or end-index are missing to find the custom nugget")
-		return CustomMatchFeedback(document, start_index, end_index)
-	if isinstance(nugget, InformationNugget):
-		return NuggetMatchFeedback(nugget, None)
-	raise Exception("Invalid nugget type")
+def match_feedback(
+    nugget: Union[str, InformationNugget], document: Document,
+	start_index: Optional[int] = None, end_index: Optional[int] = None,
+	not_a_match: Optional[InformationNugget] = None
+) -> Union[NuggetMatchFeedback, CustomMatchFeedback]:
+    """
+    Generate match feedback for a nugget.
+    """
+    if isinstance(nugget, str):
+        if document is None:
+            logger.error("The document is missing in document base")
+            raise Exception("The document is missing in document base")
+        if start_index is None or end_index is None:
+            logger.error("Start-index or end-index are missing to find the custom nugget")
+            raise Exception("Start-index or end-index are missing to find the custom nugget")
+        print(f"nugget: {nugget}, document: {document.name}, start_index: {int(start_index)}, end_index: {int(end_index)}")
+        return CustomMatchFeedback(document, start_index, end_index)
+    if isinstance(nugget, InformationNugget):
+        return NuggetMatchFeedback(nugget, not_a_match)
+    raise Exception("Invalid nugget type")
 
 def multi_match_feedback(nuggets: list[InformationNugget]):
-	logger.debug("multi_match_feedback")
-	return MultiNuggetsMatchFeedback(nuggets)
+    """
+    Generate match feedback for multiple nuggets.
+    """
+    logger.debug("multi_match_feedback")
+    return MultiNuggetsMatchFeedback(nuggets)
 
-def no_match(nugget: InformationNugget) -> NoMatchFeedback:
-	return NoMatchFeedback(nugget, nugget)
+def no_match(nugget: Union[InformationNugget, str], document: Document, start_index: Optional[int] = None, end_index: Optional[int] = None) -> NoMatchFeedback:
+    """
+    Generate no match feedback for a nugget.
+    """
+    if isinstance(nugget, str):
+        if document is None:
+            logger.error("The document is missing in document base")
+            raise Exception("The document is missing in document base")
+        if start_index is None or end_index is None:
+            logger.error("Start-index or end-index are missing to find the custom nugget")
+            raise Exception("Start-index or end-index are missing to find the custom nugget")
+        nugget = InformationNugget(document=document, start_char=start_index, end_char=end_index)
+        return NoMatchFeedback(nugget, nugget)
+    return NoMatchFeedback(nugget, nugget)

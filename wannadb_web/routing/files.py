@@ -1,7 +1,7 @@
 from flask import Blueprint, request, make_response
 from flask_cors import cross_origin
 
-from wannadb_web.worker.tasks import DocumentBaseAddDocument, DocumentBaseRemoveDocument
+from wannadb_web.worker.tasks import DocumentBaseAddDocument, DocumentBaseRemoveDocument, DocumentBaseUpdateDocument
 from wannadb_web.postgres.queries import delete_document_content, get_base_id, get_document, get_document_bases_for_organisation, get_document_by_name, get_document_by_name_and_content, get_documents_for_organisation, \
 	update_document_content
 
@@ -87,7 +87,7 @@ def get_documentbase_for_organization(_id):
 
 	return make_response(document_base, 200)
 
-@main_routes.route('/update/file/content', methods=['POST'])
+@main_routes.route('/update/file/content', methods=['PUT'])
 def update_file_content():
 	authorization = request.headers.get("Authorization")
  
@@ -97,18 +97,26 @@ def update_file_content():
 
  
 	data = request.get_json()
-	docId = data.get('documentId')
+	doc_name = data.get('documentName')
 	newContent = data.get('newContent')
-	if docId is None or newContent is None:
+	base_name = data.get('baseName')
+	organisation_id = data.get('organisationId')
+	if doc_name is None or newContent is None or organisation_id is None or base_name is None:
 		return make_response({'error': 'missing parameters'}, 400)
 
-	status = update_document_content(docId, newContent)
+	try:
+		doc_id, _ = get_document_by_name(doc_name, organisation_id, token.id)
+	except Exception as e:
+		print(f"Error retrieving document by name: {e}")
+		return make_response({'error': 'document not found'}, 404)
+	status = update_document_content(doc_id, newContent)
 
 	if status:
-		print(f"Document with id {docId} updated successfully.")
-		return make_response({"status": status}, )
+		DocumentBaseUpdateDocument().apply_async(args=(token.id, doc_name, newContent, base_name, organisation_id))
+		print(f"Document with id {doc_id} updated successfully.")
+		return make_response({"status": status}, 200)
 	else:
-		print(f"Failed to update document with id {docId}.")
+		print(f"Failed to update document with id {doc_id}.")
 		return make_response({"status": status}, 400)
 
 @main_routes.route('/file/delete', methods=['DELETE'])
