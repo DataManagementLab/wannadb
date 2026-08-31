@@ -36,7 +36,7 @@ INPUT_DOCS_COLUMN_NAME = "input_document"
 
 class WannaDB_WebAPI:
 
-	def __init__(self, user_id: int, document_base_name: str, organisation_id: int):
+	def __init__(self, user_id: int, document_base_name: str, organisation_id: int, timeout: int = TIMEOUT):
 		self._document_id: Optional[int] = None
 		self._document_base: Optional[DocumentBase] = None
 		self.user_id = user_id
@@ -58,7 +58,7 @@ class WannaDB_WebAPI:
 			feedback_request["identifier"] = pipeline_element_identifier
 
 			start_time = time.time()
-			while (time.time() - start_time) < TIMEOUT:
+			while (time.time() - start_time) < max(timeout, TIMEOUT):
 				msg = self.signals.match_feedback.msg
 
 				self.signals.feedback_request_to_ui.emit(feedback_request)
@@ -397,6 +397,7 @@ class WannaDB_WebAPI:
 		try:
 			for ix, doc in enumerate(self.document_base.documents):
 				if doc.name == document.name:
+					_old_doc = self.document_base.documents[ix]
 					self.document_base.documents[ix] = document
 					self.sqLiteCacheDBWrapper.cache_db.update_document_in_input_docs_table(INPUT_DOCS_COLUMN_NAME, ix, document.name)
 					logger.info(f"Document '{document.name}' updated in document base.")
