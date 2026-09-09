@@ -55,7 +55,7 @@ services:
 
 
   postgres:
-    image: postgres
+    image: postgres:16
     container_name: postgres-container
     environment:
       POSTGRES_PASSWORD: 0
