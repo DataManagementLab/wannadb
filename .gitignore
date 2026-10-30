@@ -2,14 +2,20 @@
 /.idea/
 **/__pycache__/
 /.pytest_cache/
+.DS_Store
+.python-version
 
 /models/
 /cache/
 /build/
-/executable/
-.json
-.pdf
-.bson
+/executables/
+/event_logs/
+
+*.json
+*.pdf
+*.bson
+
+
 /evaluation/datasets/aviation/documents
 /evaluation/datasets/nobel/documents
 /evaluation/results/
