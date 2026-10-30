@@ -241,7 +241,7 @@ class RankingBasedMatcher(BaseMatcher):
                     # Add additional documents (most uncertain)...
                     if self.num_bad_docs > 0 and num_nuggets_above > 0:
                         k = min(self.num_bad_docs, num_nuggets_above)
-                        new_docs = random.choices(remaining_documents[:num_nuggets_above], k=k)
+                        new_docs = random.sample(remaining_documents[:num_nuggets_above], k=k)
                         selected_documents.extend(new_docs)
                         num_nuggets_above -= k
                         # Mark best matches of newly added docs as newly added nuggets if they weren't present in previous feedback round
@@ -249,9 +249,12 @@ class RankingBasedMatcher(BaseMatcher):
                     # ...  and those that recently got interesting additional extractions to the list
                     if self.num_recent_docs > 0 and len(docs_with_added_nuggets) > 0:
                         # Create a list up to double the size wanted and then sample from that instead of only taking the same most promising documents potentially over and over again
-                        selected_docs_with_added_nuggets = [d for d, _ in docs_with_added_nuggets.most_common(self.num_recent_docs * 2)] #random.choices(list(docs_with_added_nuggets), k=k)
+                        pending_documents = set(remaining_documents)
+                        selected_docs_with_added_nuggets = [
+                            d for d, _ in docs_with_added_nuggets.most_common() if d in pending_documents
+                        ][:self.num_recent_docs * 2]
                         if len(selected_docs_with_added_nuggets) > self.num_recent_docs:
-                            selected_docs_with_added_nuggets = random.choices(selected_docs_with_added_nuggets, k=self.num_recent_docs)
+                            selected_docs_with_added_nuggets = random.sample(selected_docs_with_added_nuggets, k=self.num_recent_docs)
                         selected_documents.extend(selected_docs_with_added_nuggets)
                         # Mark best matches of newly added docs as newly added nuggets if they weren't present in previous feedback round
                         self._update_new_nugget_contexts(selected_docs_with_added_nuggets,
@@ -263,6 +266,7 @@ class RankingBasedMatcher(BaseMatcher):
                     docs_at_threshold_to_add = [doc for doc in remaining_documents[higher_left:lower_right] if
                                                 doc not in selected_docs_with_added_nuggets]
                     selected_documents.extend(docs_at_threshold_to_add)
+                    selected_documents = list(dict.fromkeys(selected_documents))
                     # Mark best matches of selected docs as newly added if they weren't present in previous feedback round
                     self._update_new_nugget_contexts(docs_at_threshold_to_add, AddedReason.AT_THRESHOLD, old_distances)
 
@@ -280,7 +284,9 @@ class RankingBasedMatcher(BaseMatcher):
                             doc.nuggets[doc[CurrentMatchIndexSignal]] for doc in selected_documents)
                     )
                 )
-                all_guessed_nugget_matches = tuple([doc.nuggets[doc[CurrentMatchIndexSignal]] for doc in document_base.documents])
+                all_guessed_nugget_matches = tuple(
+                    doc.nuggets[doc[CurrentMatchIndexSignal]] for doc in document_base.documents if doc.nuggets
+                )
                 num_feedback += 1
                 statistics[attribute.name]["num_feedback"] += 1
 
@@ -487,107 +493,82 @@ class RankingBasedMatcher(BaseMatcher):
 
                     old_distances[confirmed_nugget] = confirmed_nugget[CachedDistanceSignal]
 
-                elif feedback_result["message"] == "is-match":
-                    statistics[attribute.name]["num_confirmed_match"] += 1
-                    feedback_result["nugget"].document.attribute_mappings[attribute.name] = [feedback_result["nugget"]]
-                    doc = feedback_result["nugget"].document
-                    try:
-                        for d in remaining_documents:
-                            if d.name == doc.name:
-                                remaining_documents.remove(d)
-                                break
-                        #remaining_documents.remove(doc)
-                    except ValueError:
-                        logger.warning(f"Trying to remove document {doc.name} from remaining documents, but it was already removed before. {len(remaining_documents)} remaining documents: {', '.join(d.name for d in remaining_documents)}.")
-                    if doc in docs_with_added_nuggets:
-                        docs_with_added_nuggets.pop(doc)
+                elif feedback_result["message"] in ("is-match", "multi-match"):
+                    is_batch = feedback_result["message"] == "multi-match"
+                    requested_nuggets = (feedback_result.get("nuggets", []) if is_batch
+                                         else [feedback_result["nugget"]])
+                    pending_documents = {id(document) for document in remaining_documents}
+                    displayed_nuggets = {id(nugget) for nugget in feedback_nuggets}
+                    confirmed_nuggets = []
+                    confirmed_documents = set()
+                    for nugget in requested_nuggets:
+                        if (id(nugget.document) not in pending_documents
+                                or not any(candidate is nugget for candidate in nugget.document.nuggets)
+                                or (is_batch and id(nugget) not in displayed_nuggets)):
+                            logger.warning("Ignoring confirmation containing a stale or unavailable nugget.")
+                            confirmed_nuggets = []
+                            break
+                        if id(nugget.document) not in confirmed_documents:
+                            confirmed_nuggets.append(nugget)
+                            confirmed_documents.add(id(nugget.document))
 
-                    # add this nugget as a confirmed match to the corresponding attribute
-                    attribute.confirmed_matches.append(feedback_result["nugget"])
+                    if not confirmed_nuggets:
+                        # Empty or stale feedback must not discard label-based distances.
+                        continue
 
-                    # update the distances for the other documents
+                    statistics[attribute.name]["num_confirmed_match"] += len(confirmed_nuggets)
+                    for nugget in confirmed_nuggets:
+                        nugget.document.attribute_mappings[attribute.name] = [nugget]
+                        nugget.document[CurrentMatchIndexSignal] = next(
+                            ix for ix, candidate in enumerate(nugget.document.nuggets) if candidate is nugget
+                        )
+                        docs_with_added_nuggets.pop(nugget.document, None)
+                        attribute.confirmed_matches.append(nugget)
+                    remaining_documents = [
+                        document for document in remaining_documents if id(document) not in confirmed_documents
+                    ]
+
+                    # Each remaining candidate learns from every confirmed example.
+                    # Taking the nearest example also makes batch order irrelevant.
                     for document in remaining_documents:
-                        new_distances: np.ndarray = self._distance.compute_distances(
-                            [feedback_result["nugget"]],
-                            document.nuggets,
-                            statistics["distance"]
-                        ) [0]
+                        new_distances = self._distance.compute_distances(
+                            confirmed_nuggets, document.nuggets, statistics["distance"]
+                        ).min(axis=0)
                         for nugget, new_distance in zip(document.nuggets, new_distances):
                             if distances_based_on_label or new_distance < nugget[CachedDistanceSignal]:
                                 nugget[CachedDistanceSignal] = new_distance
 
-                        previous_best_match: InformationNugget = document.nuggets[document[CurrentMatchIndexSignal]] # Save previous best match
-                        for ix, nugget in enumerate(document.nuggets):
-                            current_guess: InformationNugget = document.nuggets[document[CurrentMatchIndexSignal]]
-                            if nugget[CachedDistanceSignal] < current_guess[CachedDistanceSignal]:
-                                document[CurrentMatchIndexSignal] = ix
-                        new_best_match: InformationNugget = document.nuggets[document[CurrentMatchIndexSignal]]
-                        # If there's new best match, save it and add mapping to previous best match for later use
-                        if previous_best_match != new_best_match:
+                        previous_best_match = document.nuggets[document[CurrentMatchIndexSignal]]
+                        document[CurrentMatchIndexSignal] = min(
+                            range(len(document.nuggets)),
+                            key=lambda ix: document.nuggets[ix][CachedDistanceSignal],
+                        )
+                        new_best_match = document.nuggets[document[CurrentMatchIndexSignal]]
+                        if previous_best_match is not new_best_match:
                             new_best_matches.update([new_best_match.text])
                             new_to_old_match[new_best_match.text] = previous_best_match.text
                     distances_based_on_label = False
 
-                    if self._adjust_threshold:
-                        # threshold adjustment: if the confirmed nugget's distance is larger than the threshold, update
-                        # the threshold to the maximum cached distance of all nuggets that are below in the ranked list,
-                        # but were above the threshold before
-                        if feedback_result["not-a-match"] is None:  # nugget from original list confirmed
-                            if feedback_result["nugget"][CachedDistanceSignal] > self._max_distance:
-                                nugget_ix = -1
-                                for ix, nugget in enumerate(feedback_nuggets):
-                                    if nugget is feedback_result["nugget"]:
-                                        nugget_ix = ix
-                                        break
-                                assert nugget_ix != -1
-
-                                if nugget_ix < len(feedback_nuggets) - 1:
-                                    max_dist = 0
-                                    for ix in range(nugget_ix + 1, len(feedback_nuggets)):
-                                        if feedback_nuggets_old_cached_distances[ix] > self._max_distance:
-                                            max_dist = max(max_dist, feedback_nuggets[ix][CachedDistanceSignal])
-                                    if max_dist > self._max_distance:
-                                        self._old_max_distance = self._max_distance
-                                        self._max_distance = max_dist
-                                        attribute[CurrentThresholdSignal] = CurrentThresholdSignal(max_dist)
-                                        statistics[attribute.name]["max_distances"].append(max_dist)
-                                        logger.info(f"CONFIRMED NUGGET FROM RANKED LIST: Increased the maximum distance"
-                                                    f"to {self._max_distance}.")
-                                    else:
-                                        logger.info("CONFIRMED NUGGET FROM RANKED LIST: Did not change the maximum "
-                                                    "distance since it would not be increased.")
-                                else:
-                                    logger.info("CONFIRMED NUGGET FROM RANKED LIST: Did not change the maximum "
-                                                "distance since the confirmed nugget is at the bottom of the list.")
-                            else:
-                                logger.info("CONFIRMED NUGGET FROM RANKED LIST: Did not change the maximum distance "
-                                            "since the document was already below the old threshold.")
-                        else:
-                            logger.info("CONFIRMED NUGGET NOT IN RANKED LIST: Did not change the maximum distance "
-                                        "since the confirmed nugget was not in the ranked list.")
-
-                elif feedback_result["message"] == "multi-match":
-                    for nugget in feedback_result["nuggets"]:
-                        statistics[attribute.name]["num_confirmed_match"] += 1
-                        nugget.document.attribute_mappings[attribute.name] = [nugget]
-                        try: remaining_documents.remove(nugget.document)
-                        except ValueError: pass
-
-                    # update the distances for the other documents
-                    for document in remaining_documents:
-                        new_distances: np.ndarray = self._distance.compute_distances(
-                            feedback_result["nuggets"],
-                            document.nuggets,
-                            statistics["distance"]
-                        )[0]
-                        for nugget, new_distance in zip(document.nuggets, new_distances):
-                            if distances_based_on_label or new_distance < nugget[CachedDistanceSignal]:
-                                nugget[CachedDistanceSignal] = new_distance
-                        for ix, nugget in enumerate(document.nuggets):
-                            current_guess: InformationNugget = document.nuggets[document[CurrentMatchIndexSignal]]
-                            if nugget[CachedDistanceSignal] < current_guess[CachedDistanceSignal]:
-                                document[CurrentMatchIndexSignal] = ix
-                    distances_based_on_label = False
+                    if self._adjust_threshold and (is_batch or feedback_result.get("not-a-match") is None):
+                        ranked_indices = {id(nugget): ix for ix, nugget in enumerate(feedback_nuggets)}
+                        # Follow ranked-list order, independent of payload ordering.
+                        for confirmed_nugget in sorted(
+                                confirmed_nuggets, key=lambda nugget: ranked_indices.get(id(nugget), -1)):
+                            nugget_ix = ranked_indices.get(id(confirmed_nugget))
+                            if nugget_ix is None or confirmed_nugget[CachedDistanceSignal] <= self._max_distance:
+                                continue
+                            max_dist = max((
+                                nugget[CachedDistanceSignal]
+                                for nugget, old_distance in zip(
+                                    feedback_nuggets[nugget_ix + 1:],
+                                    feedback_nuggets_old_cached_distances[nugget_ix + 1:],
+                                ) if old_distance > self._max_distance
+                            ), default=0)
+                            if max_dist > self._max_distance:
+                                self._max_distance = max_dist
+                                attribute[CurrentThresholdSignal] = CurrentThresholdSignal(max_dist)
+                                statistics[attribute.name]["max_distances"].append(max_dist)
+                                logger.info(f"CONFIRMED MATCHES: Increased the maximum distance to {max_dist}.")
 
                 if self.store_best_guesses: # and (num_feedback == 0 or (num_feedback+1) % 5 == 0):
                     best_guesses = []

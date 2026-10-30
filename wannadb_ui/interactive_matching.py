@@ -139,13 +139,19 @@ class NuggetListWidget(QWidget, VisualizationProvidingItem):
                                                                       above_widget=self.num_nuggets_above_label)
         self.layout.addWidget(self.nugget_list)
 
+        self._input_enabled = False
         self.multi_match_button = QPushButton("Confirm all selected matches")
+        self.multi_match_button.hide()
+        self.multi_match_button.setEnabled(False)
         self.multi_match_button.setFont(BUTTON_FONT)
         self.multi_match_button.clicked.connect(self._multi_match_button_clicked)
         self.layout.addWidget(self.multi_match_button)
 
     def update_nuggets(self, feedback_request):
         feedback_nuggets = feedback_request["nuggets"]
+        # Rows are reused, but a selection belongs only to its feedback round.
+        for item in self.nugget_list.item_widgets:
+            item.multi_match_ready_checkbox.setChecked(False)
         all_guessed_nugget_matches = feedback_request["all-guessed-nugget-matches"]
         attribute = feedback_request["attribute"]
         current_threshold = feedback_request["max-distance"]
@@ -160,7 +166,10 @@ class NuggetListWidget(QWidget, VisualizationProvidingItem):
         self.extended_visualize_area.update_threshold_position_lists(nugget_updates_context.threshold_position_updates)
 
         params = {
-            "max_start_chars": max([nugget[CachedContextSentenceSignal]["start_char"] for nugget in feedback_nuggets]),
+            "max_start_chars": max(
+                (nugget[CachedContextSentenceSignal]["start_char"] for nugget in feedback_nuggets),
+                default=0,
+            ),
             "max_distance": current_threshold,
             "other_best_guesses": feedback_nuggets,
             "new-nuggets": nugget_updates_context.newly_added_nugget_contexts,
@@ -175,6 +184,7 @@ class NuggetListWidget(QWidget, VisualizationProvidingItem):
             self.simple_visualize_area.setVisible(False)
 
         self.nugget_list.update_item_list(feedback_nuggets, params)
+        self.update_multi_match_button()
         if len(feedback_nuggets) > 0:
             self.extended_visualize_area.suggestion_visualizer.update_and_display_params(attribute=attribute,
                                                                                          nuggets=all_guessed_nugget_matches,
@@ -198,31 +208,45 @@ class NuggetListWidget(QWidget, VisualizationProvidingItem):
         else:
             self.num_nuggets_below_label.setText("")
 
-    def update_multi_match_button(self):
-        multi_match = False
-        for item in self.nugget_list.item_widgets:
-            if item.multi_match_ready_checkbox.isChecked():
-                multi_match = True
-                break
-        if multi_match:
-            self.multi_match_button.show()
-        else:
-            self.multi_match_button.hide()
-
-    def _multi_match_button_clicked(self):
+    def _selected_nuggets(self):
+        # Hidden rows may still hold values from a longer, previous list.
+        items = self.nugget_list.item_widgets[:self.nugget_list.num_visible_item_widgets]
         nuggets = []
+        selected_documents = set()
+        for item in items:
+            if item.nugget is not None and item.multi_match_ready_checkbox.isChecked():
+                document_id = id(item.nugget.document)
+                if document_id not in selected_documents:
+                    nuggets.append(item.nugget)
+                    selected_documents.add(document_id)
+        return nuggets
+
+    def update_multi_match_button(self):
+        num_selected = len(self._selected_nuggets())
+        self.multi_match_button.setText(f"Confirm selected matches ({num_selected})")
+        self.multi_match_button.setVisible(num_selected > 0)
+        self.multi_match_button.setEnabled(self._input_enabled and num_selected > 0)
+
+    @track_button_click(button_name="nugget_list_multi_match_button")
+    def _multi_match_button_clicked(self):
+        nuggets = self._selected_nuggets()
+        if not self._input_enabled or not nuggets:
+            return
+
+        # Lock controls before submitting so another click cannot replace feedback.
+        self.disable_input()
         for item in self.nugget_list.item_widgets:
-            if item.multi_match_ready_checkbox.isChecked():
-                nuggets.append(item.nugget)
-                item.multi_match_ready_checkbox.setChecked(False)
+            item.multi_match_ready_checkbox.setChecked(False)
         self.interactive_matching_widget.main_window.give_feedback_task({
             "message": "multi-match",
-            "nuggets": nuggets
+            "nuggets": nuggets,
         })
 
     def enable_input(self):
+        self._input_enabled = True
         self.nugget_list.enable_input()
- 
+        self.update_multi_match_button()
+
     def enable_accessible_color_palette(self):
         self.accessible_color_palette = True
         self.simple_visualize_area.enable_accessible_color_palette()
@@ -234,7 +258,9 @@ class NuggetListWidget(QWidget, VisualizationProvidingItem):
         self.extended_visualize_area.disable_accessible_color_palette()
 
     def disable_input(self):
+        self._input_enabled = False
         self.nugget_list.disable_input()
+        self.update_multi_match_button()
 
     def _adapt_to_visualizations_level(self, visualizations_level):
         self.visualization_level = visualizations_level
@@ -286,6 +312,7 @@ class NuggetListItemWidget(CustomScrollableListItem, VisualizationProvidingItem)
         # self.layout.addWidget(self.left_split_label)
 
         self.multi_match_ready_checkbox = QCheckBox()
+        self.multi_match_ready_checkbox.setToolTip("Select this value to confirm it with other matches.")
         self.multi_match_ready_checkbox.setCheckable(True)
         self.multi_match_ready_checkbox.setChecked(False)
         self.multi_match_ready_checkbox.stateChanged.connect(self._multi_match_ready_checkbox_state_changed)
@@ -320,6 +347,7 @@ class NuggetListItemWidget(CustomScrollableListItem, VisualizationProvidingItem)
         self.last_tooltip_text_passed = None
 
     def update_item(self, item, params=None):
+        self.multi_match_ready_checkbox.setChecked(False)
         self.nugget = item
 
         max_start_chars = params["max_start_chars"]
@@ -371,15 +399,6 @@ class NuggetListItemWidget(CustomScrollableListItem, VisualizationProvidingItem)
         # self.info_button.setText(f"{str(round(self.nugget[CachedDistanceSignal], 2)).ljust(4)}")
 
     def _multi_match_ready_checkbox_state_changed(self, state):
-        used_state = None
-        if state == 0:
-            used_state = Qt.CheckState.Unchecked
-        elif state == 2:
-            used_state = Qt.CheckState.Checked
-        else:
-            logger.info(f"Multi match ready checkbox state changed to {state}, which is not handled.")
-            return
-        self.multi_match_ready_checkbox.setCheckState(used_state)
         self.nugget_list_widget.update_multi_match_button()
 
     @track_button_click(button_name="nugget_list_match_button")
@@ -413,10 +432,12 @@ class NuggetListItemWidget(CustomScrollableListItem, VisualizationProvidingItem)
     def enable_input(self):
         self.match_button.setEnabled(True)
         self.fix_button.setEnabled(True)
+        self.multi_match_ready_checkbox.setEnabled(True)
 
     def disable_input(self):
         self.match_button.setDisabled(True)
         self.fix_button.setDisabled(True)
+        self.multi_match_ready_checkbox.setDisabled(True)
 
     def _adapt_to_visualizations_level(self, visualizations_level):
         if visualizations_level == AvailableVisualizationsLevel.LEVEL_2:
