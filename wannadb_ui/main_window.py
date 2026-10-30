@@ -305,8 +305,12 @@ class MainWindow(QMainWindow):
         self.status_widget_progress.setRange(0, 0)
 
         self.disable_global_input()
-        self.api.feedback = feedback
-        self.feedback_cond.wakeAll()
+        self.feedback_mutex.lock()
+        try:
+            self.api.feedback = feedback
+            self.feedback_cond.wakeAll()
+        finally:
+            self.feedback_mutex.unlock()
 
         self._set_available_visualization_actions()
         self._enable_color_palette_settings()
