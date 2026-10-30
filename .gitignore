@@ -9,6 +9,7 @@
 /cache/
 /build/
 /executables/
+/experiments/
 /event_logs/
 
 *.json
