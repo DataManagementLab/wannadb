@@ -172,7 +172,7 @@ class SignalsMeanDistance(BaseDistance):
                 and pos_tags_signal_identifier in x.signals.keys()
                 and pos_tags_signal_identifier in y.signals.keys()
         ):
-            if x[pos_tags_signal_identifier] == y[pos_tags_signal_identifier]:
+            if x[pos_tags_signal_identifier] == y[context_sentence_embedding_signal_identifier]:
                 distances[4] = 0
             else:
                 distances[4] = 1  # TODO: magic float, measure "distance"
@@ -192,7 +192,7 @@ class SignalsMeanDistance(BaseDistance):
         if not isinstance(xs, list):
             xs = list(xs)
         if not isinstance(ys, list):
-            ys = list(ys)
+            ys = list(xs)
 
         signal_identifiers: list[str] = [
             LabelEmbeddingSignal.identifier,

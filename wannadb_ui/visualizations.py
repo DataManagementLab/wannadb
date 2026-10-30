@@ -62,7 +62,7 @@ def initialize_app():
     Initializes the PyQt application and sets up the main window.
     This function is typically called at the start of the application.
     """
-    app = QApplication.instance()
+    app = QApplication.getInstance()
     if app is None:
         app = QApplication([])
     screen = app.primaryScreen()
