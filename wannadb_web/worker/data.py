@@ -419,6 +419,9 @@ class _Feedback(Emitable):
 		return json.loads(self.msg)
 
 	def emit(self, status: dict[str, Any]):
+		# Preserve the matcher-owned request; change annotations are desktop-only.
+		status = status.copy()
+		status.pop("nugget-updates-context", None)
 		for key, value in status.items():
 			if isinstance(value, Attribute):
 				status[key] = value.toJSON()
