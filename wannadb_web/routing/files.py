@@ -40,11 +40,21 @@ def upload_files():
 	document_ids: list = []
 
 	for file in files:
-		content_type = file.content_type
-		if 'text/plain' in content_type:
+		content_type = file.mimetype or ''
+		is_text_file = content_type == 'text/plain' or (
+			content_type in ('', 'application/octet-stream') and (file.filename or '').lower().endswith('.txt')
+		)
+		if is_text_file:
 			filename = file.filename
-			content = str(file.stream.read().decode('utf-8'))
+			try:
+				content = file.stream.read().decode('utf-8')
+			except UnicodeDecodeError:
+				document_ids.append(f"{filename}: file must contain UTF-8 text")
+				continue
 			document_id, document_name = add_document(filename, content, organisation_id, token.id, base_id)
+			if not isinstance(document_id, int) or isinstance(document_id, bool) or document_id <= 0:
+				document_ids.append(f"{filename}: could not save file")
+				continue
 			if isinstance(document_id, int) and base_id is not None:
 				# if the document was added successfully and a base_id was provided, we trigger the celery task to update the attributes of the document base
 				DocumentBaseAddDocument().apply_async(args=(token.id, document_name, content, base_name, organisation_id))
