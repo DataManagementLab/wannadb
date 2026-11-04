@@ -6,6 +6,7 @@ from itertools import count
 from typing import Any, Dict, List, Optional, Set
 
 import numpy as np
+import torch
 
 from wannadb import resources
 from wannadb.configuration import BasePipelineElement, register_configurable_element
@@ -190,9 +191,19 @@ class BaseSBERTEmbedder(BaseEmbedder, abc.ABC):
         super(BaseSBERTEmbedder, self).__init__()
         self._sbert_resource_identifier: str = sbert_resource_identifier
 
-        # preload required resources
-        resources.MANAGER.load(self._sbert_resource_identifier)
         logger.debug(f"Initialized '{self.identifier}'.")
+
+    def _encode_unique(self, texts: List[str]) -> List[np.ndarray]:
+        if not texts:
+            return []
+        unique_texts = list(dict.fromkeys(texts))
+        resources.MANAGER.load(self._sbert_resource_identifier)
+        embeddings = resources.MANAGER[self._sbert_resource_identifier].encode(
+            unique_texts, show_progress_bar=False
+        )
+        by_text = dict(zip(unique_texts, embeddings))
+        # Preserve every input/label and give each recipient an independent array.
+        return [by_text[text].copy() for text in texts]
 
     def to_config(self) -> Dict[str, Any]:
         return {
@@ -230,9 +241,7 @@ class SBERTLabelEmbedder(BaseSBERTEmbedder):
             statistics: Statistics
     ) -> None:
         texts: List[str] = [nugget[NaturalLanguageLabelSignal] for nugget in nuggets]
-        embeddings: List[np.ndarray] = resources.MANAGER[self._sbert_resource_identifier].encode(
-            texts, show_progress_bar=False
-        )
+        embeddings: List[np.ndarray] = self._encode_unique(texts)
 
         for nugget, embedding in zip(nuggets, embeddings):
             nugget[LabelEmbeddingSignal] = LabelEmbeddingSignal(embedding)
@@ -249,9 +258,7 @@ class SBERTLabelEmbedder(BaseSBERTEmbedder):
         # if there are no texts, embeddings will be an empty list
         # this is necessary as newer versions of SentenceTransformers throw an error if texts is an empty list
         if texts != []:
-            embeddings: List[np.ndarray] = resources.MANAGER[self._sbert_resource_identifier].encode(
-                texts, show_progress_bar=False
-            )
+            embeddings: List[np.ndarray] = self._encode_unique(texts)
 
         for attribute, embedding in zip(attributes, embeddings):
             attribute[LabelEmbeddingSignal] = LabelEmbeddingSignal(embedding)
@@ -282,9 +289,7 @@ class SBERTTextEmbedder(BaseSBERTEmbedder):
             statistics: Statistics
     ) -> None:
         texts: List[str] = [nugget.text for nugget in nuggets]
-        embeddings: List[np.ndarray] = resources.MANAGER[self._sbert_resource_identifier].encode(
-            texts, show_progress_bar=False
-        )
+        embeddings: List[np.ndarray] = self._encode_unique(texts)
 
         for nugget, embedding in zip(nuggets, embeddings):
             nugget[TextEmbeddingSignal] = TextEmbeddingSignal(embedding)
@@ -318,9 +323,7 @@ class SBERTExamplesEmbedder(BaseSBERTEmbedder):
             self._use_status_callback_for_embedder(status_callback, "attributes", ix, len(attributes))
             texts: List[str] = attribute[UserProvidedExamplesSignal]
             if texts != []:
-                embeddings: List[np.ndarray] = resources.MANAGER[self._sbert_resource_identifier].encode(
-                    texts, show_progress_bar=False
-                )
+                embeddings: List[np.ndarray] = self._encode_unique(texts)
                 embedding: np.ndarray = np.mean(embeddings, axis=0)
                 attribute[TextEmbeddingSignal] = TextEmbeddingSignal(embedding)
                 statistics["num_has_examples"] += 1
@@ -355,9 +358,7 @@ class SBERTContextSentenceEmbedder(BaseSBERTEmbedder):
         texts: List[str] = [nugget[CachedContextSentenceSignal]["text"] for nugget in nuggets]
 
         # compute embeddings
-        embeddings: List[np.ndarray] = resources.MANAGER[self._sbert_resource_identifier].encode(
-            texts, show_progress_bar=False
-        )
+        embeddings: List[np.ndarray] = self._encode_unique(texts)
 
         for nugget, embedding in zip(nuggets, embeddings):
             nugget[ContextSentenceEmbeddingSignal] = ContextSentenceEmbeddingSignal(embedding)
@@ -393,9 +394,7 @@ class SBERTDocumentSentenceEmbedder(BaseSBERTEmbedder):
             if not 'DocumentSentenceEmbeddingSignal' in doc.signals:
                 logger.info(f"Embedding all sentences of document {doc.name}...")
                 sentences: List[str] = doc.sentences
-                embeddings: List[np.ndarray] = resources.MANAGER[self._sbert_resource_identifier].encode(
-                    sentences, show_progress_bar=False
-                )
+                embeddings: List[np.ndarray] = self._encode_unique(sentences)
                 doc[DocumentSentenceEmbeddingSignal] = DocumentSentenceEmbeddingSignal(embeddings)
                 count_docs_that_needed_sentence_embeddings += 1
 
@@ -431,8 +430,6 @@ class BERTContextSentenceEmbedder(BaseEmbedder):
         super(BERTContextSentenceEmbedder, self).__init__()
         self._bert_resource_identifier: str = bert_resource_identifier
 
-        # preload required resources
-        resources.MANAGER.load(self._bert_resource_identifier)
         logger.debug(f"Initialized '{self.identifier}'.")
 
     def _embed_nuggets(
@@ -443,19 +440,34 @@ class BERTContextSentenceEmbedder(BaseEmbedder):
             statistics: Statistics
     ) -> None:
 
-        if resources.MANAGER[self._bert_resource_identifier]["device"] is not None:
-            resources.MANAGER[self._bert_resource_identifier]["model"].to(
-                resources.MANAGER[self._bert_resource_identifier]["device"]
-            )
+        if not nuggets:
+            return
+        resources.MANAGER.load(self._bert_resource_identifier)
+        bert = resources.MANAGER[self._bert_resource_identifier]
+        if bert["device"] is not None:
+            bert["model"].to(bert["device"])
 
-        for nugget_ix, nugget in enumerate(nuggets):
+        # Process shared contexts together, retaining only one context's hidden states.
+        context_groups: Dict[str, List[InformationNugget]] = {}
+        for nugget in nuggets:
+            context_groups.setdefault(nugget[CachedContextSentenceSignal]["text"], []).append(nugget)
+        source_context = None
+        source_encodings = {}
+        output_context = None
+        output = None
+        for nugget_ix, nugget in enumerate(nugget for group in context_groups.values() for nugget in group):
             self._use_status_callback_for_embedder(status_callback, "nuggets", nugget_ix, len(nuggets))
 
             context_sentence: str = nugget[CachedContextSentenceSignal]["text"]
             start_in_context: int = nugget[CachedContextSentenceSignal]["start_char"]
             end_in_context: int = nugget[CachedContextSentenceSignal]["end_char"]
 
-            device = resources.MANAGER[self._bert_resource_identifier]["device"]
+            device = bert["device"]
+            if context_sentence != source_context:
+                source_context = context_sentence
+                source_encodings = {}
+                output_context = None
+                output = None
 
             def set_arguments(**kwargs):
                 def wrapper(f):
@@ -463,7 +475,7 @@ class BERTContextSentenceEmbedder(BaseEmbedder):
 
                 return wrapper
 
-            @set_arguments(device=device, tokenizer=resources.MANAGER[self._bert_resource_identifier]["tokenizer"])
+            @set_arguments(device=device, tokenizer=bert["tokenizer"])
             def get_encoding_data_with_limited_tokens_for_context(context_sentence, start_in_context, end_in_context,
                                                                   device=None, tokenizer=None,
                                                                   limit=512):
@@ -483,6 +495,8 @@ class BERTContextSentenceEmbedder(BaseEmbedder):
                        Returns the encoding parameters and char to token translation function
                        as (input_ids, token_type_ids, attention_mask, char_to_token)
                     """
+                    if context_sentence in source_encodings:
+                        return source_encodings[context_sentence]
                     encoding = tokenizer(
                         context_sentence, return_tensors="pt", padding=True
                     )
@@ -496,7 +510,10 @@ class BERTContextSentenceEmbedder(BaseEmbedder):
                         token_type_ids = encoding.token_type_ids
                         attention_mask = encoding.attention_mask
 
-                    return input_ids, token_type_ids, attention_mask, encoding.char_to_token
+                    result = input_ids, token_type_ids, attention_mask, encoding.char_to_token
+                    if context_sentence == source_context:
+                        source_encodings[context_sentence] = result
+                    return result
 
                 # Try whole sentence
                 input_ids, token_type_ids, attention_mask, char_to_token = get_encoding_data(context_sentence, device)
@@ -557,15 +574,18 @@ class BERTContextSentenceEmbedder(BaseEmbedder):
                 start_in_context,
                 end_in_context)
 
-            outputs = resources.MANAGER[self._bert_resource_identifier]["model"](
-                input_ids=input_ids,
-                token_type_ids=token_type_ids,
-                attention_mask=attention_mask
-            )
-            torch_output = outputs[0].detach()
-            if device is not None:
-                torch_output = torch_output.cpu()
-            output: np.ndarray = torch_output[0].numpy()
+            if context_sentence != output_context:
+                with torch.inference_mode():
+                    outputs = bert["model"](
+                        input_ids=input_ids,
+                        token_type_ids=token_type_ids,
+                        attention_mask=attention_mask
+                    )
+                torch_output = outputs[0].detach()
+                if device is not None:
+                    torch_output = torch_output.cpu()
+                output = torch_output[0].numpy()
+                output_context = context_sentence
 
             # determine which tokens make up the nugget
             token_indices_set: Set[int] = set()
