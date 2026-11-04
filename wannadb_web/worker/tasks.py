@@ -374,7 +374,12 @@ class DocumentBaseInteractiveTablePopulation(BaseTask):
 			return self
 
 
-class DocumentBaseStartRanking(BaseTask):
+class FeedbackTask(BaseTask):
+	# Keep feedback runnable while compute workers wait for user input.
+	queue = "feedback"
+
+
+class DocumentBaseStartRanking(FeedbackTask):
 	name = "DocumentBaseStartRanking"
 
 	def run(self, user_id: int, do_attribute: bool):
@@ -390,7 +395,7 @@ class DocumentBaseStartRanking(BaseTask):
 		return self
 
 
-class DocumentBaseStopMatching(BaseTask):
+class DocumentBaseStopMatching(FeedbackTask):
 	name = "DocumentBaseStopMatching"
 
 	def run(self, user_id: int):
@@ -403,7 +408,7 @@ class DocumentBaseStopMatching(BaseTask):
 		return self
 
 
-class ReloadDocumentBaseTask(BaseTask):
+class ReloadDocumentBaseTask(FeedbackTask):
 	name = "ReloadDocumentBase"
 
 	def run(self, user_id: int):
@@ -433,7 +438,7 @@ class DocumentBaseGetOrderedNuggets(BaseTask):
 		return self
 
 
-class DocumentBaseConfirmNugget(BaseTask):
+class DocumentBaseConfirmNugget(FeedbackTask):
 	name = "DocumentBaseConfirmNugget"
 
 	def run(
@@ -471,7 +476,7 @@ class DocumentBaseConfirmNugget(BaseTask):
 		return self
 	
 
-class DocumentBaseConfirmMultipleNuggets(BaseTask):
+class DocumentBaseConfirmMultipleNuggets(FeedbackTask):
 	name = "DocumentBaseConfirmMultipleNuggets"
 
 	def run(self, user_id: int, base_name: str, organisation_id: int,
@@ -500,7 +505,7 @@ class DocumentBaseConfirmMultipleNuggets(BaseTask):
 		return self
 
 
-class DocumentBaseNoMatchForDocument(BaseTask):
+class DocumentBaseNoMatchForDocument(FeedbackTask):
 	name = "DocumentBaseNoMatchForDocument"
 
 	def run(self, user_id: int, base_name: str, organisation_id: int,

@@ -25,7 +25,24 @@ services:
             dockerfile: Dockerfile
             target: worker
         tty: true
-        command: ['celery', '-A', 'celery_app', 'worker', '-l', 'info', '--concurrency=1']
+        command: ['celery', '-A', 'celery_app', 'worker', '-l', 'info', '--concurrency=1', '-Q', 'celery']
+        env_file:
+            - wannadb_web/.env/.dev
+        volumes:
+            - ./:/home/wannadb
+        networks:
+            - mynetwork
+        depends_on:
+            - wannadb
+            - redis
+
+    feedback-worker:
+        build:
+            context: .
+            dockerfile: Dockerfile
+            target: worker
+        tty: true
+        command: ['celery', '-A', 'celery_app', 'worker', '-l', 'info', '--concurrency=1', '--prefetch-multiplier=1', '-Q', 'feedback']
         env_file:
             - wannadb_web/.env/.dev
         volumes:
