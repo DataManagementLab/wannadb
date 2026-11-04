@@ -53,6 +53,21 @@ class WannaDBAPI(QObject):
         logger.error(str(exception))
         self.error.emit(str(exception))
 
+    def _request_feedback(self, pipeline_element_identifier, feedback_request):
+        # Reset the response and publish the request under the same mutex used
+        # by the UI. Check a predicate so early responses and spurious wakeups
+        # cannot lose feedback or reuse the previous round's response.
+        self.feedback_mutex.lock()
+        try:
+            self.feedback = None
+            feedback_request["identifier"] = pipeline_element_identifier
+            self.feedback_request_to_ui.emit(feedback_request)
+            while self.feedback is None:
+                self.feedback_cond.wait(self.feedback_mutex)
+            return self.feedback
+        finally:
+            self.feedback_mutex.unlock()
+
     ######################################
     # signals (wannadb api --> wannadb ui)
     ######################################
@@ -398,19 +413,7 @@ class WannaDBAPI(QObject):
 
             status_callback = StatusCallback(status_callback_fn)
 
-            def interaction_callback_fn(pipeline_element_identifier, feedback_request):
-                feedback_request["identifier"] = pipeline_element_identifier
-                self.feedback_request_to_ui.emit(feedback_request)
-
-                self.feedback_mutex.lock()
-                try:
-                    self.feedback_cond.wait(self.feedback_mutex)
-                finally:
-                    self.feedback_mutex.unlock()
-
-                return self.feedback
-
-            interaction_callback = InteractionCallback(interaction_callback_fn)
+            interaction_callback = InteractionCallback(self._request_feedback)
 
             matching_phase(document_base, interaction_callback, status_callback, statistics)
 
