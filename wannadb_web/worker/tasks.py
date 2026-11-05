@@ -109,7 +109,7 @@ class CreateDocumentBase(BaseTask):
 		"""
 		init api
 		"""
-		api = WannaDB_WebAPI(user_id, base_name, organisation_id, timeout=len(document_ids) * 60)
+		api = WannaDB_WebAPI(user_id, base_name, organisation_id, timeout=len(document_ids) * 60, build_query_cache=False)
 
 		"""
 		Creating document base
@@ -146,7 +146,6 @@ class CreateDocumentBase(BaseTask):
 
 		api.save_document_base_to_bson()
 		if api.signals.error.msg is None:
-			api.update_document_base_to_bson()
 			self.update(State.SUCCESS)
 			return self
 		self.update(State.ERROR)
@@ -158,7 +157,7 @@ class DocumentBaseLoad(BaseTask):
 
 	def run(self, user_id: int, base_name: str, organisation_id: int):
 		self.load()
-		api = WannaDB_WebAPI(user_id, base_name, organisation_id)
+		api = WannaDB_WebAPI(user_id, base_name, organisation_id, build_query_cache=False)
 		api.load_document_base_from_bson()
 		#self.update(State.SUCCESS)
 		#return self
@@ -353,14 +352,20 @@ class DocumentBaseForgetMatchesForAttribute(BaseTask):
 
 class DocumentBaseInteractiveTablePopulation(BaseTask):
 	name = "DocumentBaseInteractiveTablePopulation"
+	track_started = False  # STARTED below means the base is loaded, not just dequeued.
 
 	def run(self, user_id: int, base_name: str, organisation_id: int):
 		self._signals = Signals(str(user_id))
 		self._redis_client = RedisCache(str(user_id))
 		self.load()
 
-		api = WannaDB_WebAPI(user_id, base_name, organisation_id)
+		api = WannaDB_WebAPI(user_id, base_name, organisation_id, build_query_cache=False)
 		api.load_document_base_from_bson()
+		if api.signals.error.msg is not None:
+			self.update(State.ERROR)
+			return self
+		# Publish readiness only after this task has loaded its own document base.
+		self.update(State.STARTED)
 		api.interactive_table_population()
 		if api.signals.error.msg is None:
 			api.update_document_base_to_bson()

@@ -135,17 +135,17 @@ class Signals:
 		self.ordert_nuggets = _Nuggets("ordert_nuggets", user_id)
 		self.match_feedback = _MatchFeedback("match_feedback", user_id)
 
-	def to_json(self) -> dict[str, str]:
+	def to_json(self, include_payload: bool = True, include_feedback: bool = True) -> dict[str, Any]:
 		return {"user_id": self.__user_id,
 				self.feedback.type: self.feedback.to_json(),
 				self.error.type: self.error.to_json(),
 				self.status.type: self.status.to_json(),
 				self.finished.type: self.finished.to_json(),
-				self.document_base_to_ui.type: self.document_base_to_ui.to_json(),
+				self.document_base_to_ui.type: self.document_base_to_ui.to_json() if include_payload else {},
 				self.statistics.type: self.statistics.to_json(),
-				self.feedback_request_to_ui.type: self.feedback_request_to_ui.to_json(),
-				self.cache_db_to_ui.type: self.cache_db_to_ui.to_json(),
-				self.ordert_nuggets.type: self.ordert_nuggets.to_json()
+				self.feedback_request_to_ui.type: self.feedback_request_to_ui.to_json() if include_feedback else {},
+				self.cache_db_to_ui.type: self.cache_db_to_ui.to_json() if include_payload else None,
+				self.ordert_nuggets.type: self.ordert_nuggets.to_json() if include_payload else {}
 				}
 
 	def reset(self):
@@ -320,9 +320,10 @@ class _MatchFeedback(Emitable):
 class _State(Emitable):
 
 	def to_json(self):
-		if self.msg is None:
+		msg = self.msg
+		if msg is None:
 			return ""
-		return self.msg.decode("utf-8")
+		return msg.decode("utf-8")
 
 	def emit(self, status: str):
 		self.redis.set(self.type, status)
@@ -340,9 +341,10 @@ class _Signal(Emitable):
 class _Error(Emitable):
 
 	def to_json(self):
-		if self.msg is None:
+		msg = self.msg
+		if msg is None:
 			return ""
-		return self.msg.decode("utf-8")
+		return msg.decode("utf-8")
 
 	def emit(self, exception: BaseException):
 		self.redis.set(self.type, str(exception))
@@ -362,9 +364,10 @@ class _Nuggets(Emitable):
 
 
 	def to_json(self):
-		if self.msg is None:
+		msg = self.msg
+		if msg is None:
 			return {}
-		return convert_to_nuggets(self.msg).to_json()
+		return convert_to_nuggets(msg).to_json()
 
 	def emit(self, status: list[InformationNugget]):
 		logger.info("emitting Nuggets")
@@ -390,9 +393,10 @@ class _DocumentBaseToUi(Emitable):
 			raise TypeError("msg is not bytes")
 
 	def to_json(self):
-		if self.msg is None:
+		msg = self.msg
+		if msg is None:
 			return {}
-		return convert_to_document_base(self.msg).to_json()
+		return convert_to_document_base(msg).to_json()
 
 	def emit(self, status: DocumentBase):
 		self.redis.set(self.type, pickle.dumps(status))
@@ -414,9 +418,10 @@ class _Statistics(Emitable):
 class _Feedback(Emitable):
 
 	def to_json(self):
-		if self.msg is None:
+		msg = self.msg
+		if msg is None:
 			return {}
-		return json.loads(self.msg)
+		return json.loads(msg)
 
 	def emit(self, status: dict[str, Any]):
 		# Preserve the matcher-owned request; change annotations are desktop-only.

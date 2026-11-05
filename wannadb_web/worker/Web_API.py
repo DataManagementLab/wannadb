@@ -36,7 +36,7 @@ INPUT_DOCS_COLUMN_NAME = "input_document"
 
 class WannaDB_WebAPI:
 
-	def __init__(self, user_id: int, document_base_name: str, organisation_id: int, timeout: int = TIMEOUT):
+	def __init__(self, user_id: int, document_base_name: str, organisation_id: int, timeout: int = TIMEOUT, build_query_cache: bool = True):
 		self._document_id: Optional[int] = None
 		self._document_base: Optional[DocumentBase] = None
 		self.user_id = user_id
@@ -44,7 +44,7 @@ class WannaDB_WebAPI:
 
 		self.signals = Signals(str(self.user_id))
 		self.signals.reset()
-		self.sqLiteCacheDBWrapper = SQLiteCacheDBWrapper(user_id, db_file=":memory:")
+		self.sqLiteCacheDBWrapper = SQLiteCacheDBWrapper(user_id, db_file=":memory:") if build_query_cache else None
 		self.document_base_name = document_base_name
 		self.organisation_id = organisation_id
 
@@ -57,12 +57,12 @@ class WannaDB_WebAPI:
 
 			feedback_request["identifier"] = pipeline_element_identifier
 
+			# A callback invocation is one new matcher state; idle waiting changes neither payload.
+			self.signals.document_base_to_ui.emit(self.document_base)
+			self.signals.feedback_request_to_ui.emit(feedback_request)
 			start_time = time.time()
 			while (time.time() - start_time) < max(timeout, TIMEOUT):
 				msg = self.signals.match_feedback.msg
-
-				self.signals.feedback_request_to_ui.emit(feedback_request)
-				self.signals.document_base_to_ui.emit(self.document_base)
 
 				if msg is not None:
 					self.signals.status.emit("Feedback received from UI")
@@ -94,7 +94,7 @@ class WannaDB_WebAPI:
 		if wannadb.resources.MANAGER is None:
 			self.signals.error.emit(Exception("Resource Manager not initialized!"))
 			raise Exception("Resource Manager not initialized!")
-		if self.sqLiteCacheDBWrapper.cache_db.conn is None:
+		if self.sqLiteCacheDBWrapper is not None and self.sqLiteCacheDBWrapper.cache_db.conn is None:
 			self.signals.error.emit(Exception("Cache db could not be initialized!"))
 			raise Exception("Cache db could not be initialized!")
 		logger.info("WannaDB_WebAPI initialized")
@@ -177,10 +177,12 @@ class WannaDB_WebAPI:
 		logger.debug("Called slot 'create_document_base'.")
 		self.signals.status.emit("create_document_base")
 		try:
-			self.sqLiteCacheDBWrapper.reset_cache_db()
+			if self.sqLiteCacheDBWrapper is not None:
+				self.sqLiteCacheDBWrapper.reset_cache_db()
 
 			document_base = DocumentBase(documents, attributes)
-			self.sqLiteCacheDBWrapper.cache_db.create_input_docs_table(INPUT_DOCS_COLUMN_NAME, document_base.documents)
+			if self.sqLiteCacheDBWrapper is not None:
+				self.sqLiteCacheDBWrapper.cache_db.create_input_docs_table(INPUT_DOCS_COLUMN_NAME, document_base.documents)
 
 			if not document_base.validate_consistency():
 				logger.error("Document base is inconsistent!")
@@ -220,7 +222,8 @@ class WannaDB_WebAPI:
 	def load_document_base_from_bson(self):
 		logger.debug("Called function 'load_document_base_from_bson'.")
 		try:
-			self.sqLiteCacheDBWrapper.reset_cache_db()
+			if self.sqLiteCacheDBWrapper is not None:
+				self.sqLiteCacheDBWrapper.reset_cache_db()
 			self.signals.reset()
 
 			try:
@@ -244,14 +247,11 @@ class WannaDB_WebAPI:
 
 			document_base = DocumentBase.from_bson(document)
 
-			if not document_base.validate_consistency():
-				logger.error("Document base is inconsistent!")
-				self.signals.error.emit(Exception("Document base is inconsistent!"))
-				return
-
-			for attribute in document_base.attributes:
-				self.sqLiteCacheDBWrapper.cache_db.create_table_by_name(attribute.name)
-			self.sqLiteCacheDBWrapper.cache_db.create_input_docs_table(INPUT_DOCS_COLUMN_NAME, document_base.documents)
+			# from_bson already validates consistency before returning.
+			if self.sqLiteCacheDBWrapper is not None:
+				for attribute in document_base.attributes:
+					self.sqLiteCacheDBWrapper.cache_db.create_table_by_name(attribute.name)
+				self.sqLiteCacheDBWrapper.cache_db.create_input_docs_table(INPUT_DOCS_COLUMN_NAME, document_base.documents)
 
 			logger.info(f"Document base loaded from BSON with id {document_id}.")
 			self.document_base = document_base
@@ -269,18 +269,14 @@ class WannaDB_WebAPI:
 			document_id, _ = add_document(self.document_base_name, self.document_base.to_bson(), self.organisation_id,
 									  self.user_id)
 
-			if document_id is None:
-				logger.error("Document base could not be saved to BSON!")
-			elif document_id == -1:
-				logger.error(
-					f"Document base could not be saved to BSON! Document {self.document_base_name} already exists!")
-				self.signals.error.emit(
-					Exception(
-						f"Document base could not be saved to BSON! Document {self.document_base_name} already exists!"))
-			elif document_id > 0:
-				logger.info(f"Document base saved to BSON with ID {document_id}.")
-				self.signals.status.emit(f"Document base saved to BSON with ID {document_id}.")
-				self.document_id = document_id
+			if not isinstance(document_id, int) or isinstance(document_id, bool) or document_id <= 0:
+				message = "Document base could not be saved to BSON!"
+				logger.error(message)
+				self.signals.error.emit(Exception(message))
+				return
+			logger.info(f"Document base saved to BSON with ID {document_id}.")
+			self.signals.status.emit(f"Document base saved to BSON with ID {document_id}.")
+			self.document_id = document_id
 			return
 		except Exception as e:
 			logger.error(str(e))
