@@ -10,6 +10,8 @@ logging.basicConfig(level=logging.DEBUG, format="%(asctime)s - %(name)s - %(leve
 app = Celery(__name__)
 
 app.conf.broker_url = os.environ.get("CELERY_BROKER_URL")
+app.conf.result_serializer = "json"
+app.conf.task_ignore_result = False
 
 app.register_task(BaseTask)
 app.register_task(TestTask)

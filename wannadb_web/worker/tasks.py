@@ -63,6 +63,18 @@ class BaseTask(Task):
 					 ) -> None:
 		raise NotImplementedError("user update() instead")
 
+	@staticmethod
+	def check_api_error(api):
+		if api.signals.error.msg is not None:
+			raise RuntimeError("TASK_FAILED")
+
+	def finish(self, api, persist: bool = False):
+		self.check_api_error(api)
+		if persist:
+			api.update_document_base_to_bson()
+			self.check_api_error(api)
+		return {"ok": True}
+
 	def get_new_input(self):
 		if self._redis_client is None:
 			raise RuntimeError("self._redis_client is None!")
@@ -115,11 +127,9 @@ class CreateDocumentBase(BaseTask):
 		Creating document base
 		"""
 		if not isinstance(attributes[0], Attribute):
-			self.update(State.ERROR)
 			raise Exception("Invalid attributes")
 
 		if not isinstance(statistics, Statistics):
-			self.update(State.ERROR)
 			raise Exception("Invalid statistics")
 
 		docs = get_documents(document_ids, user_id)
@@ -139,17 +149,13 @@ class CreateDocumentBase(BaseTask):
 				documents.append(Document(name, text))
 
 		else:
-			self.update(State.ERROR)
 			raise Exception("No documents found")
 
 		api.create_document_base(documents, attributes, statistics)
 
+		self.check_api_error(api)
 		api.save_document_base_to_bson()
-		if api.signals.error.msg is None:
-			self.update(State.SUCCESS)
-			return self
-		self.update(State.ERROR)
-		return self
+		return self.finish(api)
 
 
 class DocumentBaseLoad(BaseTask):
@@ -159,13 +165,8 @@ class DocumentBaseLoad(BaseTask):
 		self.load()
 		api = WannaDB_WebAPI(user_id, base_name, organisation_id, build_query_cache=False)
 		api.load_document_base_from_bson()
-		#self.update(State.SUCCESS)
-		#return self
-		if api.signals.error.msg is None:
-			self.update(State.SUCCESS)
-			return self
-		self.update(State.ERROR)
-		return self
+		self.check_api_error(api)
+		return self.finish(api)
 
 
 class DocumentBaseAddDocument(BaseTask):
@@ -175,13 +176,9 @@ class DocumentBaseAddDocument(BaseTask):
 		self.load()
 		api = WannaDB_WebAPI(user_id, base_name, organisation_id)
 		api.load_document_base_from_bson()
+		self.check_api_error(api)
 		api.add_document(Document(document_name, document_content))
-		if api.signals.error.msg is None:
-			api.update_document_base_to_bson()
-			self.update(State.SUCCESS)
-			return self
-		self.update(State.ERROR)
-		return self
+		return self.finish(api, persist=True)
 
 
 class DocumentBaseRemoveDocument(BaseTask):
@@ -191,6 +188,7 @@ class DocumentBaseRemoveDocument(BaseTask):
 		self.load()
 		api = WannaDB_WebAPI(user_id, base_name, organisation_id)
 		api.load_document_base_from_bson()
+		self.check_api_error(api)
 		_doc = None
 		for doc in api._document_base.documents:
 			if doc.name == document_name:
@@ -199,12 +197,7 @@ class DocumentBaseRemoveDocument(BaseTask):
 		if _doc is None:
 			raise Exception(f"Document with name {document_name} not found")
 		api.remove_document(_doc)
-		if api.signals.error.msg is None:
-			api.update_document_base_to_bson()
-			self.update(State.SUCCESS)
-			return self
-		self.update(State.ERROR)
-		return self
+		return self.finish(api, persist=True)
 
 
 class DocumentBaseUpdateDocument(BaseTask):
@@ -214,13 +207,9 @@ class DocumentBaseUpdateDocument(BaseTask):
 		self.load()
 		api = WannaDB_WebAPI(user_id, base_name, organisation_id)
 		api.load_document_base_from_bson()
+		self.check_api_error(api)
 		api.update_document(Document(document_name, document_content))
-		if api.signals.error.msg is None:
-			api.update_document_base_to_bson()
-			self.update(State.SUCCESS)
-			return self
-		self.update(State.ERROR)
-		return self
+		return self.finish(api, persist=True)
 
 
 class DocumentBaseAddAttributes(BaseTask):
@@ -241,13 +230,9 @@ class DocumentBaseAddAttributes(BaseTask):
 
 		api = WannaDB_WebAPI(user_id, base_name, organisation_id)
 		api.load_document_base_from_bson()
+		self.check_api_error(api)
 		api.add_attributes(attributes)
-		if api.signals.error.msg is None:
-			api.update_document_base_to_bson()
-			self.update(State.SUCCESS)
-			return self
-		self.update(State.ERROR)
-		return self
+		return self.finish(api, persist=True)
 
 
 class DocumentBaseUpdateAttributes(BaseTask):
@@ -268,13 +253,9 @@ class DocumentBaseUpdateAttributes(BaseTask):
 
 		api = WannaDB_WebAPI(user_id, base_name, organisation_id)
 		api.load_document_base_from_bson()
+		self.check_api_error(api)
 		api.update_attributes(attributes)
-		if api.signals.error.msg is None:
-			api.update_document_base_to_bson()
-			self.update(State.SUCCESS)
-			return self
-		self.update(State.ERROR)
-		return self
+		return self.finish(api, persist=True)
 
 
 class DocumentBaseRemoveAttributes(BaseTask):
@@ -295,13 +276,9 @@ class DocumentBaseRemoveAttributes(BaseTask):
 
 		api = WannaDB_WebAPI(user_id, base_name, organisation_id)
 		api.load_document_base_from_bson()
+		self.check_api_error(api)
 		api.remove_attributes(attributes)
-		if api.signals.error.msg is None:
-			api.update_document_base_to_bson()
-			self.update(State.SUCCESS)
-			return self
-		self.update(State.ERROR)
-		return self
+		return self.finish(api, persist=True)
 
 
 class DocumentBaseForgetMatches(BaseTask):
@@ -322,17 +299,13 @@ class DocumentBaseForgetMatches(BaseTask):
 
 		api = WannaDB_WebAPI(user_id, base_name, organisation_id)
 		api.load_document_base_from_bson()
+		self.check_api_error(api)
 		api.forget_matches()
-		if api.signals.error.msg is None:
-			api.update_document_base_to_bson()
-			self.update(State.SUCCESS)
-			return self
-		self.update(State.ERROR)
-		return self
+		return self.finish(api, persist=True)
 
 
 class DocumentBaseForgetMatchesForAttribute(BaseTask):
-	name = "DocumentBaseForgetMatches"
+	name = "DocumentBaseForgetMatchesForAttribute"
 
 	def run(self, user_id: int, attribute_string: str, base_name: str, organisation_id: int):
 		self.load()
@@ -341,13 +314,9 @@ class DocumentBaseForgetMatchesForAttribute(BaseTask):
 
 		api = WannaDB_WebAPI(user_id, base_name, organisation_id)
 		api.load_document_base_from_bson()
+		self.check_api_error(api)
 		api.forget_matches_for_attribute(attribute)
-		if api.signals.error.msg is None:
-			api.update_document_base_to_bson()
-			self.update(State.SUCCESS)
-			return self
-		self.update(State.ERROR)
-		return self
+		return self.finish(api, persist=True)
 
 
 class DocumentBaseInteractiveTablePopulation(BaseTask):
@@ -361,22 +330,16 @@ class DocumentBaseInteractiveTablePopulation(BaseTask):
 
 		api = WannaDB_WebAPI(user_id, base_name, organisation_id, build_query_cache=False)
 		api.load_document_base_from_bson()
-		if api.signals.error.msg is not None:
-			self.update(State.ERROR)
-			return self
-		# Publish readiness only after this task has loaded its own document base.
+		self.check_api_error(api)
+		# Preserve F08 readiness: this task's base is loaded before STARTED.
 		self.update(State.STARTED)
-		api.interactive_table_population()
-		if api.signals.error.msg is None:
+		try:
+			api.interactive_table_population()
+		except TimeoutError:
+			# Preserve completed feedback on idle timeout, then report task failure.
 			api.update_document_base_to_bson()
-			self.update(State.SUCCESS)
-			return self
-		else:
-			self.update(State.ERROR)
-			if api.signals.error.msg == str(TimeoutError('no match_feedback in time provided')):
-				# if timeout occurs, we stll want to update the document base
-				api.update_document_base_to_bson()
-			return self
+			raise
+		return self.finish(api, persist=True)
 
 
 class FeedbackTask(BaseTask):
@@ -396,8 +359,7 @@ class DocumentBaseStartRanking(FeedbackTask):
 			self._signals.match_feedback.emit(DoAttributeRanking())
 		else:
 			self._signals.match_feedback.emit(SkipAttributeRanking())
-		self.update(State.SUCCESS)
-		return self
+		return {"ok": True}
 
 
 class DocumentBaseStopMatching(FeedbackTask):
@@ -409,8 +371,7 @@ class DocumentBaseStopMatching(FeedbackTask):
 		self.load()
 
 		self._signals.match_feedback.emit(StopMatching())
-		self.update(State.SUCCESS)
-		return self
+		return {"ok": True}
 
 
 class ReloadDocumentBaseTask(FeedbackTask):
@@ -422,8 +383,7 @@ class ReloadDocumentBaseTask(FeedbackTask):
 		self.load()
 
 		self._signals.match_feedback.emit(ReloadDocumentBase())
-		self.update(State.SUCCESS)
-		return self
+		return {"ok": True}
 
 
 class DocumentBaseGetOrderedNuggets(BaseTask):
@@ -436,11 +396,11 @@ class DocumentBaseGetOrderedNuggets(BaseTask):
 
 		api = WannaDB_WebAPI(user_id, base_name, organisation_id)
 		api.load_document_base_from_bson()
+		self.check_api_error(api)
 		# api.get_ordert_nuggets(document_id)
 		api.get_ordered_nuggets_by_doc_name(document_name, document_content)
 		# no need to update the document base
-		self.update(State.SUCCESS)
-		return self
+		return self.finish(api)
 
 
 class DocumentBaseConfirmNugget(FeedbackTask):
@@ -477,8 +437,7 @@ class DocumentBaseConfirmNugget(FeedbackTask):
 
 		self._signals.match_feedback.emit(match_feedback(nugget, document, start_index, end_index, not_a_match=not_a_match))
 		# no need to update the document base the doc will be saved in the interactive call
-		self.update(State.SUCCESS)
-		return self
+		return {"ok": True}
 	
 
 class DocumentBaseConfirmMultipleNuggets(FeedbackTask):
@@ -506,8 +465,7 @@ class DocumentBaseConfirmMultipleNuggets(FeedbackTask):
 		]
 		self._signals.match_feedback.emit(multi_match_feedback(nuggets))
 		# no need to update the document base the doc will be saved in the interactive call
-		self.update(State.SUCCESS)
-		return self
+		return {"ok": True}
 
 
 class DocumentBaseNoMatchForDocument(FeedbackTask):
@@ -537,8 +495,7 @@ class DocumentBaseNoMatchForDocument(FeedbackTask):
 	
 		self._signals.match_feedback.emit(no_match(nugget, document, int(start_index), int(end_index)))
 		# no need to update the document base the doc will be saved in the interactive call
-		self.update(State.SUCCESS)
-		return self
+		return {"ok": True}
 
 
 def nugget_exist(nugget: str, document: Document, start_index: int, end_index: int):

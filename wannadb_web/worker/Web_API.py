@@ -301,6 +301,7 @@ class WannaDB_WebAPI:
 			status = update_document_content(self.document_id, self.document_base.to_bson())
 			if not status:
 				logger.error(f"Document base could not be saved to BSON! Document {self.document_id} does not exist!")
+				self.signals.error.emit(RuntimeError("PERSISTENCE_FAILED"))
 			else:
 				logger.info(f"Document base saved to BSON with ID {self.document_id}.")
 				self.signals.status.emit(f"Document base saved to BSON with ID {self.document_id}.")

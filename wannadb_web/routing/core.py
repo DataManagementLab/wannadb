@@ -336,8 +336,13 @@ def task_status(token: str,task_id: str):
 	status = task.status
 	include_payload = request.args.get("summary") != "1"
 	include_feedback = request.args.get("feedback") != "0"
-	if status == "FAILURE":
-		return make_response({"state": "FAILURE", "meta": Signals(user_id).to_json(include_payload=include_payload, include_feedback=include_feedback)}, 500)
+	if status in ("FAILURE", "ERROR", "REVOKED"):
+		signals = Signals(user_id).to_json(include_payload=include_payload, include_feedback=include_feedback)
+		if not signals.get("error"):
+			signals["error"] = "The task was cancelled." if status == "REVOKED" else "The background task failed."
+		elif signals["error"] == "PERSISTENCE_FAILED":
+			signals["error"] = "Changes could not be saved."
+		return make_response({"state": "REVOKED" if status == "REVOKED" else "FAILURE", "meta": signals}, 500)
 	if status == "SUCCESS":
 		signals = Signals(user_id).to_json(include_payload=include_payload, include_feedback=include_feedback)
 		return make_response({"state": "SUCCESS", "meta": signals}, 200)
