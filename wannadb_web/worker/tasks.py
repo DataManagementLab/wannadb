@@ -1,6 +1,8 @@
 import logging
+import inspect
 import pickle
 import time
+from uuid import uuid4
 from typing import Optional, Any, Union
 
 from celery import Task
@@ -9,8 +11,8 @@ import wannadb.resources
 from wannadb.data.data import Document, Attribute, InformationNugget
 from wannadb.resources import ResourceManager
 from wannadb.statistics import Statistics
-from wannadb_web.Redis.RedisCache import RedisCache
-from wannadb_web.postgres.queries import get_documents
+from wannadb_web.Redis.RedisCache import RedisCache, TaskAccess, set_signal_scope
+from wannadb_web.postgres.queries import get_documents, get_base_id
 from wannadb_web.worker.Web_API import WannaDB_WebAPI
 from wannadb_web.worker.data import DoAttributeRanking, MultiNuggetsMatchFeedback, ReloadDocumentBase, Signals, NoMatchFeedback, NuggetMatchFeedback, CustomMatchFeedback, SkipAttributeRanking, StopMatching
 from wannadb_web.worker.util import State
@@ -40,6 +42,42 @@ class BaseTask(Task):
 
 	def run(self, *args, **kwargs):
 		raise NotImplementedError("BaseTask is abstract")
+
+	def apply_async(self, args=None, kwargs=None, task_id=None, **options):
+		parameters = inspect.signature(self.run).bind_partial(*(args or ()), **(kwargs or {})).arguments
+		user_id = parameters.get("user_id")
+		if user_id is None:
+			raise ValueError("A task requires an authenticated user.")
+		access = TaskAccess(user_id)
+		organisation_id = parameters.get("organisation_id")
+		if organisation_id is None:
+			scope = access.active()
+		else:
+			scope = {"organisation_id": int(organisation_id), "base_name": parameters.get("base_name")}
+			scope["base_id"] = get_base_id(scope["base_name"], scope["organisation_id"])
+		if not access.permitted(scope):
+			raise PermissionError("Document base access denied.")
+		task_id = task_id or str(uuid4())
+		access.register(task_id, scope)
+		return super().apply_async(args=args, kwargs=kwargs, task_id=task_id, **options)
+
+	def before_start(self, task_id, args, kwargs):
+		set_signal_scope()
+		parameters = inspect.signature(self.run).bind_partial(*args, **kwargs).arguments
+		user_id = parameters.get("user_id")
+		access = TaskAccess(user_id)
+		scope = access.task(task_id)
+		if not access.permitted(scope):
+			raise PermissionError("Document base access denied.")
+		if isinstance(self, FeedbackTask):
+			if access.active() != scope:
+				raise PermissionError("The active document base has changed.")
+		else:
+			access.activate(scope)
+		set_signal_scope(user_id, scope["base_id"])
+
+	def after_return(self, status, retval, task_id, args, kwargs, einfo):
+		set_signal_scope()
 
 	@staticmethod
 	def load():
@@ -132,8 +170,8 @@ class CreateDocumentBase(BaseTask):
 		if not isinstance(statistics, Statistics):
 			raise Exception("Invalid statistics")
 
-		docs = get_documents(document_ids, user_id)
-		if docs[0] is tuple[None,None]:
+		docs = get_documents(document_ids, user_id, organisation_id)
+		if not docs or any(name is None or content is None for name, content in docs):
 			raise Exception(f"user with user id:{user_id} has no document with the document_ids: {document_ids}")
 
 		self.update(State.PENDING)

@@ -135,8 +135,8 @@ class WannaDB_WebAPI:
 
 	def get_ordert_nuggets(self, document_id: int):
 		logger.warning("get_ordert_nuggets is deprecated, use get_ordered_nuggets_by_doc_name instead!")
-		document = get_document(document_id, self.user_id)
-		if document is None:
+		document = get_document(document_id, self.user_id, self.organisation_id, self.document_base_name)
+		if document[0] is None:
 			logger.error(f"Document with id {document_id} not found!")
 			self.signals.error.emit(Exception(f"Document with id {document_id} not found!"))
 			return
@@ -152,8 +152,9 @@ class WannaDB_WebAPI:
 
 	def get_ordered_nuggets_by_doc_name(self, document_name: str, document_content: str):
 		logger.warning("It is recommended to not use get_ordered_nuggets_by_doc_name!")
-		document = get_document_by_name_and_content(document_name, document_content, self.user_id)
-		if document is None:
+		document = get_document_by_name_and_content(document_name, document_content, self.user_id,
+			organisation_id=self.organisation_id, base_name=self.document_base_name)
+		if document[0] is None:
 			logger.error(f"Document {document_name} not found!")
 			self.signals.error.emit(Exception(f"Document {document_name} not found!"))
 			return
@@ -298,7 +299,8 @@ class WannaDB_WebAPI:
 			logger.info("ATT")
 			logger.info(self.document_base.attributes)
 
-			status = update_document_content(self.document_id, self.document_base.to_bson())
+			status = update_document_content(self.document_id, self.document_base.to_bson(),
+				self.organisation_id, None, self.user_id)
 			if not status:
 				logger.error(f"Document base could not be saved to BSON! Document {self.document_id} does not exist!")
 				self.signals.error.emit(RuntimeError("PERSISTENCE_FAILED"))

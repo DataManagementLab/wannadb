@@ -1,9 +1,17 @@
 from typing import Optional, Union
 import logging
+import json
+from contextvars import ContextVar
 
 from wannadb_web.Redis import util
 
 logger = logging.getLogger(__name__)
+
+_signal_scope = ContextVar("signal_scope", default=None)
+
+
+def set_signal_scope(user_id=None, base_id=None):
+	_signal_scope.set((str(user_id), base_id) if base_id is not None else None)
 
 
 class RedisCache:
@@ -11,6 +19,9 @@ class RedisCache:
 		"""Initialize the RedisCache instance for a specific user."""
 		self.redis_client = util.connectRedis()
 		self.user_space_key = f"user:{user_id}"
+		scope = _signal_scope.get()
+		if scope is not None and str(user_id) == scope[0]:
+			self.user_space_key += f":base:{scope[1]}"
 
 	def set(self, key: str, value: Union[str, bytes, int, float]) -> None:
 		"""Set a key-value pair in the user-specific space."""
@@ -56,3 +67,42 @@ class RedisCache:
 		"""Close the Redis connection for the user-specific space."""
 		self.redis_client.close()
 		self.redis_client = None
+
+
+class TaskAccess:
+	"""Keep authorization metadata separate from resettable worker signals."""
+	def __init__(self, user_id: int):
+		self.cache = RedisCache(f"access:{user_id}")
+		self.user_id = user_id
+
+	def _get(self, key):
+		value = self.cache.get(key)
+		try:
+			return json.loads(value) if value is not None else None
+		except (ValueError, TypeError):
+			return None
+
+	def _set(self, key, scope):
+		self.cache.redis_client.set(
+			name=f"{self.cache.user_space_key}:{key}", value=json.dumps(scope), ex=86400)
+
+	def register(self, task_id, scope):
+		self._set(f"task:{task_id}", scope)
+
+	def task(self, task_id):
+		return self._get(f"task:{task_id}")
+
+	def active(self):
+		return self._get("active")
+
+	def activate(self, scope):
+		self._set("active", scope)
+
+	def permitted(self, scope):
+		from wannadb_web.postgres.queries import get_base_id, get_organisation_authorisation
+		if not isinstance(scope, dict):
+			return False
+		if get_organisation_authorisation(self.user_id, scope.get("organisation_id")) is None:
+			return False
+		base_id = get_base_id(scope.get("base_name"), scope.get("organisation_id"))
+		return base_id is not None and base_id == scope.get("base_id")

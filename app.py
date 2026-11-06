@@ -5,27 +5,25 @@ from flask import Flask, make_response, render_template_string
 from flask_cors import CORS
 #from flask_debugtoolbar import DebugToolbarExtension
 from wannadb_web.routing.core import core_routes
-from wannadb_web.routing.dev import dev_routes
 from wannadb_web.routing.user import user_management
 from wannadb_web.routing.files import main_routes
 
-logging.basicConfig(level=logging.DEBUG, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 
 app = Flask(__name__)
 
 
 # Combine Flask and Celery configs
 app.config.from_mapping(
-	SECRET_KEY='secret!',
-	DEBUG=True,
-	DEBUG_TB_ENABLED=True,
-	DEBUG_TB_PROFILER_ENABLED=True,
+	SECRET_KEY=os.environ.get('WANNA_DB_JWT_SECRET'),
+	DEBUG=False,
+	DEBUG_TB_ENABLED=False,
+	DEBUG_TB_PROFILER_ENABLED=False,
 	broker_url=os.environ.get("CELERY_BROKER_URL"),
 	task_ignore_result=True,
 	PREFERRED_URL_SCHEME='https',
 	#PROPAGATE_EXCEPTIONS=True
 )
-app.config['DEBUG'] = True
 # Register the Extensions
 # #toolbar = DebugToolbarExtension(app)
 
@@ -34,7 +32,6 @@ app.config['DEBUG'] = True
 # Register the blueprints
 app.register_blueprint(main_routes)
 app.register_blueprint(user_management)
-app.register_blueprint(dev_routes)
 app.register_blueprint(core_routes)
 
 CORS(

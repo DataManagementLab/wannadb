@@ -89,7 +89,7 @@ FROM build as dev
 # Note: only the last CMD in a Docker stage is used.
 # CMD ["mypy", "--install-types", "--non-interactive"]
 
-CMD ["flask", "--app", "app", "--debug", "run", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["flask", "--app", "app", "--no-debug", "run", "--host", "0.0.0.0", "--port", "8000"]
 
 
 FROM worker-prod as prod

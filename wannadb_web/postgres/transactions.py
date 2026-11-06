@@ -5,13 +5,18 @@ from deprecated import deprecated
 import bcrypt
 from psycopg2 import sql, IntegrityError
 from wannadb_web.util import Token, Authorisation, tokenDecode
-from wannadb_web.postgres.queries import check_password
+from wannadb_web.postgres.queries import check_password, get_organisation_authorisation
 from wannadb_web.postgres.util import execute_transaction
 
 logger: logging.Logger = logging.getLogger(__name__)
 
 
-# WARNING: This is only for development purposes!
+# Schema tooling is offline administration only, with an explicit schema allowlist.
+def _schema_identifier(schema):
+	if schema != "public":
+		raise ValueError("Schema is not allowed")
+	return sql.Identifier(schema)
+
 
 def create_schema(schema):
 	"""
@@ -21,7 +26,7 @@ def create_schema(schema):
 	:type schema: str
 	:return: None
 	"""
-	create_schema_query = sql.SQL(f"CREATE SCHEMA IF NOT EXISTS {schema};")
+	create_schema_query = sql.SQL("CREATE SCHEMA IF NOT EXISTS {schema};").format(schema=_schema_identifier(schema), schema_name=sql.Literal(schema))
 	execute_transaction(create_schema_query, commit=True, fetch=False)
 	logger.info(f"Schema {schema} created successfully.")
 
@@ -34,7 +39,7 @@ def drop_schema(schema):
 	:type schema: str
 	:return: None
 	"""
-	drop_schema_query = sql.SQL(f"DROP SCHEMA IF EXISTS {schema} CASCADE;")
+	drop_schema_query = sql.SQL("DROP SCHEMA IF EXISTS {schema} CASCADE;").format(schema=_schema_identifier(schema), schema_name=sql.Literal(schema))
 	execute_transaction(drop_schema_query, commit=True, fetch=False)
 	logger.info(f"Schema {schema} dropped successfully.")
 
@@ -47,13 +52,11 @@ def drop_tables(schema):
 	:type schema: str
 	:return: None
 	"""
-	drop_table_query = sql.SQL(
-		f"DROP TABLE IF EXISTS {schema}.users CASCADE;\n"
-		f"DROP TABLE IF EXISTS {schema}.documents CASCADE;\n"
-		f"DROP TABLE IF EXISTS {schema}.membership CASCADE;\n"
-		f"DROP TABLE IF EXISTS {schema}.organisations CASCADE;\n"
-		f"DROP TABLE IF EXISTS {schema}.document_bases CASCADE;\n"
-	)
+	drop_table_query = sql.SQL("DROP TABLE IF EXISTS {schema}.users CASCADE;\n"
+		"DROP TABLE IF EXISTS {schema}.documents CASCADE;\n"
+		"DROP TABLE IF EXISTS {schema}.membership CASCADE;\n"
+		"DROP TABLE IF EXISTS {schema}.organisations CASCADE;\n"
+		"DROP TABLE IF EXISTS {schema}.document_bases CASCADE;\n").format(schema=_schema_identifier(schema), schema_name=sql.Literal(schema))
 	execute_transaction(drop_table_query, commit=True)
 
 
@@ -65,7 +68,7 @@ def create_user_table(schema):
 	:type schema: str
 	:return: None
 	"""
-	create_table_query = sql.SQL(f"""CREATE TABLE IF NOT EXISTS {schema}.users
+	create_table_query = sql.SQL("""CREATE TABLE IF NOT EXISTS {schema}.users
 	(
     id bigint NOT NULL GENERATED ALWAYS AS IDENTITY ( INCREMENT 1 START 1 MINVALUE 1 MAXVALUE 9223372036854775807 CACHE 1 ),
     username text COLLATE pg_catalog."default" NOT NULL,
@@ -75,7 +78,7 @@ def create_user_table(schema):
 	)
 
 	TABLESPACE pg_default;
-	""")
+	""").format(schema=_schema_identifier(schema), schema_name=sql.Literal(schema))
 	execute_transaction(create_table_query, commit=True, fetch=False)
 
 
@@ -87,7 +90,7 @@ def create_documents_table(schema):
 	:type schema: str
 	:return: None
 	"""
-	create_table_query = sql.SQL(f"""CREATE TABLE IF NOT EXISTS  {schema}.documents
+	create_table_query = sql.SQL("""CREATE TABLE IF NOT EXISTS  {schema}.documents
 	(
 		id bigint NOT NULL GENERATED ALWAYS AS IDENTITY ( INCREMENT 1 START 1 MINVALUE 1 MAXVALUE 9223372036854775807 CACHE 1 ),
 		name text NOT NULL,
@@ -113,14 +116,14 @@ def create_documents_table(schema):
 			ON DELETE CASCADE
 	)
 
-	TABLESPACE pg_default;""")
+	TABLESPACE pg_default;""").format(schema=_schema_identifier(schema), schema_name=sql.Literal(schema))
 	execute_transaction(create_table_query, commit=True, fetch=False)
 
-	add_docBase_column_query = sql.SQL(f"""
+	add_docBase_column_query = sql.SQL("""
 	DO $$ 
 	BEGIN
 		IF NOT EXISTS (SELECT 1 FROM information_schema.columns 
-				WHERE table_schema = '{schema}' 
+				WHERE table_schema = {schema_name} 
 				AND table_name = 'documents' 
 				AND column_name = 'documentbaseid') THEN
 			ALTER TABLE {schema}.documents ADD COLUMN documentbaseid bigint;
@@ -130,7 +133,7 @@ def create_documents_table(schema):
 				ON DELETE CASCADE;
 		END IF;
 	END $$;
-	""")
+	""").format(schema=_schema_identifier(schema), schema_name=sql.Literal(schema))
 	execute_transaction(add_docBase_column_query, commit=True, fetch=False)
 
 
@@ -142,7 +145,7 @@ def create_document_feedback_table(schema):
 	:type schema: str
 	:return: None
 	"""
-	create_table_query = sql.SQL(f"""CREATE TABLE IF NOT EXISTS {schema}.document_feedback
+	create_table_query = sql.SQL("""CREATE TABLE IF NOT EXISTS {schema}.document_feedback
 	(
 	id bigint NOT NULL GENERATED ALWAYS AS IDENTITY ( INCREMENT 1 START 1 MINVALUE 1 MAXVALUE 9223372036854775807 CACHE 1 ),
 	documentid bigint NOT NULL,
@@ -164,7 +167,7 @@ def create_document_feedback_table(schema):
 		NOT VALID
 )
 TABLESPACE pg_default;
-""")
+""").format(schema=_schema_identifier(schema), schema_name=sql.Literal(schema))
 	execute_transaction(create_table_query, commit=True, fetch=False)
 
 
@@ -176,11 +179,11 @@ def create_membership_table(schema):
 	:type schema: str
 	:return: None
 	"""
-	create_table_query = sql.SQL(f"""CREATE TABLE IF NOT EXISTS {schema}.membership
+	create_table_query = sql.SQL("""CREATE TABLE IF NOT EXISTS {schema}.membership
 (
     userid bigint NOT NULL,
     organisationid bigint NOT NULL,
-    authorisation bigint NOT NULL DEFAULT 0,
+    authorisation bigint NOT NULL DEFAULT 10,
     CONSTRAINT membership_pkey PRIMARY KEY (userid, organisationid),
     CONSTRAINT membership_organisationid_fkey FOREIGN KEY (organisationid)
         REFERENCES {schema}.organisations (id) MATCH SIMPLE
@@ -205,7 +208,7 @@ ALTER TABLE IF EXISTS {schema}.membership
 CREATE INDEX IF NOT EXISTS fki_organisationid
     ON {schema}.membership USING btree
     (organisationid ASC NULLS LAST)
-    TABLESPACE pg_default;""")
+    TABLESPACE pg_default;""").format(schema=_schema_identifier(schema), schema_name=sql.Literal(schema))
 	execute_transaction(create_table_query, commit=True, fetch=False)
 
 
@@ -217,7 +220,7 @@ def create_document_base_table(schema):
 	:type schema: str
 	:return: None
 	"""
-	create_table_query = sql.SQL(f"""CREATE TABLE IF NOT EXISTS {schema}.document_bases
+	create_table_query = sql.SQL("""CREATE TABLE IF NOT EXISTS {schema}.document_bases
 		(
 			id bigint NOT NULL GENERATED ALWAYS AS IDENTITY ( INCREMENT 1 START 1 MINVALUE 1 MAXVALUE 9223372036854775807 CACHE 1 ),
 			name text COLLATE pg_catalog."default" NOT NULL,
@@ -234,23 +237,23 @@ def create_document_base_table(schema):
 
 		TABLESPACE pg_default;
 
-		""")
+		""").format(schema=_schema_identifier(schema), schema_name=sql.Literal(schema))
 	execute_transaction(create_table_query, commit=True, fetch=False)
 
-	add_last_modified_column_query = sql.SQL(f"""
+	add_last_modified_column_query = sql.SQL("""
 	DO $$
 	BEGIN
 		IF NOT EXISTS (SELECT 1 FROM information_schema.columns 
-				WHERE table_schema = '{schema}' 
+				WHERE table_schema = {schema_name} 
 				AND table_name = 'document_bases' 
 				AND column_name = 'last_modified') THEN
 			ALTER TABLE {schema}.document_bases ADD COLUMN last_modified timestamp without time zone NOT NULL DEFAULT now();
 		END IF;
 	END $$;
-	""")
+	""").format(schema=_schema_identifier(schema), schema_name=sql.Literal(schema))
 	execute_transaction(add_last_modified_column_query, commit=True, fetch=False)
  
-	create_function_query = sql.SQL(f"""
+	create_function_query = sql.SQL("""
 		CREATE OR REPLACE FUNCTION {schema}.update_last_modified()
 		RETURNS TRIGGER AS $$
 		BEGIN
@@ -258,17 +261,17 @@ def create_document_base_table(schema):
 		RETURN NEW;
 		END;
 		$$ LANGUAGE plpgsql;
-	""")
+	""").format(schema=_schema_identifier(schema), schema_name=sql.Literal(schema))
 	execute_transaction(create_function_query, commit=True, fetch=False)
  
-	create_trigger_query = sql.SQL(f"""
+	create_trigger_query = sql.SQL("""
 		DROP TRIGGER IF EXISTS update_last_modified_trigger ON {schema}.document_bases;
 		
   		CREATE TRIGGER update_last_modified_trigger
 		BEFORE UPDATE ON {schema}.document_bases
 		FOR EACH ROW
 		EXECUTE FUNCTION {schema}.update_last_modified();
-	""")
+	""").format(schema=_schema_identifier(schema), schema_name=sql.Literal(schema))
 	execute_transaction(create_trigger_query, commit=True, fetch=False)
 
 
@@ -280,7 +283,7 @@ def create_organisation_table(schema):
 	:type schema: str
 	:return: None
 	"""
-	create_table_query = sql.SQL(f"""CREATE TABLE IF NOT EXISTS {schema}.organisations
+	create_table_query = sql.SQL("""CREATE TABLE IF NOT EXISTS {schema}.organisations
 (
     id bigint NOT NULL GENERATED ALWAYS AS IDENTITY ( INCREMENT 1 START 1 MINVALUE 1 MAXVALUE 9223372036854775807 CACHE 1 ),
     name text COLLATE pg_catalog."default" NOT NULL,
@@ -290,7 +293,7 @@ def create_organisation_table(schema):
 
 TABLESPACE pg_default;
 
-""")
+""").format(schema=_schema_identifier(schema), schema_name=sql.Literal(schema))
 	execute_transaction(create_table_query, commit=True, fetch=False)
 
 
@@ -399,7 +402,7 @@ def add_organisation(organisationName: str, sessionToken: str):
 			return None, "Authentication failed."
 		userid = token.id
 		insert_query = sql.SQL("with a as (INSERT INTO organisations (name) VALUES (%s) returning id) "
-							   "INSERT INTO membership (userid,organisationid) select (%s),id from a returning organisationid")
+							   "INSERT INTO membership (userid,organisationid,authorisation) select (%s),id,0 from a returning organisationid")
 		organisation_id = execute_transaction(insert_query, (organisationName, userid), commit=True)
 		organisation_id = int(organisation_id[0][0])
 		return organisation_id, None
@@ -425,6 +428,8 @@ def leave_organisation_transaction(organisationId: int, sessionToken: str):
 	"""
 	try:
 		token: Token = tokenDecode(sessionToken)
+		if token is None:
+			return False, "Authentication failed."
 		userid = token.id
 
 		count_query = sql.SQL("SELECT COUNT(*) FROM membership WHERE userid = (%s) AND organisationid = (%s)")
@@ -501,7 +506,7 @@ INSERT INTO membership (userid, organisationid)
 		logger.error(f"addUserToOrganisation failed because: \n{e}")
 
 
-def add_user_to_organisation_new(organisationId: int, newUser: str):
+def add_user_to_organisation_new(organisationId: int, newUser: str, actor_user_id: int):
 	"""
 	Add a user to an organisation.
 	Reworked version without session token.
@@ -514,22 +519,19 @@ def add_user_to_organisation_new(organisationId: int, newUser: str):
 	:rtype: Union[int, str]
 	"""
 	try:
-		select_id_query = sql.SQL("SELECT id FROM users WHERE username = (%s)")
-		userid = execute_transaction(select_id_query, (newUser,), commit=True)
-		if userid is None:
-			return None, "User does not exist"
-
-		insert_query = sql.SQL(
-			"INSERT INTO membership (userid, organisationid) VALUES (%s, %s) returning organisationid")
-		organisation_id = execute_transaction(insert_query, (userid[0][0], organisationId), commit=True)
-		if organisation_id is None:
-			return None, "you have no privileges in this organisation"
-		return int(organisation_id[0][0]), None
+		query = sql.SQL("""INSERT INTO membership (userid, organisationid, authorisation)
+			SELECT u.id, m.organisationid, 10 FROM users u CROSS JOIN membership m
+			WHERE u.username = %s AND m.userid = %s AND m.organisationid = %s
+			AND m.authorisation IN (0, 1) RETURNING organisationid;""")
+		result = execute_transaction(query, (newUser, actor_user_id, organisationId), commit=True)
+		if isinstance(result, list) and result:
+			return int(result[0][0]), None
+		return None, "User does not exist or administrator access is required"
 	except IntegrityError:
 		return None, "User already in organisation"
-	except Exception as e:
-		logger.error(f"addUserToOrganisation2 failed because: \n{e}")
-		return None, 'Unknown error'
+	except Exception:
+		logger.error("Could not add organization member")
+		return None, "Could not add organization member"
 
 
 @deprecated
@@ -570,7 +572,7 @@ def remove_user_from_organisation(organisationName: str, sessionToken: str, user
 		logger.error(f"removeUserFromOrganisation failed because: \n{e}")
   
   
-def remove_user_from_organisation_new(organisationId: int, userToRemove: str):
+def remove_user_from_organisation_new(organisationId: int, userToRemove: str, actor_user_id: int):
 	"""
 	Remove a user from an organisation.
 	Reworked version without session token.
@@ -582,19 +584,19 @@ def remove_user_from_organisation_new(organisationId: int, userToRemove: str):
 	:return: None
 	"""
 	try:
-		select_id_query = sql.SQL("SELECT id FROM users WHERE username = (%s)")
-		userid = execute_transaction(select_id_query, (userToRemove,), commit=True)
-		if userid is None:
-			return None, "User does not exist"
-
-		delete_query = sql.SQL(
-			"DELETE FROM membership WHERE userid = (%s) AND organisationid = (%s) returning organisationid")
-		execute_transaction(delete_query, (userid[0][0], organisationId), commit=True)
-		return True, None	
-
-	except Exception as e:
-		logger.error(f"removeUserFromOrganisation2 failed because: \n{e}")
-		return False, e
+		query = sql.SQL("""DELETE FROM membership target USING users u, membership actor
+			WHERE target.userid = u.id AND u.username = %s
+			AND target.organisationid = %s AND actor.organisationid = target.organisationid
+			AND actor.userid = %s AND actor.authorisation IN (0, 1)
+			AND target.authorisation > actor.authorisation AND target.authorisation IN (1, 10)
+			RETURNING target.organisationid;""")
+		result = execute_transaction(query, (userToRemove, organisationId, actor_user_id), commit=True)
+		if isinstance(result, list) and result:
+			return True, None
+		return False, "Member not found or insufficient administrator privileges"
+	except Exception:
+		logger.error("Could not remove organization member")
+		return False, "Could not remove organization member"
 
 
 def adjust_user_authorization(organisationName: str, sessionToken: str, userToAdjust: str, newAuthorisation: int):
@@ -639,7 +641,7 @@ def adjust_user_authorization(organisationName: str, sessionToken: str, userToAd
 		logger.error(f"adjUserAuthorisation failed because: \n{e}")
 
 
-def add_document(name: str, content: Union[str, bytes], organisationId: int, userid: int, base_id: int=None):
+def add_document(name: str, content: Union[str, bytes], organisationId: int, userid: int, base_id: int = None):
 	"""
 	Add a new document to the database.
  
@@ -657,50 +659,35 @@ def add_document(name: str, content: Union[str, bytes], organisationId: int, use
 	:rtype: Union[Tuple[int, str], Tuple[None, None]]
 	"""
 	try:
-		# check if name already exists in the organisation
+		if get_organisation_authorisation(userid, organisationId) is None:
+			return None, None
 		check_query = sql.SQL("SELECT id FROM documents WHERE name = %s AND organisationid = %s;")
 		check_result = execute_transaction(check_query, (name, organisationId), commit=True)
 		counter = 0
+		original_name = name
 		while check_result:
 			counter += 1
-			new_name = f"{name}({counter})"
-			check_result = execute_transaction(check_query, (new_name, organisationId), commit=True)
-		name = new_name if counter > 0 else name
-		if isinstance(content, str):
-			if base_id is None:
-				insert_data_query = sql.SQL("INSERT INTO documents (name, content, organisationid, userid) "
-											"VALUES (%s, %s, %s, %s) returning id;")
-				data_to_insert = (name, content, organisationId, userid)
-			else:
-				insert_data_query = sql.SQL("INSERT INTO documents (name, content, organisationid, userid, documentbaseid) "
-											"VALUES (%s, %s, %s, %s, %s) returning id;")
-				data_to_insert = (name, content, organisationId, userid, base_id)
-		elif isinstance(content, bytes):
-			logger.debug("----- byte file creation -----")
-			if base_id is None:
-				insert_data_query = sql.SQL("INSERT INTO documents (name, content_byte, organisationid, userid) "
-											"VALUES (%s, %s, %s, %s) returning id;")
-				data_to_insert = (name, content, organisationId, userid)
-			else:
-				insert_data_query = sql.SQL("INSERT INTO documents (name, content_byte, organisationid, userid, documentbaseid) "
-											"VALUES (%s, %s, %s, %s, %s) returning id;")
-				data_to_insert = (name, content, organisationId, userid, base_id)
-		response = execute_transaction(insert_data_query, data_to_insert, commit=True)
-		if not response:
-			logger.error("Failed to add document")
-			return "error occured", None
-		return int(response[0][0]), name
-
-	except IntegrityError as i:
-		logger.error(str(i))
-		return None, None
-
-	except Exception as e:
-		logger.error(str(e))
-		return None, None
+			name = f"{original_name}({counter})"
+			check_result = execute_transaction(check_query, (name, organisationId), commit=True)
+		if not isinstance(content, (str, bytes)):
+			return None, None
+		content_column = sql.Identifier("content" if isinstance(content, str) else "content_byte")
+		query = sql.SQL("""INSERT INTO documents (name, {content}, organisationid, userid, documentbaseid)
+			SELECT %s, %s, %s, %s, %s
+			WHERE EXISTS (SELECT 1 FROM membership WHERE userid = %s AND organisationid = %s
+			AND authorisation IN (0, 1, 10))
+			AND (%s IS NULL OR EXISTS (SELECT 1 FROM document_bases WHERE id = %s AND organisation_id = %s))
+			RETURNING id;""").format(content=content_column)
+		result = execute_transaction(query, (name, content, organisationId, userid, base_id,
+			userid, organisationId, base_id, base_id, organisationId), commit=True)
+		if isinstance(result, list) and result:
+			return int(result[0][0]), name
+	except Exception:
+		logger.error("Could not add document")
+	return None, None
 
 
-def add_document_base(name: str, attributes: list[str], orgId: int, documents: list[int]):
+def add_document_base(name: str, attributes: list[str], orgId: int, documents: list[int], user_id: int):
 	"""
 	Add a new document base and associate documents with it.
  
@@ -712,36 +699,40 @@ def add_document_base(name: str, attributes: list[str], orgId: int, documents: l
 	:type orgId: int
 	:param documents: List of document IDs to associate with the document base
 	:type documents: list[int]
-	:return: ID of the newly created document base or error code (-409 for IntegrityError, -500 for other exceptions)
+	:return: ID of the newly created document base or an error code (-400 invalid IDs, -403 forbidden selection, -409 conflict, -500 failure)
 	:rtype: int
 	"""
+	if (not isinstance(documents, list) or
+		any(type(document_id) is not int or document_id <= 0 for document_id in documents) or
+		len(set(documents)) != len(documents)):
+		return -400
 	try:
-		insert_data_query = sql.SQL(
-			"INSERT INTO document_bases (name, attributes, organisation_id) "
-			"VALUES (%s,%s,%s) returning id;"
-		)
-		data = (name, attributes, orgId)
-		response = execute_transaction(insert_data_query, data, commit=True)
-		docBase_id = int(response[0][0])
-		for id in documents:
-			update_query = sql.SQL(
-				"UPDATE documents "
-				"SET documentbaseid = %s "
-				"WHERE id = %s;"
-			)
-			data = (docBase_id, id)
-			execute_transaction(update_query, data, commit=True, fetch=False)
-		return docBase_id
-
-	except IntegrityError as i:
-		logger.error(str(i))
+		query = sql.SQL("""WITH selected_documents AS (
+			SELECT d.id FROM documents d WHERE d.id = ANY(%s)
+			AND d.organisationid = %s AND d.documentbaseid IS NULL FOR UPDATE
+		), new_base AS (
+			INSERT INTO document_bases (name, attributes, organisation_id)
+			SELECT %s, %s, %s WHERE EXISTS (SELECT 1 FROM membership m
+			WHERE m.userid = %s AND m.organisationid = %s AND m.authorisation IN (0, 1, 10))
+			AND (SELECT count(*) FROM selected_documents) = %s RETURNING id
+		), associated AS (
+			UPDATE documents d SET documentbaseid = b.id FROM new_base b
+			WHERE d.id IN (SELECT id FROM selected_documents) AND d.organisationid = %s
+			RETURNING d.id
+		) SELECT id FROM new_base;""")
+		result = execute_transaction(query, (documents, orgId, name, attributes, orgId,
+			user_id, orgId, len(documents), orgId), commit=True)
+		if isinstance(result, list) and result:
+			return int(result[0][0])
+		return -403
+	except IntegrityError:
 		return -409
-	except Exception as e:
-		logger.error(str(e))
+	except Exception:
+		logger.error("Could not create document base")
 		return -500
 
 
-def delete_document_base_data(base_name: str, organisation_id: int):
+def delete_document_base_data(base_name: str, organisation_id: int, user_id: int):
 	"""
 	Delete a document base and disassociate documents from it.
  
@@ -754,25 +745,20 @@ def delete_document_base_data(base_name: str, organisation_id: int):
 	"""
 	try:
 		delete_query = sql.SQL(
-			"DELETE FROM document_bases "
-			"WHERE name = %s AND organisation_id = %s;"
+			"DELETE FROM document_bases b "
+			"WHERE b.name = %s AND b.organisation_id = %s "
+			"AND EXISTS (SELECT 1 FROM membership m WHERE m.userid = %s "
+			"AND m.organisationid = b.organisation_id AND m.authorisation IN (0, 1)) RETURNING b.id;"
 		)
-		data = (base_name, organisation_id)
-		execute_transaction(delete_query, data, commit=True, fetch=False)
-
-		delete_documents_query = sql.SQL(
-			"DELETE FROM documents "
-			"WHERE documentbaseid IN (SELECT id FROM document_bases WHERE name = %s AND organisation_id = %s);"
-		)
-		execute_transaction(delete_documents_query, data, commit=True, fetch=False)
-
-		return True
+		data = (base_name, organisation_id, user_id)
+		result = execute_transaction(delete_query, data, commit=True)
+		return isinstance(result, list) and bool(result)
 
 	except Exception as e:
 		logger.error(str(e))
 		return False
 
-def add_feedback(document_id: int, user_id: int, positive: bool, attribute: str, feedback_start: int = None, feedback_end: int = None):
+def add_feedback(document_id: int, user_id: int, positive: bool, attribute: str, feedback_start: int = None, feedback_end: int = None, organisation_id: int = None):
 	"""
 	Add a public feedback for a certain attribute to a document.
  
@@ -794,10 +780,16 @@ def add_feedback(document_id: int, user_id: int, positive: bool, attribute: str,
 	try:
 		insert_data_query = sql.SQL(
 			"INSERT INTO document_feedback (documentid, userid, positive, attribute, feedback_start, feedback_end) "
-			"VALUES (%s, %s, %s, %s, %s, %s) returning id;"
+			"SELECT %s, %s, %s, %s, %s, %s WHERE EXISTS (SELECT 1 FROM documents d "
+			"JOIN membership m ON m.organisationid = d.organisationid WHERE d.id = %s "
+			"AND m.userid = %s AND m.authorisation IN (0, 1, 10) "
+			"AND (%s IS NULL OR d.organisationid = %s)) RETURNING id;"
 		)
-		data = (document_id, user_id, positive, attribute, feedback_start, feedback_end)
+		data = (document_id, user_id, positive, attribute, feedback_start, feedback_end,
+			document_id, user_id, organisation_id, organisation_id)
 		response = execute_transaction(insert_data_query, data, commit=True)
+		if not isinstance(response, list) or not response:
+			return -403
 		feedback_id = int(response[0][0])
 		return feedback_id
 

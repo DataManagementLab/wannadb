@@ -32,14 +32,14 @@ import logging.config
 import pickle
 from typing import Optional
 
-from wannadb_web.postgres.queries import get_document_base_data, get_document_by_name_and_content, get_feedbacks_for_document, get_document_by_name
+from wannadb_web.postgres.queries import get_document_base_data, get_document_by_name_and_content, get_feedbacks_for_document, get_document_by_name, get_base_id, get_organisation_authorisation, documents_available_for_base
 from wannadb_web.postgres.transactions import add_feedback, add_document_base, delete_document_base_data
 
-from flask import Blueprint, make_response, request
+from flask import Blueprint, make_response, request, g
 from celery.result import AsyncResult
 from wannadb.data.data import Attribute, Document, InformationNugget, DocumentBase
 from wannadb.statistics import Statistics
-from wannadb_web.Redis.RedisCache import RedisCache
+from wannadb_web.Redis.RedisCache import RedisCache, TaskAccess
 from wannadb_web.util import tokenDecode
 from wannadb_web.worker.data import Signals
 
@@ -49,6 +49,68 @@ from wannadb_web.worker.tasks import CreateDocumentBase, BaseTask, DocumentBaseA
 core_routes = Blueprint('core_routes', __name__, url_prefix='/core')
 
 logger = logging.getLogger(__name__)
+
+
+def _positive_id(value):
+	if isinstance(value, str) and value.isascii() and value.isdigit():
+		value = int(value) if len(value) <= 19 else None
+	return value if type(value) is int and 0 < value <= 9223372036854775807 else None
+
+
+@core_routes.before_request
+def authorize_core_request():
+	if request.method == "OPTIONS":
+		return None
+	view = request.view_args or {}
+	token = tokenDecode(request.headers.get("Authorization") or view.get("token"))
+	if token is None:
+		return make_response({"error": "invalid token"}, 401)
+	g.auth_token = token
+	endpoint = request.endpoint.rsplit(".", 1)[-1]
+	access = TaskAccess(token.id)
+	if endpoint == "task_status":
+		scope = access.task(view.get("task_id"))
+		if not access.permitted(scope):
+			return make_response({"error": "task not found"}, 404)
+		g.task_scope = scope
+		return None
+	if endpoint == "task_update":
+		return None
+	if endpoint in {"document_base_do_current_attribute", "reload_document_base", "stop_feedback"}:
+		scope = access.active()
+		if not access.permitted(scope):
+			return make_response({"error": "no authorized active document base"}, 403)
+		return None
+	data = request.get_json(silent=True) if request.is_json else {}
+	if not isinstance(data, dict):
+		return make_response({"error": "invalid request"}, 400)
+	organisation_id = _positive_id(view.get("organisation_id", data.get("organisationId")))
+	if organisation_id is None:
+		return make_response({"error": "invalid organization ID"}, 400)
+	role = get_organisation_authorisation(token.id, organisation_id)
+	if role is None or (endpoint == "delete_document_base" and role not in (0, 1)):
+		return make_response({"error": "organization access denied"}, 403)
+	g.organisation_id = organisation_id
+	base_name = view.get("base_name", data.get("baseName"))
+	if base_name is not None and (not isinstance(base_name, str) or not base_name.strip()):
+		return make_response({"error": "invalid document base name"}, 400)
+	if endpoint != "create_document_base" and base_name is not None:
+		if get_base_id(base_name, organisation_id) is None:
+			return make_response({"error": "document base not found"}, 404)
+	# A caller must select documents from the requested organization and base,
+	# even when they also belong to another organization containing the same text.
+	documents = data.get("nuggets") if endpoint == "confirm_nugget_multi_match" else [data] if "documentName" in data else []
+	if not isinstance(documents, list) or (endpoint == "confirm_nugget_multi_match" and not documents):
+		return make_response({"error": "invalid documents"}, 400)
+	for document in documents:
+		if not isinstance(document, dict):
+			return make_response({"error": "invalid document"}, 400)
+		document_id, _, _ = get_document_by_name_and_content(
+			document.get("documentName"), document.get("documentContent"), token.id,
+			organisation_id=organisation_id, base_name=base_name)
+		if document_id is None:
+			return make_response({"error": "document not found"}, 404)
+	return None
 
 
 @core_routes.route('/document_base', methods=['POST'])
@@ -67,7 +129,7 @@ def create_document_base():
     {
         "organisationId": "your_organisation_id",
         "baseName": "your_document_base_name",
-        "document_ids": "1, 2, 3",
+        "document_ids": [1, 2, 3],
         "attributes": "plane,car,bike"
     }
     """
@@ -82,17 +144,30 @@ def create_document_base():
 		return make_response({"error": "missing parameters"}, 400)
 	_token = tokenDecode(authorization)
 
-	if _token is False:
+	if _token is None:
 		return make_response({"error": "invalid token"}, 401)
 
 	attributes = attributes_strings.split(",")
-	document_ids = document_ids.split(",")
+	# A JSON array of integers is the canonical input. Strict numeric CSV remains
+	# accepted during deployment of older clients; values never enter SQL text.
+	if isinstance(document_ids, str):
+		parts = document_ids.split(",")
+		if not all(part.strip().isascii() and part.strip().isdigit() and len(part.strip()) <= 19 for part in parts):
+			return make_response({"error": "invalid document IDs"}, 400)
+		document_ids = [int(part.strip()) for part in parts]
+	if (not isinstance(document_ids, list) or not document_ids or
+		any(type(doc_id) is not int or not 0 < doc_id <= 9223372036854775807 for doc_id in document_ids) or
+		len(document_ids) != len(set(document_ids))):
+		return make_response({"error": "invalid document IDs"}, 400)
+	organisation_id = g.organisation_id
+	if not documents_available_for_base(document_ids, _token.id, organisation_id):
+		return make_response({"error": "documents are unavailable for this organization"}, 403)
 
 	statistics = Statistics(False)
 	user_id = _token.id
 
 
-	doc_base_id = add_document_base(base_name, attributes, organisation_id, document_ids)
+	doc_base_id = add_document_base(base_name, attributes, organisation_id, document_ids, user_id)
 
 	if doc_base_id < 0:
 		return make_response({"error": "Duplicated Entry!" if doc_base_id == -409 else "An error occured!"}, -doc_base_id)
@@ -114,7 +189,7 @@ def get_document_base(organisation_id: int, base_name: str):
 	
 	_token = tokenDecode(authorization)
 
-	if _token is False:
+	if _token is None:
 		return make_response({'error': 'invalid token'}, 401)
 	
 	document_base = get_document_base_data(base_name, organisation_id)
@@ -134,10 +209,10 @@ def delete_document_base(organisation_id: int, base_name: str):
 
 	_token = tokenDecode(authorization)
 
-	if _token is False:
+	if _token is None:
 		return make_response({'error': 'invalid token'}, 401)
 
-	success = delete_document_base_data(base_name, organisation_id)
+	success = delete_document_base_data(base_name, organisation_id, _token.id)
 	if not success:
 		return make_response({'error': 'document base not found'}, 404)
 
@@ -170,7 +245,7 @@ def load_document_base():
 		return make_response({"error": "missing parameters"}, 400)
 	_token = tokenDecode(authorization)
 
-	if _token is False:
+	if _token is None:
 		return make_response({"error": "invalid token"}, 401)
 
 	user_id = _token.id
@@ -207,7 +282,7 @@ def interactive_document_base():
 		return make_response({"error": "missing parameters"}, 400)
 	_token = tokenDecode(authorization)
 
-	if _token is False:
+	if _token is None:
 		return make_response({"error": "invalid token"}, 401)
 
 	user_id = _token.id
@@ -245,7 +320,7 @@ def document_base_attribute_add():
 		return make_response({"error": "missing parameters"}, 400)
 	_token = tokenDecode(authorization)
 
-	if _token is False:
+	if _token is None:
 		return make_response({"error": "invalid token"}, 401)
 
 	attributes_strings = attributes_string.split(",")
@@ -289,11 +364,10 @@ def document_base_attribute_update():
 	attributes_string = form.get("attributes")
 	if (organisation_id is None or base_name is None or attributes_string is None
 			or authorization is None):
-		print(f"{organisation_id=}, {base_name=}, {attributes_string=}, {authorization=}")
 		return make_response({"error": "missing parameters"}, 400)
 	_token = tokenDecode(authorization)
 
-	if _token is False:
+	if _token is None:
 		return make_response({"error": "invalid token"}, 401)
 
 	attributes_strings = attributes_string.split(",")
@@ -326,9 +400,9 @@ def document_base_attribute_update():
 @core_routes.route('/status/<token>/<task_id>', methods=['GET'])
 def task_status(token: str,task_id: str):
  
-	_token = tokenDecode(token)
+	_token = g.auth_token
 
-	if _token is False:
+	if _token is None:
 		return make_response({"error": "invalid token"}, 401)
 	user_id = _token.id
  
@@ -337,30 +411,26 @@ def task_status(token: str,task_id: str):
 	include_payload = request.args.get("summary") != "1"
 	include_feedback = request.args.get("feedback") != "0"
 	if status in ("FAILURE", "ERROR", "REVOKED"):
-		signals = Signals(user_id).to_json(include_payload=include_payload, include_feedback=include_feedback)
+		signals = Signals(user_id, base_id=g.task_scope["base_id"]).to_json(include_payload=include_payload, include_feedback=include_feedback)
 		if not signals.get("error"):
 			signals["error"] = "The task was cancelled." if status == "REVOKED" else "The background task failed."
 		elif signals["error"] == "PERSISTENCE_FAILED":
 			signals["error"] = "Changes could not be saved."
 		return make_response({"state": "REVOKED" if status == "REVOKED" else "FAILURE", "meta": signals}, 500)
 	if status == "SUCCESS":
-		signals = Signals(user_id).to_json(include_payload=include_payload, include_feedback=include_feedback)
+		signals = Signals(user_id, base_id=g.task_scope["base_id"]).to_json(include_payload=include_payload, include_feedback=include_feedback)
 		return make_response({"state": "SUCCESS", "meta": signals}, 200)
 	if status is None:
 		return make_response({"error": "task not found"}, 500)
 
-	signals = Signals(user_id).to_json(include_payload=include_payload, include_feedback=include_feedback)
+	signals = Signals(user_id, base_id=g.task_scope["base_id"]).to_json(include_payload=include_payload, include_feedback=include_feedback)
 	return make_response({"state": status, "meta": signals}, 202)
 
 
 @core_routes.route('/status/<task_id>', methods=['POST'])
 def task_update(task_id: str):
-	signals = Signals(task_id)
-
-	## todo: hier muss feedback emitted werden im format:
-	## {	------------------	}
-
-	signals.feedback_request_from_ui.emit(request.json.get("feedback"))
+	# Legacy raw signal injection is replaced by the scoped feedback endpoints.
+	return make_response({"error": "use the document-base feedback endpoints"}, 410)
 
 @core_routes.route('/document_base/do_current_attribute', methods=['POST'])
 def document_base_do_current_attribute():
@@ -384,7 +454,7 @@ def document_base_do_current_attribute():
 
 	_token = tokenDecode(authorization)
 
-	if _token is False:
+	if _token is None:
 		return make_response({"error": "invalid token"}, 401)
 
 	user_id = _token.id
@@ -411,7 +481,7 @@ def reload_document_base():
 
 	_token = tokenDecode(authorization)
 
-	if _token is False:
+	if _token is None:
 		return make_response({"error": "invalid token"}, 401)
 
 	user_id = _token.id
@@ -451,7 +521,7 @@ def sort_nuggets():
 
 	_token = tokenDecode(authorization)
 	
-	if _token is False:
+	if _token is None:
 		return make_response({"error": "invalid token"}, 401)
 	
 	user_id = _token.id
@@ -520,7 +590,7 @@ def confirm_nugget_custom():
 
 	_token = tokenDecode(authorization)
 	
-	if _token is False:
+	if _token is None:
 		return make_response({"error": "invalid token"}, 401)
 	
 	user_id = _token.id
@@ -589,7 +659,7 @@ def confirm_nugget_match():
 
 	_token = tokenDecode(authorization)
 	
-	if _token is False:
+	if _token is None:
 		return make_response({"error": "invalid token"}, 401)
 	
 	user_id = _token.id
@@ -658,7 +728,7 @@ def confirm_nugget_multi_match():
 
 	_token = tokenDecode(authorization)
 
-	if _token is False:
+	if _token is None:
 		return make_response({"error": "invalid token"}, 401)
 
 	user_id = _token.id
@@ -724,7 +794,7 @@ def confirm_no_match_in_document():
 
 	_token = tokenDecode(authorization)
 
-	if _token is False:
+	if _token is None:
 		return make_response({"error": "invalid token"}, 401)
 
 	user_id = _token.id
@@ -760,7 +830,7 @@ def stop_feedback():
 
 	_token = tokenDecode(authorization)
 
-	if _token is False:
+	if _token is None:
 		return make_response({"error": "invalid token"}, 401)
 
 	user_id = _token.id
@@ -808,13 +878,12 @@ def add_public_feedback():
 		or document_name is None
 		or document_content is None):
 
-		print(f"{organisation_id=}, {attribute=}, {document_name=}, {document_content=}, {authorization=}, {is_positive=}")
 
 		return make_response({"error": "missing parameters"}, 400)
 
 	_token = tokenDecode(authorization)
 
-	if _token is False:
+	if _token is None:
 		return make_response({"error": "invalid token"}, 401)
 
 	user_id = _token.id
@@ -822,7 +891,7 @@ def add_public_feedback():
 	document_id, _, _ = get_document_by_name_and_content(
 		document_name,
 		document_content,
-		user_id
+		user_id, organisation_id=organisation_id
 	)
 	if document_id is None:
 		return make_response({"error": "document not found"}, 404)
@@ -833,7 +902,7 @@ def add_public_feedback():
       	positive=is_positive,
        	attribute=attribute,
         feedback_start=start_index,
-        feedback_end=end_index
+        feedback_end=end_index, organisation_id=organisation_id
 	)
  
 	if feedback_id < 0:
@@ -867,7 +936,7 @@ def get_public_feedback():
 
 	_token = tokenDecode(authorization)
 
-	if _token is False:
+	if _token is None:
 		return make_response({"error": "invalid token"}, 401)
 
 	user_id = _token.id
@@ -875,7 +944,7 @@ def get_public_feedback():
 	document_id, _, _ = get_document_by_name_and_content(
 		form.get("documentName"),
 		form.get("documentContent"),
-		user_id
+		user_id, organisation_id=organisation_id
 	)
 	if document_id is None:
 		return make_response({"error": "document not found"}, 404)

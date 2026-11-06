@@ -120,20 +120,21 @@ def convert_to_document_base(document_base: DocumentBase):
 
 
 class Signals:
-	def __init__(self, user_id: str):
+	def __init__(self, user_id: str, base_id: Optional[int] = None):
 		self.__user_id = user_id
-		self.pipeline = _State("pipeline", user_id)
-		self.feedback = _Signal("feedback", user_id)
-		self.status = _State("status", user_id)
-		self.finished = _Signal("finished", user_id)
-		self.error = _Error("error", user_id)
-		self.document_base_to_ui = _DocumentBaseToUi("document_base_to_ui", user_id)
-		self.statistics = _Statistics("statistics_to_ui", user_id)
-		self.feedback_request_to_ui = _Feedback("feedback_request_to_ui", user_id)
-		self.feedback_request_from_ui = _Feedback("feedback_request_from_ui", user_id)
-		self.cache_db_to_ui = _Dump("cache_db_to_ui", user_id)
-		self.ordert_nuggets = _Nuggets("ordert_nuggets", user_id)
-		self.match_feedback = _MatchFeedback("match_feedback", user_id)
+		self.__cache_user_id = f"{user_id}:base:{base_id}" if base_id is not None else user_id
+		self.pipeline = _State("pipeline", self.__cache_user_id)
+		self.feedback = _Signal("feedback", self.__cache_user_id)
+		self.status = _State("status", self.__cache_user_id)
+		self.finished = _Signal("finished", self.__cache_user_id)
+		self.error = _Error("error", self.__cache_user_id)
+		self.document_base_to_ui = _DocumentBaseToUi("document_base_to_ui", self.__cache_user_id)
+		self.statistics = _Statistics("statistics_to_ui", self.__cache_user_id)
+		self.feedback_request_to_ui = _Feedback("feedback_request_to_ui", self.__cache_user_id)
+		self.feedback_request_from_ui = _Feedback("feedback_request_from_ui", self.__cache_user_id)
+		self.cache_db_to_ui = _Dump("cache_db_to_ui", self.__cache_user_id)
+		self.ordert_nuggets = _Nuggets("ordert_nuggets", self.__cache_user_id)
+		self.match_feedback = _MatchFeedback("match_feedback", self.__cache_user_id)
 
 	def to_json(self, include_payload: bool = True, include_feedback: bool = True) -> dict[str, Any]:
 		return {"user_id": self.__user_id,
@@ -149,7 +150,7 @@ class Signals:
 				}
 
 	def reset(self):
-		RedisCache(self.__user_id).delete_user_space()
+		RedisCache(self.__cache_user_id).delete_user_space()
 
 
 class Emitable(abc.ABC):

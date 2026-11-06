@@ -1,13 +1,37 @@
 # main_routes.py
-from flask import Blueprint, request, make_response
+from flask import Blueprint, request, make_response, abort, g
 
 from wannadb_web.util import Token, tokenEncode, tokenDecode
 from wannadb_web.postgres.queries import check_password, get_members_of_organisation, get_organisation_from_user_id, \
-	get_organisation_ids_from_user_id, get_organisation_name, get_username_suggestion
+	get_organisation_ids_from_user_id, get_organisation_name, get_username_suggestion, get_organisation_authorisation
 from wannadb_web.postgres.transactions import (add_user, add_organisation, add_user_to_organisation_new, delete_user_transaction,
 											   leave_organisation_transaction, remove_user_from_organisation_new)
 
 user_management = Blueprint('user_management', __name__)
+
+
+@user_management.before_request
+def authenticate_users():
+	if request.method == 'OPTIONS' or request.endpoint in ('user_management.login', 'user_management.register'):
+		return None
+	g.auth_token = tokenDecode(request.headers.get('Authorization'))
+	if g.auth_token is None:
+		return make_response({'error': 'no authorization'}, 401)
+
+
+def _require_organisation(value, admin=False):
+	if isinstance(value, bool) or not isinstance(value, (int, str)):
+		abort(make_response({'error': 'invalid organization ID'}, 400))
+	try:
+		organisation_id = int(value)
+	except (ValueError, TypeError):
+		abort(make_response({'error': 'invalid organization ID'}, 400))
+	if organisation_id <= 0 or organisation_id > 9223372036854775807:
+		abort(make_response({'error': 'invalid organization ID'}, 400))
+	role = get_organisation_authorisation(g.auth_token.id, organisation_id)
+	if role is None or (admin and role not in (0, 1)):
+		abort(make_response({'error': 'organization access denied'}, 403))
+	return organisation_id
 
 
 @user_management.route('/register', methods=['POST'])
@@ -63,7 +87,7 @@ def delete_user():
  
 	token = tokenDecode(authorization)
 	if token is None:
-		return make_response({'message': 'no authorization '}, 400)
+		return make_response({'message': 'no authorization '}, 401)
 
 
 	pwcheck = check_password(username, password)
@@ -107,7 +131,7 @@ def leave_organisation():
 	data = request.get_json()
 	authorization = request.headers.get("Authorization")
 
-	organisationId = data.get("organisationId")
+	organisationId = _require_organisation(data.get("organisationId"))
 
 	success, error = leave_organisation_transaction(organisationId, authorization)
 	if success:
@@ -137,7 +161,8 @@ def get_organisation_name_route(_id):
 	if token is None:
 		return make_response({}, 401)
 
-	organisation_name = get_organisation_name(_id)
+	organisation_id = _require_organisation(_id)
+	organisation_name = get_organisation_name(organisation_id)
 
 	if organisation_name == -1:
 		return make_response({'organisation not found': organisation_name}, 404)
@@ -169,10 +194,12 @@ def add_user_to_organisation():
 		return make_response({'error': 'no authorization'}, 401)
 
 	data = request.get_json()
-	organisation_name = data.get("organisationId")
+	organisation_id = _require_organisation(data.get("organisationId"), admin=True)
 	new_user = data.get("newUser")
+	if not isinstance(new_user, str) or not new_user:
+		return make_response({'error': 'missing new user'}, 400)
 
-	organisation_id, error = add_user_to_organisation_new(organisation_name, new_user)
+	organisation_id, error = add_user_to_organisation_new(organisation_id, new_user, token.id)
 
 	if error:
 		return make_response({"error": error}, 409)
@@ -187,12 +214,12 @@ def remove_user_from_organisation():
 		return make_response({'error': 'no authorization'}, 401)
 
 	data = request.get_json()
-	organisation_id = data.get("organisationId")
+	organisation_id = _require_organisation(data.get("organisationId"), admin=True)
 	user_to_remove = data.get("userToRemove")
 	if not organisation_id or not user_to_remove:
 		return make_response({'error': 'missing required fields'}, 400)
 
-	success, error = remove_user_from_organisation_new(organisation_id, user_to_remove)
+	success, error = remove_user_from_organisation_new(organisation_id, user_to_remove, token.id)
 	if success:
 		return make_response({'status': True}, 200)
 	return make_response({"status": False, "msg": str(error)}, 500)
@@ -205,7 +232,8 @@ def get_organisation_members(_id):
 	if token is None:
 		return make_response({'error': 'no authorization'}, 401)
 
-	members_raw = get_members_of_organisation(_id)
+	organisation_id = _require_organisation(_id)
+	members_raw = get_members_of_organisation(organisation_id)
 	if members_raw is None:
 		return make_response({'error': 'organisation ' + _id + ' not found'}, 404)
 
