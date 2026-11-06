@@ -1,5 +1,7 @@
 import logging
 import inspect
+import hashlib
+import json
 import pickle
 import time
 from uuid import uuid4
@@ -11,7 +13,7 @@ import wannadb.resources
 from wannadb.data.data import Document, Attribute, InformationNugget
 from wannadb.resources import ResourceManager
 from wannadb.statistics import Statistics
-from wannadb_web.Redis.RedisCache import RedisCache, TaskAccess, set_signal_scope
+from wannadb_web.Redis.RedisCache import RedisCache, TaskAccess, SessionState, set_signal_scope, get_signal_scope
 from wannadb_web.postgres.queries import get_documents, get_base_id
 from wannadb_web.worker.Web_API import WannaDB_WebAPI
 from wannadb_web.worker.data import DoAttributeRanking, MultiNuggetsMatchFeedback, ReloadDocumentBase, Signals, NoMatchFeedback, NuggetMatchFeedback, CustomMatchFeedback, SkipAttributeRanking, StopMatching
@@ -34,8 +36,19 @@ class InitManager(Task):
 
 class BaseTask(Task):
 	name = "BaseTask"
-	_signals: Optional[Signals] = None
-	_redis_client: Optional[RedisCache] = None
+	@property
+	def _signals(self):
+		scope = get_signal_scope()
+		if scope is None:
+			raise PermissionError("No task session selected")
+		return Signals(str(scope["user_id"]))
+
+	@property
+	def _redis_client(self):
+		scope = get_signal_scope()
+		if scope is None:
+			raise PermissionError("No task session selected")
+		return RedisCache(str(scope["user_id"]))
 
 	def __init__(self):
 		super().__init__()
@@ -49,15 +62,31 @@ class BaseTask(Task):
 		if user_id is None:
 			raise ValueError("A task requires an authenticated user.")
 		access = TaskAccess(user_id)
-		organisation_id = parameters.get("organisation_id")
-		if organisation_id is None:
-			scope = access.active()
+		if isinstance(self, FeedbackTask):
+			session_id = options.pop("session_id", None)
+			expected_version = options.pop("expected_version", None)
+			command_id = options.pop("command_id", None)
+			parent = access.task(session_id) if session_id else None
+			if (not access.permitted(parent) or not parent.get("interactive") or
+				parent.get("session_id") != session_id or not isinstance(command_id, str) or
+				type(expected_version) is not int or expected_version < 1):
+				raise PermissionError("An authorized interactive session and version are required.")
+			if (("organisation_id" in parameters and int(parameters["organisation_id"]) != parent["organisation_id"]) or
+				("base_name" in parameters and parameters["base_name"] != parent["base_name"])):
+				raise PermissionError("The feedback belongs to a different document base.")
+			task_id = command_id
+			scope = dict(parent, command_id=command_id, expected_version=expected_version,
+				request_fingerprint=hashlib.sha256(json.dumps([self.name, parameters], sort_keys=True).encode()).hexdigest())
 		else:
-			scope = {"organisation_id": int(organisation_id), "base_name": parameters.get("base_name")}
+			task_id = task_id or str(uuid4())
+			organisation_id = parameters.get("organisation_id")
+			if organisation_id is None:
+				raise PermissionError("A document base is required.")
+			scope = {"organisation_id": int(organisation_id), "base_name": parameters.get("base_name"),
+				"session_id": task_id, "interactive": isinstance(self, DocumentBaseInteractiveTablePopulation)}
 			scope["base_id"] = get_base_id(scope["base_name"], scope["organisation_id"])
-		if not access.permitted(scope):
-			raise PermissionError("Document base access denied.")
-		task_id = task_id or str(uuid4())
+			if not access.permitted(scope):
+				raise PermissionError("Document base access denied.")
 		access.register(task_id, scope)
 		return super().apply_async(args=args, kwargs=kwargs, task_id=task_id, **options)
 
@@ -67,17 +96,33 @@ class BaseTask(Task):
 		user_id = parameters.get("user_id")
 		access = TaskAccess(user_id)
 		scope = access.task(task_id)
-		if not access.permitted(scope):
+		if not access.permitted(scope) or not scope.get("session_id"):
 			raise PermissionError("Document base access denied.")
 		if isinstance(self, FeedbackTask):
-			if access.active() != scope:
-				raise PermissionError("The active document base has changed.")
-		else:
-			access.activate(scope)
-		set_signal_scope(user_id, scope["base_id"])
+			parent = access.task(scope["session_id"])
+			if not access.permitted(parent) or not parent.get("interactive"):
+				raise PermissionError("Interactive session access denied.")
+		if not isinstance(self, FeedbackTask):
+			if not SessionState(user_id, scope["base_id"], scope["session_id"]).claim_execution(str(uuid4())):
+				raise PermissionError("This task session has already started.")
+		set_signal_scope(user_id, scope["base_id"], scope["session_id"],
+			scope.get("command_id"), scope.get("expected_version"))
+		if not isinstance(self, FeedbackTask):
+			SessionState(user_id, scope["base_id"], scope["session_id"]).initialize()
 
 	def after_return(self, status, retval, task_id, args, kwargs, einfo):
-		set_signal_scope()
+		try:
+			scope = get_signal_scope()
+			if scope is not None:
+				session = SessionState(scope["user_id"], scope["base_id"], scope["session_id"])
+				if isinstance(self, FeedbackTask):
+					if status != "SUCCESS":
+						session.reject(task_id, "Feedback could not be queued or was rejected.")
+				else:
+					message = Signals(str(scope["user_id"])).error.to_json()
+					session.close(error=(message or "The session failed.") if status != "SUCCESS" else None)
+		finally:
+			set_signal_scope()
 
 	@staticmethod
 	def load():
@@ -111,6 +156,7 @@ class BaseTask(Task):
 		if persist:
 			api.update_document_base_to_bson()
 			self.check_api_error(api)
+		api.complete_session()
 		return {"ok": True}
 
 	def get_new_input(self):
@@ -362,8 +408,6 @@ class DocumentBaseInteractiveTablePopulation(BaseTask):
 	track_started = False  # STARTED below means the base is loaded, not just dequeued.
 
 	def run(self, user_id: int, base_name: str, organisation_id: int):
-		self._signals = Signals(str(user_id))
-		self._redis_client = RedisCache(str(user_id))
 		self.load()
 
 		api = WannaDB_WebAPI(user_id, base_name, organisation_id, build_query_cache=False)
@@ -384,19 +428,22 @@ class FeedbackTask(BaseTask):
 	# Keep feedback runnable while compute workers wait for user input.
 	queue = "feedback"
 
+	def emit_command(self, feedback):
+		record = self._signals.match_feedback.emit(feedback)
+		if record.get("state") == "rejected":
+			raise RuntimeError(record.get("error") or "Feedback was rejected.")
+		return record
+
 
 class DocumentBaseStartRanking(FeedbackTask):
 	name = "DocumentBaseStartRanking"
 
 	def run(self, user_id: int, do_attribute: bool):
-		self._signals = Signals(str(user_id))
-		self._redis_client = RedisCache(str(user_id))
-		self.load()
 
 		if do_attribute:
-			self._signals.match_feedback.emit(DoAttributeRanking())
+			self.emit_command(DoAttributeRanking())
 		else:
-			self._signals.match_feedback.emit(SkipAttributeRanking())
+			self.emit_command(SkipAttributeRanking())
 		return {"ok": True}
 
 
@@ -404,11 +451,8 @@ class DocumentBaseStopMatching(FeedbackTask):
 	name = "DocumentBaseStopMatching"
 
 	def run(self, user_id: int):
-		self._signals = Signals(str(user_id))
-		self._redis_client = RedisCache(str(user_id))
-		self.load()
 
-		self._signals.match_feedback.emit(StopMatching())
+		self.emit_command(StopMatching())
 		return {"ok": True}
 
 
@@ -416,11 +460,8 @@ class ReloadDocumentBaseTask(FeedbackTask):
 	name = "ReloadDocumentBase"
 
 	def run(self, user_id: int):
-		self._signals = Signals(str(user_id))
-		self._redis_client = RedisCache(str(user_id))
-		self.load()
 
-		self._signals.match_feedback.emit(ReloadDocumentBase())
+		self.emit_command(ReloadDocumentBase())
 		return {"ok": True}
 
 
@@ -428,8 +469,6 @@ class DocumentBaseGetOrderedNuggets(BaseTask):
 	name = "DocumentBaseGetOrderedNuggets"
 
 	def run(self, user_id: int, base_name: str, organisation_id: int, document_name: str, document_content: str):
-		self._signals = Signals(str(user_id))
-		self._redis_client = RedisCache(str(user_id))
 		self.load()
 
 		api = WannaDB_WebAPI(user_id, base_name, organisation_id)
@@ -463,9 +502,6 @@ class DocumentBaseConfirmNugget(FeedbackTask):
 		:param not_a_match_start_index: start of the nugget that is not a match
 		:param not_a_match_end_index: end of the nugget that is not a match
 		"""
-		self._signals = Signals(str(user_id))
-		self._redis_client = RedisCache(str(user_id))
-		self.load()
   
 		document = Document(document_name, document_text)
   
@@ -473,7 +509,7 @@ class DocumentBaseConfirmNugget(FeedbackTask):
 			nugget = InformationNugget(document=document, start_char=int(start_index), end_char=int(end_index))
 		not_a_match = InformationNugget(document=document, start_char=not_a_match_start_index, end_char=not_a_match_end_index) if not_a_match_text else None
 
-		self._signals.match_feedback.emit(match_feedback(nugget, document, start_index, end_index, not_a_match=not_a_match))
+		self.emit_command(match_feedback(nugget, document, start_index, end_index, not_a_match=not_a_match))
 		# no need to update the document base the doc will be saved in the interactive call
 		return {"ok": True}
 	
@@ -493,17 +529,7 @@ class DocumentBaseConfirmMultipleNuggets(FeedbackTask):
 		:param nuggets: list of nuggets to confirm
 		:param interactive_call_task_id: the same task id that's used for interactive call
 		"""
-		self._signals = Signals(str(user_id))
-		self._redis_client = RedisCache(str(user_id))
-		self.load()
-
-		nuggets = [
-			InformationNugget(document=Document(name, text), start_char=start, end_char=end)
-			for name, text, start, end in documents_and_nuggets
-		]
-		self._signals.match_feedback.emit(multi_match_feedback(nuggets))
-		# no need to update the document base the doc will be saved in the interactive call
-		return {"ok": True}
+		raise ValueError("Bulk confirmation is unavailable until F14 is repaired; confirm individual matches.")
 
 
 class DocumentBaseNoMatchForDocument(FeedbackTask):
@@ -523,15 +549,12 @@ class DocumentBaseNoMatchForDocument(FeedbackTask):
 		:param start_index: start of the nugget in the document (optional) if start and end is None the nugget is not in the document
 		:param end_index: end of the nugget in the document (optional) if start and end is None the nugget is not in the document
 		"""
-		self._signals = Signals(str(user_id))
-		self._redis_client = RedisCache(str(user_id))
-		self.load()
 
 		document = Document(document_name, document_text)
 		if nugget is None:
 			nugget = InformationNugget(document=document, start_char=int(start_index), end_char=int(end_index))
 	
-		self._signals.match_feedback.emit(no_match(nugget, document, int(start_index), int(end_index)))
+		self.emit_command(no_match(nugget, document, int(start_index), int(end_index)))
 		# no need to update the document base the doc will be saved in the interactive call
 		return {"ok": True}
 

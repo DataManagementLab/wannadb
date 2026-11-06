@@ -10,7 +10,7 @@ import logging
 from wannadb.data.data import DocumentBase, InformationNugget, Document, Attribute
 from wannadb.data.signals import BaseSignal
 from wannadb.statistics import Statistics
-from wannadb_web.Redis.RedisCache import RedisCache
+from wannadb_web.Redis.RedisCache import RedisCache, SessionState, get_signal_scope
 
 logger: logging.Logger = logging.getLogger(__name__)
 
@@ -120,9 +120,10 @@ def convert_to_document_base(document_base: DocumentBase):
 
 
 class Signals:
-	def __init__(self, user_id: str, base_id: Optional[int] = None):
+	def __init__(self, user_id: str, base_id: Optional[int] = None, session_id: Optional[str] = None):
 		self.__user_id = user_id
-		self.__cache_user_id = f"{user_id}:base:{base_id}" if base_id is not None else user_id
+		self.__cache_user_id = f"{user_id}:base:{base_id}:session:{session_id}" if base_id is not None and session_id is not None else user_id
+		self.__session = SessionState(user_id, base_id, session_id) if base_id is not None and session_id is not None else None
 		self.pipeline = _State("pipeline", self.__cache_user_id)
 		self.feedback = _Signal("feedback", self.__cache_user_id)
 		self.status = _State("status", self.__cache_user_id)
@@ -136,21 +137,36 @@ class Signals:
 		self.ordert_nuggets = _Nuggets("ordert_nuggets", self.__cache_user_id)
 		self.match_feedback = _MatchFeedback("match_feedback", self.__cache_user_id)
 
-	def to_json(self, include_payload: bool = True, include_feedback: bool = True) -> dict[str, Any]:
+	def to_json(self, include_payload: bool = True, include_feedback: bool = True, snapshot=None) -> dict[str, Any]:
+		if snapshot is None and self.__session is not None:
+			snapshot = self.__session.snapshot(include_payload=include_payload, include_feedback=include_feedback)
+		def serialized(signal):
+			if snapshot is None:
+				return signal.to_json()
+			# Each serializer keeps its normal decoding, but reads only this atomic snapshot.
+			copy = object.__new__(type(signal))
+			copy.type = signal.type
+			copy.redis = _SnapshotCache(snapshot)
+			return copy.to_json()
 		return {"user_id": self.__user_id,
-				self.feedback.type: self.feedback.to_json(),
-				self.error.type: self.error.to_json(),
-				self.status.type: self.status.to_json(),
-				self.finished.type: self.finished.to_json(),
-				self.document_base_to_ui.type: self.document_base_to_ui.to_json() if include_payload else {},
-				self.statistics.type: self.statistics.to_json(),
-				self.feedback_request_to_ui.type: self.feedback_request_to_ui.to_json() if include_feedback else {},
-				self.cache_db_to_ui.type: self.cache_db_to_ui.to_json() if include_payload else None,
-				self.ordert_nuggets.type: self.ordert_nuggets.to_json() if include_payload else {}
+				self.feedback.type: serialized(self.feedback),
+				self.error.type: serialized(self.error),
+				self.status.type: serialized(self.status),
+				self.finished.type: serialized(self.finished),
+				self.document_base_to_ui.type: serialized(self.document_base_to_ui) if include_payload else {},
+				self.statistics.type: serialized(self.statistics),
+				self.feedback_request_to_ui.type: serialized(self.feedback_request_to_ui) if include_feedback else {},
+				self.cache_db_to_ui.type: serialized(self.cache_db_to_ui) if include_payload else None,
+				self.ordert_nuggets.type: serialized(self.ordert_nuggets) if include_payload else {}
 				}
 
 	def reset(self):
-		RedisCache(self.__cache_user_id).delete_user_space()
+		# A worker owns a new session; loading a base must never erase its commands.
+		scope = get_signal_scope()
+		if self.__session is not None:
+			self.__session.initialize()
+		elif scope is not None:
+			SessionState.current(self.__user_id).initialize()
 
 
 class Emitable(abc.ABC):
@@ -194,7 +210,7 @@ class NuggetMatchFeedback:
 	not_a_match: None
 
 	def to_json(self):
-		return {"message": self.message, "nugget": convert_to_nugget(self.nugget).to_json(), "not_a_match": self.not_a_match}
+		return {"message": self.message, "nugget": convert_to_nugget(self.nugget).to_json(), "not_a_match": convert_to_nugget(self.not_a_match).to_json() if self.not_a_match is not None else None}
 
 
 @dataclass
@@ -204,7 +220,7 @@ class MultiNuggetsMatchFeedback:
 	not_a_match: None
 
 	def to_json(self):
-		return {"message": self.message, "nuggets": [convert_to_nugget(nugget).to_json() for nugget in self.nuggets], "not_a_match": self.not_a_match}
+		return {"message": self.message, "nuggets": [convert_to_nugget(nugget).to_json() for nugget in self.nuggets], "not_a_match": convert_to_nugget(self.not_a_match).to_json() if self.not_a_match is not None else None}
 
 
 @dataclass
@@ -215,7 +231,7 @@ class NoMatchFeedback:
 
 	def to_json(self):
 		return {"message": self.message, "nugget": convert_to_nugget(self.nugget).to_json(),
-				"not_a_match": convert_to_nugget(self.not_a_match).to_json()}
+				"not_a_match": convert_to_nugget(self.not_a_match).to_json() if self.not_a_match is not None else None}
 	
 
 @dataclass
@@ -259,63 +275,58 @@ class StopMatching:
 		return {"message": self.message}
 
 
+def decode_feedback(payload):
+	message = payload.get("message")
+	if message == "custom-match":
+		return CustomMatchFeedback(payload["document"], payload["start"], payload["end"])
+	if message == "is-match":
+		return NuggetMatchFeedback(payload["nugget"], payload.get("not_a_match"))
+	if message == "multi-match":
+		return MultiNuggetsMatchFeedback(payload["nuggets"], payload.get("not_a_match"))
+	if message == "no-match-in-document":
+		return NoMatchFeedback(payload["nugget"], payload.get("not_a_match"))
+	classes = {"stop-interactive-matching": StopMatching, "start-ranking": DoAttributeRanking,
+		"skip-ranking": SkipAttributeRanking, "reload-document-base": ReloadDocumentBase}
+	if message in classes:
+		return classes[message]()
+	raise ValueError("Unsupported feedback message")
+
+
+class _SnapshotCache:
+	def __init__(self, values):
+		self.values = values
+
+	def get(self, key):
+		return self.values.get(key)
+
+
 class _MatchFeedback(Emitable):
+	def _session(self):
+		scope = get_signal_scope()
+		if scope is None:
+			raise ValueError("A feedback session is required")
+		return SessionState(scope["user_id"], scope["base_id"], scope["session_id"])
+
+	def claim(self):
+		return self._session().claim()
 
 	@property
-	def msg(self) -> Union[CustomMatchFeedback, NuggetMatchFeedback, NoMatchFeedback, DoAttributeRanking, SkipAttributeRanking, StopMatching, None]:
-		msg = self.redis.get(self.type)
-		msg = msg.decode("utf-8") if isinstance(msg, bytes) else msg
-		if isinstance(msg, str) and msg.startswith("{"):
-			m = json.loads(msg)
-			if "message" in m and m["message"] == "custom-match":
-				return CustomMatchFeedback(m["document"], m["start"], m["end"])
-			elif "message" in m and m["message"] == "is-match":
-				return NuggetMatchFeedback(m["nugget"], None)
-			elif "message" in m and m["message"] == "no-match-in-document":
-				return NoMatchFeedback(m["nugget"], m["not_a_match"])
-			elif "message" in m and m["message"] == "stop-interactive-matching":
-				return StopMatching()
-			elif "message" in m and m["message"] == "start-ranking":
-				return DoAttributeRanking()
-			elif "message" in m and m["message"] == "skip-ranking":
-				return SkipAttributeRanking()
-			elif "message" in m and m["message"] == "reload-document-base":
-				return ReloadDocumentBase()
-		return None
+	def msg(self):
+		command = self.claim()
+		return decode_feedback(command["payload"]) if command is not None else None
 
 	def to_json(self):
-		if self.msg is None:
-			return {}
-		return self.msg.to_json()
+		# Status reads must never consume commands.
+		return {}
 
-	def emit(self, status: Union[CustomMatchFeedback, NuggetMatchFeedback, NoMatchFeedback, StopMatching, DoAttributeRanking, SkipAttributeRanking, ReloadDocumentBase, None]):
+	def emit(self, status):
 		if status is None:
-			self.redis.delete(self.type)
-			return
-		logger.info(f"Emitting match feedback: {status}")
-		if isinstance(status, CustomMatchFeedback):
-			self.redis.set(self.type, json.dumps(
-				{"message": status.message, "document": convert_to_document(status.document).to_json(), "start": status.start,
-				 "end": status.end}))
-		elif isinstance(status, NuggetMatchFeedback):
-			self.redis.set(self.type, json.dumps({"message": status.message, "nugget": convert_to_nugget(status.nugget).to_json()}))
-		elif isinstance(status, NoMatchFeedback):
-			self.redis.set(self.type, json.dumps(
-				{"message": status.message, "nugget": convert_to_nugget(status.nugget).to_json(),
-				 "not_a_match": convert_to_nugget(status.not_a_match).to_json()}))
-		elif isinstance(status, StopMatching):
-			self.redis.set(self.type, json.dumps({"message": status.message}))
-		elif isinstance(status, DoAttributeRanking):
-			self.redis.set(self.type, json.dumps({"message": status.message, "do-attribute": True}))
-		elif isinstance(status, SkipAttributeRanking):
-			self.redis.set(self.type, json.dumps({"message": status.message, "do-attribute": False}))
-		elif isinstance(status, ReloadDocumentBase):
-			self.redis.set(self.type, json.dumps({"message": status.message}))
-		else:
-			raise TypeError(
-				"Status must be of type CustomMatchFeedback, NuggetMatchFeedback, NoMatchFeedback, StopMatching, DoAttributeRanking, SkipAttributeRanking, ReloadDocumentBase, or None\n" \
-				f"Got: {type(status)}"
-				)
+			return None
+		payload = status if isinstance(status, dict) else status.to_json()
+		scope = get_signal_scope()
+		if scope is None:
+			raise ValueError("A feedback session is required")
+		return self._session().enqueue(scope["command_id"], scope["expected_version"], payload)
 
 
 class _State(Emitable):

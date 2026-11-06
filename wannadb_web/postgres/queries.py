@@ -529,6 +529,28 @@ def update_document_content(doc_id: int, new_content, organisation_id: int = Non
 		return False
 
 
+def compare_and_swap_document_content(doc_id: int, new_bytes: bytes, expected_bytes: bytes,
+		organisation_id: int, user_id: int, base_id: int = None) -> bool:
+	"""Replace a standalone BSON snapshot only while its exact loaded bytes remain current."""
+	if not isinstance(new_bytes, bytes) or not isinstance(expected_bytes, bytes):
+		return False
+	try:
+		query = sql.SQL("""UPDATE documents d SET content_byte = %s
+			WHERE d.id = %s AND d.organisationid = %s AND d.documentbaseid IS NULL
+			AND d.content IS NULL AND d.content_byte = %s
+			AND EXISTS (SELECT 1 FROM membership m WHERE m.userid = %s
+			AND m.organisationid = d.organisationid AND m.authorisation IN (0, 1, 10))
+			AND (%s IS NULL OR EXISTS (SELECT 1 FROM document_bases b
+			WHERE b.id = %s AND b.organisation_id = d.organisationid))
+			RETURNING d.id;""")
+		result = execute_transaction(query, (new_bytes, doc_id, organisation_id, expected_bytes,
+			user_id, base_id, base_id), commit=True)
+		return isinstance(result, list) and bool(result)
+	except Exception:
+		logger.error("Could not replace document-base snapshot")
+		return False
+
+
 def delete_document_content(doc_id: int, organisation_id: int = None, base_id: int = None, user_id: int = None):
 	"""
 	Deletes a document by its ID.

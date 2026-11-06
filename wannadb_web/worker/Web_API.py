@@ -23,10 +23,11 @@ from wannadb.preprocessing.other_processing import ContextSentenceCacher
 from wannadb.statistics import Statistics
 from wannadb.status import StatusCallback
 from wannadb_web.SQLite.Cache_DB import SQLiteCacheDBWrapper
-from wannadb_web.postgres.queries import get_document_by_name, get_document_by_name_and_content, update_document_content, \
+from wannadb_web.postgres.queries import get_document_by_name, get_document_by_name_and_content, compare_and_swap_document_content, \
 	get_document
 from wannadb_web.postgres.transactions import add_document
-from wannadb_web.worker.data import DoAttributeRanking, ReloadDocumentBase, Signals, CustomMatchFeedback, NuggetMatchFeedback, NoMatchFeedback, SkipAttributeRanking, StopMatching
+from wannadb_web.Redis.RedisCache import SessionState, get_signal_scope
+from wannadb_web.worker.data import decode_feedback, DoAttributeRanking, ReloadDocumentBase, Signals, CustomMatchFeedback, NuggetMatchFeedback, NoMatchFeedback, SkipAttributeRanking, StopMatching
 
 logger = logging.getLogger(__name__)
 TIMEOUT = 600  # 10 minutes
@@ -41,9 +42,11 @@ class WannaDB_WebAPI:
 		self._document_base: Optional[DocumentBase] = None
 		self.user_id = user_id
 		self._feedback: Optional[dict[str, Any]] = None
+		self._expected_bson: Optional[bytes] = None
+		self._pending_command_id: Optional[str] = None
+		self.session = SessionState.current(user_id)
 
 		self.signals = Signals(str(self.user_id))
-		self.signals.reset()
 		self.sqLiteCacheDBWrapper = SQLiteCacheDBWrapper(user_id, db_file=":memory:") if build_query_cache else None
 		self.document_base_name = document_base_name
 		self.organisation_id = organisation_id
@@ -54,22 +57,18 @@ class WannaDB_WebAPI:
 		self.status_callback = StatusCallback(status_callback_fn)
 
 		def interaction_callback_fn(pipeline_element_identifier, feedback_request):
-
 			feedback_request["identifier"] = pipeline_element_identifier
-
-			# A callback invocation is one new matcher state; idle waiting changes neither payload.
-			self.signals.document_base_to_ui.emit(self.document_base)
-			self.signals.feedback_request_to_ui.emit(feedback_request)
-			start_time = time.time()
-			while (time.time() - start_time) < max(timeout, TIMEOUT):
-				msg = self.signals.match_feedback.msg
-
-				if msg is not None:
+			self.publish_feedback(feedback_request)
+			start_time = time.monotonic()
+			while (time.monotonic() - start_time) < max(timeout, TIMEOUT):
+				command = self.signals.match_feedback.claim()
+				if command is not None:
+					self._pending_command_id = command["command_id"]
+					msg = decode_feedback(command["payload"])
 					self.signals.status.emit("Feedback received from UI")
-					self.signals.match_feedback.emit(None)
-					start_time = time.time()  # reset timer after receiving feedback
+					start_time = time.monotonic()
 					if isinstance(msg, CustomMatchFeedback):
-						return {"message": "custom-match", "document": msg.document, "start": msg.start}
+						return {"message": "custom-match", "document": msg.document, "start": msg.start, "end": msg.end}
 					elif isinstance(msg, NuggetMatchFeedback):
 						return {"message": "is-match", "nugget": msg.nugget, "not_a_match": msg.not_a_match}
 					elif isinstance(msg, NoMatchFeedback):
@@ -79,14 +78,12 @@ class WannaDB_WebAPI:
 					elif isinstance(msg, SkipAttributeRanking):
 						return {"message": "skip-ranking", "do-attribute": False}
 					elif isinstance(msg, ReloadDocumentBase):
-						self.signals.document_base_to_ui.emit(self.document_base)
+						self.publish_feedback(feedback_request)
 					elif isinstance(msg, StopMatching):
 						return {"message": "stop-interactive-matching"}
 					else:
-						logger.error(f"Unknown message type: {type(msg)}")
-						self.signals.error.emit(Exception(f"Unknown message type: {type(msg)}"))
-						return None
-				time.sleep(1)
+						raise ValueError("Unsupported feedback command")
+				time.sleep(0.1)
 			raise TimeoutError("no match_feedback in time provided")
 
 		self.interaction_callback = InteractionCallback(interaction_callback_fn)
@@ -225,7 +222,6 @@ class WannaDB_WebAPI:
 		try:
 			if self.sqLiteCacheDBWrapper is not None:
 				self.sqLiteCacheDBWrapper.reset_cache_db()
-			self.signals.reset()
 
 			try:
 				document_id, document = get_document_by_name(self.document_base_name, self.organisation_id, self.user_id)
@@ -246,6 +242,7 @@ class WannaDB_WebAPI:
 				self.signals.error.emit(Exception("document is not a DocumentBase!"))
 				return
 
+			self._expected_bson = document
 			document_base = DocumentBase.from_bson(document)
 
 			# from_bson already validates consistency before returning.
@@ -267,7 +264,8 @@ class WannaDB_WebAPI:
 		logger.debug("Called function 'save_document_base_to_bson'.")
 
 		try:
-			document_id, _ = add_document(self.document_base_name, self.document_base.to_bson(), self.organisation_id,
+			serialized = self.document_base.to_bson()
+			document_id, _ = add_document(self.document_base_name, serialized, self.organisation_id,
 									  self.user_id)
 
 			if not isinstance(document_id, int) or isinstance(document_id, bool) or document_id <= 0:
@@ -278,6 +276,7 @@ class WannaDB_WebAPI:
 			logger.info(f"Document base saved to BSON with ID {document_id}.")
 			self.signals.status.emit(f"Document base saved to BSON with ID {document_id}.")
 			self.document_id = document_id
+			self._expected_bson = serialized
 			return
 		except Exception as e:
 			logger.error(str(e))
@@ -285,33 +284,35 @@ class WannaDB_WebAPI:
 			raise e
 
 	def update_document_base_to_bson(self):
-		logger.debug("Called function 'save_document_base_to_bson'.")
+		if self._document_id is None or self._expected_bson is None:
+			self.signals.error.emit(RuntimeError("PERSISTENCE_FAILED"))
+			raise RuntimeError("Document base has no persistence snapshot")
+		serialized = self.document_base.to_bson()
+		scope = get_signal_scope()
+		status = compare_and_swap_document_content(self.document_id, serialized, self._expected_bson,
+			self.organisation_id, self.user_id, scope["base_id"])
+		if not status:
+			self.signals.error.emit(RuntimeError("STALE_BASE"))
+			raise RuntimeError("The base changed or access was lost; reload before editing again.")
+		self._expected_bson = serialized
+		self.signals.status.emit("Changes saved.")
 
-		if self.document_id is None:
-			logger.error("Document ID not set!")
-			self.signals.error.emit(Exception("Document ID not set!"))
-			return
-		try:
-			logger.info("BASE")
-			logger.info(self.document_base)
-			logger.info("ID")
-			logger.info(self.document_id)
-			logger.info("ATT")
-			logger.info(self.document_base.attributes)
+	def publish_feedback(self, feedback_request):
+		# A consumed command is acknowledged only after its changes are durable and
+		# both the base and next candidate payload have been atomically published.
+		if self._pending_command_id is not None:
+			self.update_document_base_to_bson()
+		self.signals.document_base_to_ui.emit(self.document_base)
+		self.signals.feedback_request_to_ui.emit(feedback_request)
+		phase = "selection" if "do-attribute-request" in feedback_request else "ranking"
+		attribute = feedback_request.get("attribute")
+		self.session.publish(phase, getattr(attribute, "name", None), self._pending_command_id)
+		self._pending_command_id = None
 
-			status = update_document_content(self.document_id, self.document_base.to_bson(),
-				self.organisation_id, None, self.user_id)
-			if not status:
-				logger.error(f"Document base could not be saved to BSON! Document {self.document_id} does not exist!")
-				self.signals.error.emit(RuntimeError("PERSISTENCE_FAILED"))
-			else:
-				logger.info(f"Document base saved to BSON with ID {self.document_id}.")
-				self.signals.status.emit(f"Document base saved to BSON with ID {self.document_id}.")
-			return
-		except Exception as e:
-			logger.error(str(e))
-			self.signals.error.emit(e)
-			raise e
+	def complete_session(self):
+		self.signals.document_base_to_ui.emit(self.document_base)
+		self.session.close(command_id=self._pending_command_id)
+		self._pending_command_id = None
 
 	# todo: below not implemented yet
 	def save_table_to_csv(self):

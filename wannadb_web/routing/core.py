@@ -30,6 +30,7 @@ Author: Leon Wenderoth
 import asyncio
 import logging.config
 import pickle
+from uuid import UUID
 from typing import Optional
 
 from wannadb_web.postgres.queries import get_document_base_data, get_document_by_name_and_content, get_feedbacks_for_document, get_document_by_name, get_base_id, get_organisation_authorisation, documents_available_for_base
@@ -39,7 +40,7 @@ from flask import Blueprint, make_response, request, g
 from celery.result import AsyncResult
 from wannadb.data.data import Attribute, Document, InformationNugget, DocumentBase
 from wannadb.statistics import Statistics
-from wannadb_web.Redis.RedisCache import RedisCache, TaskAccess
+from wannadb_web.Redis.RedisCache import RedisCache, TaskAccess, SessionState
 from wannadb_web.util import tokenDecode
 from wannadb_web.worker.data import Signals
 
@@ -49,6 +50,16 @@ from wannadb_web.worker.tasks import CreateDocumentBase, BaseTask, DocumentBaseA
 core_routes = Blueprint('core_routes', __name__, url_prefix='/core')
 
 logger = logging.getLogger(__name__)
+
+
+@core_routes.errorhandler(ValueError)
+def invalid_feedback_request(error):
+	return make_response({"error": str(error)}, 409)
+
+
+@core_routes.errorhandler(PermissionError)
+def feedback_access_denied(error):
+	return make_response({"error": str(error)}, 403)
 
 
 def _positive_id(value):
@@ -70,20 +81,39 @@ def authorize_core_request():
 	access = TaskAccess(token.id)
 	if endpoint == "task_status":
 		scope = access.task(view.get("task_id"))
-		if not access.permitted(scope):
+		if not access.permitted(scope) or not scope.get("session_id"):
 			return make_response({"error": "task not found"}, 404)
 		g.task_scope = scope
 		return None
 	if endpoint == "task_update":
 		return None
-	if endpoint in {"document_base_do_current_attribute", "reload_document_base", "stop_feedback"}:
-		scope = access.active()
-		if not access.permitted(scope):
-			return make_response({"error": "no authorized active document base"}, 403)
-		return None
 	data = request.get_json(silent=True) if request.is_json else {}
 	if not isinstance(data, dict):
 		return make_response({"error": "invalid request"}, 400)
+	feedback_endpoints = {"document_base_do_current_attribute", "reload_document_base", "stop_feedback",
+		"confirm_nugget_custom", "confirm_nugget_match", "confirm_no_match_in_document", "confirm_nugget_multi_match"}
+	if endpoint in feedback_endpoints:
+		session_id = data.get("sessionId")
+		command_id = data.get("commandId")
+		expected_version = data.get("expectedVersion")
+		try:
+			if not isinstance(session_id, str) or not isinstance(command_id, str):
+				raise ValueError("missing IDs")
+			UUID(session_id); UUID(command_id)
+		except (ValueError, TypeError, AttributeError):
+			return make_response({"error": "an explicit feedback session and command ID are required"}, 400)
+		if type(expected_version) is not int or expected_version < 1:
+			return make_response({"error": "a published session version is required"}, 400)
+		scope = access.task(session_id)
+		if (not access.permitted(scope) or not scope.get("interactive") or scope.get("session_id") != session_id):
+			return make_response({"error": "interactive session not found"}, 404)
+		if (("organisationId" in data and _positive_id(data["organisationId"]) != scope["organisation_id"]) or
+			("baseName" in data and data["baseName"] != scope["base_name"])):
+			return make_response({"error": "feedback belongs to another document base"}, 403)
+		g.feedback_options = {"session_id": session_id, "expected_version": expected_version, "command_id": command_id}
+		g.feedback_scope = scope
+		if endpoint in {"document_base_do_current_attribute", "reload_document_base", "stop_feedback"}:
+			return None
 	organisation_id = _positive_id(view.get("organisation_id", data.get("organisationId")))
 	if organisation_id is None:
 		return make_response({"error": "invalid organization ID"}, 400)
@@ -400,31 +430,36 @@ def document_base_attribute_update():
 @core_routes.route('/status/<token>/<task_id>', methods=['GET'])
 def task_status(token: str,task_id: str):
  
-	_token = g.auth_token
-
-	if _token is None:
-		return make_response({"error": "invalid token"}, 401)
-	user_id = _token.id
- 
-	task: AsyncResult = BaseTask().AsyncResult(task_id=task_id)
+	user_id = g.auth_token.id
+	scope = g.task_scope
+	task = BaseTask().AsyncResult(task_id=task_id)
 	status = task.status
 	include_payload = request.args.get("summary") != "1"
 	include_feedback = request.args.get("feedback") != "0"
+	session = SessionState(user_id, scope["base_id"], scope["session_id"])
+	if scope.get("command_id"):
+		parent_status = BaseTask().AsyncResult(task_id=scope["session_id"]).status
+		if parent_status in ("FAILURE", "ERROR", "REVOKED") and not session.metadata().get("closed"):
+			# Worker loss can prevent after_return; never leave its accepted commands looking successful.
+			session.close(error="The interactive session stopped before publishing feedback. Reload the base.")
+	snapshot = session.snapshot(include_payload=include_payload, include_feedback=include_feedback)
+	signals = Signals(user_id, base_id=scope["base_id"], session_id=scope["session_id"]).to_json(
+		include_payload=include_payload, include_feedback=include_feedback, snapshot=snapshot)
+	publication = snapshot["publication"]
+	command = session.command(scope["command_id"]) if scope.get("command_id") else None
+	if command is not None:
+		command = {key: command[key] for key in ("command_id", "state", "expected_version", "consumed_version", "published_version", "error") if key in command}
+	if signals.get("error") == "STALE_BASE":
+		signals["error"] = "This base changed in another session or access was lost. Reload before editing again; no newer changes were overwritten."
+	elif signals.get("error") == "PERSISTENCE_FAILED":
+		signals["error"] = "Changes could not be saved."
+	if command and command.get("state") == "rejected":
+		signals["error"] = command.get("error") or "Feedback was rejected. Reload the current session state."
 	if status in ("FAILURE", "ERROR", "REVOKED"):
-		signals = Signals(user_id, base_id=g.task_scope["base_id"]).to_json(include_payload=include_payload, include_feedback=include_feedback)
 		if not signals.get("error"):
 			signals["error"] = "The task was cancelled." if status == "REVOKED" else "The background task failed."
-		elif signals["error"] == "PERSISTENCE_FAILED":
-			signals["error"] = "Changes could not be saved."
-		return make_response({"state": "REVOKED" if status == "REVOKED" else "FAILURE", "meta": signals}, 500)
-	if status == "SUCCESS":
-		signals = Signals(user_id, base_id=g.task_scope["base_id"]).to_json(include_payload=include_payload, include_feedback=include_feedback)
-		return make_response({"state": "SUCCESS", "meta": signals}, 200)
-	if status is None:
-		return make_response({"error": "task not found"}, 500)
-
-	signals = Signals(user_id, base_id=g.task_scope["base_id"]).to_json(include_payload=include_payload, include_feedback=include_feedback)
-	return make_response({"state": status, "meta": signals}, 202)
+		return make_response({"state": "REVOKED" if status == "REVOKED" else "FAILURE", "meta": signals, "session": publication, "command": command}, 500)
+	return make_response({"state": status, "meta": signals, "session": publication, "command": command}, 200 if status == "SUCCESS" else 202)
 
 
 @core_routes.route('/status/<task_id>', methods=['POST'])
@@ -449,6 +484,8 @@ def document_base_do_current_attribute():
 	form = request.get_json()
 	authorization = request.headers.get("Authorization")
 	do_attribute = form.get("doAttribute")
+	if type(do_attribute) is not bool:
+		return make_response({"error": "doAttribute must be a boolean"}, 400)
 	if authorization is None or do_attribute is None:
 		return make_response({"error": "missing parameters"}, 400)
 
@@ -459,7 +496,7 @@ def document_base_do_current_attribute():
 
 	user_id = _token.id
 
-	task = DocumentBaseStartRanking().apply_async(args=(user_id, do_attribute))
+	task = DocumentBaseStartRanking().apply_async(args=(user_id, do_attribute), **g.feedback_options)
 
 	return make_response({'task_id': task.id}, 202)
 
@@ -486,7 +523,7 @@ def reload_document_base():
 
 	user_id = _token.id
 
-	task = ReloadDocumentBaseTask().apply_async(args=(user_id,))
+	task = ReloadDocumentBaseTask().apply_async(args=(user_id,), **g.feedback_options)
 
 	return make_response({'task_id': task.id}, 202)
 
@@ -581,10 +618,7 @@ def confirm_nugget_custom():
         or authorization is None 
         or nugget_text is None 
         or start_index is None 
-        or end_index is None
-        or not_a_match_text is None
-        or not_a_match_start_index is None
-        or not_a_match_end_index is None):
+        or end_index is None):
      
 		return make_response({"error": "missing parameters"}, 400)
 
@@ -607,7 +641,7 @@ def confirm_nugget_custom():
                                                         not_a_match_text,
 														not_a_match_start_index,
 														not_a_match_end_index
-                                                    ))
+                                                    ), **g.feedback_options)
 	
 	return make_response({'task_id': task.id}, 202)
 
@@ -676,7 +710,7 @@ def confirm_nugget_match():
                                                         not_a_match_text,
 														not_a_match_start_index,
 														not_a_match_end_index
-                                                    ))
+                                                    ), **g.feedback_options)
 	
 	return make_response({'task_id': task.id}, 202)
 
@@ -711,43 +745,7 @@ def confirm_nugget_multi_match():
         ]
     }
 	"""
-	form = request.get_json()
-
-	authorization = request.headers.get("Authorization")
-	organisation_id: Optional[int] = form.get("organisationId")
-	base_name = form.get("baseName")
-
-	nuggets = form.get("nuggets")
-
-	if (organisation_id is None
-       or base_name is None
-       or authorization is None
-       or nuggets is None):
-
-		return make_response({"error": "missing parameters"}, 400)
-
-	_token = tokenDecode(authorization)
-
-	if _token is None:
-		return make_response({"error": "invalid token"}, 401)
-
-	user_id = _token.id
-
-	documents_and_nuggets = [(
-		nugget.get("documentName"),
-		nugget.get("documentContent"),
-		int(nugget.get("startIndex")) if nugget.get("startIndex") is not None else None,
-		int(nugget.get("endIndex")) if nugget.get("endIndex") is not None else None
-	) for nugget in nuggets]
-
-	task = DocumentBaseConfirmMultipleNuggets().apply_async(args=(
-		user_id,
-		base_name,
-		organisation_id,
-		documents_and_nuggets
-	))
-
-	return make_response({'task_id': task.id}, 202)
+	return make_response({"error": "Bulk confirmation is unavailable until F14 is repaired; confirm individual matches."}, 422)
 
 @core_routes.route('/document_base/confirm/nugget/none', methods=['POST'])
 def confirm_no_match_in_document():
@@ -808,7 +806,7 @@ def confirm_no_match_in_document():
                                                         nugget_text,
                                                         start_index,
                                                         end_index
-                                                    ))
+                                                    ), **g.feedback_options)
 
 	return make_response({'task_id': task.id}, 202)
 
@@ -835,7 +833,7 @@ def stop_feedback():
 
 	user_id = _token.id
 
-	task = DocumentBaseStopMatching().apply_async(args=(user_id,))
+	task = DocumentBaseStopMatching().apply_async(args=(user_id,), **g.feedback_options)
 
 	return make_response({'task_id': task.id}, 202)
 
