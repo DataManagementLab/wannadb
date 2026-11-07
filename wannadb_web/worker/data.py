@@ -197,10 +197,11 @@ class CustomMatchFeedback:
 	document: Document
 	start: int
 	end: int
+	not_a_match: Optional[InformationNugget] = None
 
 	def to_json(self):
 		return {"message": self.message, "document": convert_to_document(self.document).to_json(), "start": self.start,
-				"end": self.end}
+				"end": self.end, "not_a_match": convert_to_nugget(self.not_a_match).to_json() if self.not_a_match is not None else None}
 
 
 @dataclass
@@ -278,7 +279,7 @@ class StopMatching:
 def decode_feedback(payload):
 	message = payload.get("message")
 	if message == "custom-match":
-		return CustomMatchFeedback(payload["document"], payload["start"], payload["end"])
+		return CustomMatchFeedback(payload["document"], payload["start"], payload["end"], payload.get("not_a_match"))
 	if message == "is-match":
 		return NuggetMatchFeedback(payload["nugget"], payload.get("not_a_match"))
 	if message == "multi-match":

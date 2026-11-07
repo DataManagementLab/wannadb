@@ -2,6 +2,7 @@ import csv
 import io
 import json
 import logging
+import re
 import time
 from typing import Optional, Any
 
@@ -27,7 +28,7 @@ from wannadb_web.postgres.queries import get_document_by_name, get_document_by_n
 	get_document
 from wannadb_web.postgres.transactions import add_document
 from wannadb_web.Redis.RedisCache import SessionState, get_signal_scope
-from wannadb_web.worker.data import decode_feedback, DoAttributeRanking, ReloadDocumentBase, Signals, CustomMatchFeedback, NuggetMatchFeedback, NoMatchFeedback, SkipAttributeRanking, StopMatching
+from wannadb_web.worker.data import decode_feedback, MultiNuggetsMatchFeedback, DoAttributeRanking, ReloadDocumentBase, Signals, CustomMatchFeedback, NuggetMatchFeedback, NoMatchFeedback, SkipAttributeRanking, StopMatching
 
 logger = logging.getLogger(__name__)
 TIMEOUT = 600  # 10 minutes
@@ -68,9 +69,11 @@ class WannaDB_WebAPI:
 					self.signals.status.emit("Feedback received from UI")
 					start_time = time.monotonic()
 					if isinstance(msg, CustomMatchFeedback):
-						return {"message": "custom-match", "document": msg.document, "start": msg.start, "end": msg.end}
+						return {"message": "custom-match", "document": msg.document, "start": msg.start, "end": msg.end, "not_a_match": msg.not_a_match}
 					elif isinstance(msg, NuggetMatchFeedback):
 						return {"message": "is-match", "nugget": msg.nugget, "not_a_match": msg.not_a_match}
+					elif isinstance(msg, MultiNuggetsMatchFeedback):
+						return {"message": "multi-match", "nuggets": msg.nuggets, "not_a_match": msg.not_a_match}
 					elif isinstance(msg, NoMatchFeedback):
 						return {"message": "no-match-in-document", "nugget": msg.nugget, "not_a_match": msg.not_a_match}
 					elif isinstance(msg, DoAttributeRanking):
@@ -523,19 +526,12 @@ class WannaDB_WebAPI:
 
 			# TODO: this should not be implemented here!
 			def find_additional_nuggets(nugget, documents):
-				new_nuggets = []
-				for document in documents:
-					doc_text = document.text.lower()
-					nug_text = nugget.text.lower()
-					start = 0
-					while True:
-						start = doc_text.find(nug_text, start)
-						if start == -1:
-							break
-						else:
-							new_nuggets.append((document, start, start + len(nug_text)))
-							start += len(nug_text)
-				return new_nuggets
+				if not nugget.text:
+					return []
+				# Match against original text: lowercasing can change Unicode string length.
+				pattern = re.compile(re.escape(nugget.text), re.IGNORECASE)
+				return [(document, match.start(), match.end()) for document in documents
+					for match in pattern.finditer(document.text)]
 
 			matching_phase = Pipeline(
 				[

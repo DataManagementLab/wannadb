@@ -504,10 +504,17 @@ class DocumentBaseConfirmNugget(FeedbackTask):
 		"""
   
 		document = Document(document_name, document_text)
-  
+		_validate_feedback_span(document, start_index, end_index)
 		if nugget is None:
-			nugget = InformationNugget(document=document, start_char=int(start_index), end_char=int(end_index))
-		not_a_match = InformationNugget(document=document, start_char=not_a_match_start_index, end_char=not_a_match_end_index) if not_a_match_text else None
+			nugget = InformationNugget(document=document, start_char=start_index, end_char=end_index)
+		else:
+			nugget_exist(nugget, document, start_index, end_index)
+		not_a_match = None
+		if not_a_match_text is not None:
+			nugget_exist(not_a_match_text, document, not_a_match_start_index, not_a_match_end_index)
+			if (start_index, end_index) == (not_a_match_start_index, not_a_match_end_index):
+				raise ValueError("Positive and negative selections must differ")
+			not_a_match = InformationNugget(document=document, start_char=not_a_match_start_index, end_char=not_a_match_end_index)
 
 		self.emit_command(match_feedback(nugget, document, start_index, end_index, not_a_match=not_a_match))
 		# no need to update the document base the doc will be saved in the interactive call
@@ -518,18 +525,20 @@ class DocumentBaseConfirmMultipleNuggets(FeedbackTask):
 	name = "DocumentBaseConfirmMultipleNuggets"
 
 	def run(self, user_id: int, base_name: str, organisation_id: int,
-			documents_and_nuggets: list[tuple[str, str, int, int]],
-			interactive_call_task_id: str):
-		"""
-		:param user_id: user id
-		:param base_name: name of base document
-		:param organisation_id: organisation id of the document base
-		:param document_name: name of the document
-		:param document_text: text of the document
-		:param nuggets: list of nuggets to confirm
-		:param interactive_call_task_id: the same task id that's used for interactive call
-		"""
-		raise ValueError("Bulk confirmation is unavailable until F14 is repaired; confirm individual matches.")
+		documents_and_nuggets: list[tuple[str, str, int, int]]):
+		if not isinstance(documents_and_nuggets, list) or not documents_and_nuggets:
+			raise ValueError("Select at least one match")
+		nuggets = []
+		document_names = set()
+		for name, text, start, end in documents_and_nuggets:
+			if not isinstance(name, str) or not name or name in document_names:
+				raise ValueError("Select one match per document")
+			document_names.add(name)
+			document = Document(name, text)
+			_validate_feedback_span(document, start, end)
+			nuggets.append(InformationNugget(document, start, end))
+		self.emit_command(multi_match_feedback(nuggets))
+		return {"ok": True}
 
 
 class DocumentBaseNoMatchForDocument(FeedbackTask):
@@ -559,15 +568,17 @@ class DocumentBaseNoMatchForDocument(FeedbackTask):
 		return {"ok": True}
 
 
+def _validate_feedback_span(document: Document, start_index: int, end_index: int):
+	if (not isinstance(document.text, str) or type(start_index) is not int or type(end_index) is not int or
+		not 0 <= start_index < end_index <= len(document.text) or not document.text[start_index:end_index].strip()):
+		raise ValueError("Selection must be a nonempty span inside the document")
+
+
 def nugget_exist(nugget: str, document: Document, start_index: int, end_index: int):
-	try:
-		if document.text[start_index:end_index] == nugget:
-			return True
-	except IndexError:
-		logger.error("Nugget does not exist in the given Text")
-		raise Exception("Nugget does not exist in the given Text")
-	logger.error("Nugget does not exist in the given Text")
-	raise Exception("Nugget does not exist in the given Text")
+	_validate_feedback_span(document, start_index, end_index)
+	if not isinstance(nugget, str) or document.text[start_index:end_index] != nugget:
+		raise ValueError("Selected text does not match the document span")
+	return True
 
 
 def match_feedback(
@@ -585,8 +596,8 @@ def match_feedback(
         if start_index is None or end_index is None:
             logger.error("Start-index or end-index are missing to find the custom nugget")
             raise Exception("Start-index or end-index are missing to find the custom nugget")
-        print(f"nugget: {nugget}, document: {document.name}, start_index: {int(start_index)}, end_index: {int(end_index)}")
-        return CustomMatchFeedback(document, start_index, end_index)
+        nugget_exist(nugget, document, start_index, end_index)
+        return CustomMatchFeedback(document, start_index, end_index, not_a_match)
     if isinstance(nugget, InformationNugget):
         return NuggetMatchFeedback(nugget, not_a_match)
     raise Exception("Invalid nugget type")
@@ -596,7 +607,7 @@ def multi_match_feedback(nuggets: list[InformationNugget]):
     Generate match feedback for multiple nuggets.
     """
     logger.debug("multi_match_feedback")
-    return MultiNuggetsMatchFeedback(nuggets)
+    return MultiNuggetsMatchFeedback(nuggets, None)
 
 def no_match(nugget: Union[InformationNugget, str], document: Document, start_index: Optional[int] = None, end_index: Optional[int] = None) -> NoMatchFeedback:
     """

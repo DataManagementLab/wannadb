@@ -36,7 +36,7 @@ from typing import Optional
 from wannadb_web.postgres.queries import get_document_base_data, get_document_by_name_and_content, get_feedbacks_for_document, get_document_by_name, get_base_id, get_organisation_authorisation, documents_available_for_base
 from wannadb_web.postgres.transactions import add_feedback, add_document_base, delete_document_base_data
 
-from flask import Blueprint, make_response, request, g
+from flask import Blueprint, make_response, request, g, abort
 from celery.result import AsyncResult
 from wannadb.data.data import Attribute, Document, InformationNugget, DocumentBase
 from wannadb.statistics import Statistics
@@ -66,6 +66,30 @@ def _positive_id(value):
 	if isinstance(value, str) and value.isascii() and value.isdigit():
 		value = int(value) if len(value) <= 19 else None
 	return value if type(value) is int and 0 < value <= 9223372036854775807 else None
+
+
+def _selection_span(content, start, end, selected_text):
+	if (not isinstance(content, str) or type(start) is not int or type(end) is not int or
+		not 0 <= start < end <= len(content) or not content[start:end].strip() or
+		not isinstance(selected_text, str) or content[start:end] != selected_text):
+		abort(make_response({"error": "selection must match a nonempty span inside the document"}, 400))
+	return start, end
+
+
+def _feedback_selection(form):
+	name, content = form.get("documentName"), form.get("documentContent")
+	if not isinstance(name, str) or not name:
+		abort(make_response({"error": "a document name is required"}, 400))
+	start, end = _selection_span(content, form.get("startIndex"), form.get("endIndex"), form.get("nuggetText"))
+	negative_text = form.get("noMatchText")
+	negative_start, negative_end = form.get("noMatchStartIndex"), form.get("noMatchEndIndex")
+	if negative_text in (None, "") and negative_start in (None, -1) and negative_end in (None, -1):
+		negative_text, negative_start, negative_end = None, None, None
+	else:
+		negative_start, negative_end = _selection_span(content, negative_start, negative_end, negative_text)
+		if (start, end) == (negative_start, negative_end):
+			abort(make_response({"error": "positive and negative selections must differ"}, 400))
+	return name, content, start, end, negative_text, negative_start, negative_end
 
 
 @core_routes.before_request
@@ -597,53 +621,11 @@ def confirm_nugget_custom():
     }
     """
 	form = request.get_json()
-
-	authorization = request.headers.get("Authorization")
-	organisation_id: Optional[int] = form.get("organisationId")
-	base_name = form.get("baseName")
- 
-	document_name = form.get("documentName")
-	document_content = form.get("documentContent")
-	nugget_text = form.get("nuggetText")
-	start_index: Optional[int]  = form.get("startIndex")
-	end_index: Optional[int]  = form.get("endIndex")
-	not_a_match_text: Optional[str] = form.get("noMatchText")
-	not_a_match_start_index: Optional[int] = int(form.get("noMatchStartIndex")) if form.get("noMatchStartIndex") is not None else None
-	not_a_match_end_index: Optional[int] = int(form.get("noMatchEndIndex")) if form.get("noMatchEndIndex") is not None else None
-
-	if (organisation_id is None 
-     	or base_name is None 
-      	or document_name is None 
-       	or document_content is None 
-        or authorization is None 
-        or nugget_text is None 
-        or start_index is None 
-        or end_index is None):
-     
-		return make_response({"error": "missing parameters"}, 400)
-
-	_token = tokenDecode(authorization)
-	
-	if _token is None:
-		return make_response({"error": "invalid token"}, 401)
-	
-	user_id = _token.id
-	
+	name, content, start, end, negative_text, negative_start, negative_end = _feedback_selection(form)
 	task = DocumentBaseConfirmNugget().apply_async(args=(
-     													user_id, 
-                                                      	base_name, 
-                                                       	organisation_id, 
-                                                        document_name, 
-                                                        document_content, 
-                                                        nugget_text,
-                                                        start_index,
-                                                        end_index,
-                                                        not_a_match_text,
-														not_a_match_start_index,
-														not_a_match_end_index
-                                                    ), **g.feedback_options)
-	
-	return make_response({'task_id': task.id}, 202)
+		g.auth_token.id, form.get("baseName"), g.organisation_id, name, content,
+		form["nuggetText"], start, end, negative_text, negative_start, negative_end), **g.feedback_options)
+	return make_response({"task_id": task.id}, 202)
 
 @core_routes.route('/document_base/confirm/nugget/match', methods=['POST'])
 def confirm_nugget_match():
@@ -666,53 +648,11 @@ def confirm_nugget_match():
     }
     """
 	form = request.get_json()
-
-	authorization = request.headers.get("Authorization")
-	organisation_id: Optional[int] = form.get("organisationId")
-	base_name = form.get("baseName")
- 
-	document_name = form.get("documentName")
-	document_content = form.get("documentContent")
-	nugget_text = form.get("nuggetText")
-	start_index: Optional[int]  = int(form.get("startIndex")) if form.get("startIndex") is not None else None
-	end_index: Optional[int]  = int(form.get("endIndex")) if form.get("endIndex") is not None else None
-	not_a_match_text: Optional[str] = form.get("noMatchText")
-	not_a_match_start_index: Optional[int]  = int(form.get("noMatchStartIndex")) if form.get("noMatchStartIndex") is not None else None
-	not_a_match_end_index: Optional[int]  = int(form.get("noMatchEndIndex")) if form.get("noMatchEndIndex") is not None else None
-
-	if (organisation_id is None 
-     	or base_name is None 
-      	or document_name is None 
-       	or document_content is None 
-        or authorization is None 
-        or nugget_text is None 
-        or start_index is None 
-        or end_index is None):
-
-		return make_response({"error": "missing parameters"}, 400)
-
-	_token = tokenDecode(authorization)
-	
-	if _token is None:
-		return make_response({"error": "invalid token"}, 401)
-	
-	user_id = _token.id
-	
+	name, content, start, end, negative_text, negative_start, negative_end = _feedback_selection(form)
 	task = DocumentBaseConfirmNugget().apply_async(args=(
-     													user_id, 
-                                                      	base_name, 
-                                                       	organisation_id, 
-                                                        document_name, 
-                                                        document_content,
-                                                        None, # needed here (otherwise custom nugget is used)
-                                                        start_index,
-                                                        end_index,
-                                                        not_a_match_text,
-														not_a_match_start_index,
-														not_a_match_end_index
-                                                    ), **g.feedback_options)
-	
-	return make_response({'task_id': task.id}, 202)
+		g.auth_token.id, form.get("baseName"), g.organisation_id, name, content,
+		None, start, end, negative_text, negative_start, negative_end), **g.feedback_options)
+	return make_response({"task_id": task.id}, 202)
 
 @core_routes.route('/document_base/confirm/nugget/multiple', methods=['POST'])
 def confirm_nugget_multi_match():
@@ -745,7 +685,19 @@ def confirm_nugget_multi_match():
         ]
     }
 	"""
-	return make_response({"error": "Bulk confirmation is unavailable until F14 is repaired; confirm individual matches."}, 422)
+	form = request.get_json()
+	documents_and_nuggets = []
+	document_names = set()
+	for selected in form["nuggets"]:
+		name, content = selected.get("documentName"), selected.get("documentContent")
+		if not isinstance(name, str) or not name or name in document_names:
+			return make_response({"error": "select one match per document"}, 400)
+		document_names.add(name)
+		start, end = _selection_span(content, selected.get("startIndex"), selected.get("endIndex"), selected.get("text"))
+		documents_and_nuggets.append((name, content, start, end))
+	task = DocumentBaseConfirmMultipleNuggets().apply_async(args=(
+		g.auth_token.id, form.get("baseName"), g.organisation_id, documents_and_nuggets), **g.feedback_options)
+	return make_response({"task_id": task.id}, 202)
 
 @core_routes.route('/document_base/confirm/nugget/none', methods=['POST'])
 def confirm_no_match_in_document():
