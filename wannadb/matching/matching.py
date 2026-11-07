@@ -106,6 +106,50 @@ class RankingBasedMatcher(BaseMatcher):
 
         logger.debug(f"Initialized '{self.identifier}'.")
 
+    @staticmethod
+    def _feedback_document(document_base: DocumentBase, value: Any) -> Document:
+        """Resolve feedback against this loaded base rather than trusting decoded objects."""
+        if isinstance(value, Document):
+            name, text = value.name, value.text
+        elif isinstance(value, dict):
+            name, text = value.get("name"), value.get("text")
+        else:
+            raise ValueError("Feedback document is invalid")
+        matches = [document for document in document_base.documents if document.name == name]
+        if len(matches) != 1 or (text is not None and text != matches[0].text):
+            raise ValueError("Feedback document is missing, ambiguous or stale")
+        return matches[0]
+
+    @staticmethod
+    def _feedback_span(document: Document, start: Any, end: Any) -> Tuple[int, int]:
+        # Existing nugget serialization uses decimal strings for offsets.
+        if isinstance(start, str) and start.isascii() and start.isdigit():
+            start = int(start)
+        if isinstance(end, str) and end.isascii() and end.isdigit():
+            end = int(end)
+        if type(start) is not int or type(end) is not int or not 0 <= start < end <= len(document.text):
+            raise ValueError("Feedback span must be a nonempty range within the document")
+        return start, end
+
+    @classmethod
+    def _feedback_nugget(cls, document_base: DocumentBase, value: Any) -> InformationNugget:
+        if isinstance(value, InformationNugget):
+            document = cls._feedback_document(document_base, value.document)
+            start, end = cls._feedback_span(document, value.start_char, value.end_char)
+            text = value.text
+        elif isinstance(value, dict):
+            document = cls._feedback_document(document_base, value.get("document"))
+            start, end = cls._feedback_span(document, value.get("start_char"), value.get("end_char"))
+            text = value.get("text")
+        else:
+            raise ValueError("Feedback nugget is invalid")
+        if text is not None and text != document.text[start:end]:
+            raise ValueError("Feedback nugget text is stale")
+        for nugget in document.nuggets:
+            if nugget.start_char == start and nugget.end_char == end:
+                return nugget
+        raise ValueError("Feedback nugget is not part of the loaded document base")
+
     def _call(
             self,
             document_base: DocumentBase,
@@ -338,20 +382,9 @@ class RankingBasedMatcher(BaseMatcher):
                     continue_matching = False
                 elif feedback_result["message"] == "no-match-in-document":
                     statistics[attribute.name]["num_no_match_in_document"] += 1
-                    # Ensure nugget is an InformationNugget (as WebApp works with json serialization)
-                    if not isinstance(feedback_result["nugget"], InformationNugget):
-                        for _doc in document_base.documents:
-                            if _doc.name == feedback_result["nugget"]["document"]["name"]:
-                                for _nugget in _doc.nuggets:
-                                    if _nugget.start_char == int(feedback_result["nugget"]["start_char"]) and \
-                                            _nugget.end_char == int(feedback_result["nugget"]["end_char"]):
-                                        feedback_result["nugget"] = _nugget
-                                        break
-                                else:
-                                    logger.warning(f"Found no matching nugget in document {_doc.name}")
-                                break
-                        else:
-                            logger.warning(f"Found no matching document for nugget {feedback_result['nugget']}. ")
+                    feedback_result["nugget"] = self._feedback_nugget(document_base, feedback_result.get("nugget"))
+                    if feedback_result["nugget"].document not in remaining_documents:
+                        raise ValueError("Feedback document has already been confirmed")
                     print(feedback_result["nugget"])
                     d = feedback_result["nugget"].document
                     if d in remaining_documents:
@@ -402,39 +435,49 @@ class RankingBasedMatcher(BaseMatcher):
                     def run_nugget_pipeline(nuggets):
                         # run the nugget pipeline for this nugget
                         dummy_documents = []
-                        for n in nuggets:
-                            dummy_document = Document("dummy", n.document.text)
-                            dummy_document[SentenceStartCharsSignal] = n.document[SentenceStartCharsSignal]
-                            dummy_document.nuggets.append(n)
-                            # TODO: think about other signals that might be required
+                        processed_nuggets = []
+                        for index, nugget in enumerate(nuggets):
+                            dummy_document = Document(f"custom-{index}", nugget.document.text)
+                            dummy_document[SentenceStartCharsSignal] = nugget.document[SentenceStartCharsSignal]
+                            processed = InformationNugget(dummy_document, nugget.start_char, nugget.end_char)
+                            processed.signals.update(nugget.signals)
+                            dummy_document.nuggets.append(processed)
                             dummy_documents.append(dummy_document)
+                            processed_nuggets.append(processed)
 
                         dummy_document_base = DocumentBase(dummy_documents, [])
                         self._nugget_pipeline(dummy_document_base, interaction_callback, status_callback, statistics["nugget-pipeline"])
+                        for nugget, processed in zip(nuggets, processed_nuggets):
+                            nugget.signals.update(processed.signals)
 
                     statistics[attribute.name]["num_confirmed_match"] += 1
 
-                    if not isinstance(feedback_result["document"], Document): # as WebApp works with json serialization
-                        for _doc in document_base.documents:
-                            if _doc.name == feedback_result["document"]["name"]:
-                                feedback_result["document"] = _doc
-                                break
-                        else:
-                            logger.warning(f"Found no matching document for nugget {feedback_result['nugget']}. ")
-                    
-                    confirmed_nugget = InformationNugget(feedback_result["document"], feedback_result["start"], feedback_result["end"])
+                    feedback_result["document"] = self._feedback_document(document_base, feedback_result.get("document"))
+                    start, end = self._feedback_span(feedback_result["document"], feedback_result.get("start"), feedback_result.get("end"))
+                    feedback_result["start"], feedback_result["end"] = start, end
+                    if feedback_result["document"] not in remaining_documents:
+                        raise ValueError("Feedback document has already been confirmed")
+                    negative = feedback_result.get("not_a_match")
+                    if negative is not None:
+                        negative = self._feedback_nugget(document_base, negative)
+                        if negative.document is not feedback_result["document"] or (negative.start_char, negative.end_char) == (start, end):
+                            raise ValueError("The negative example must be a different nugget in the same document")
+                        feedback_result["not_a_match"] = negative
+                    confirmed_nugget = next((nugget for nugget in feedback_result["document"].nuggets
+                        if nugget.start_char == start and nugget.end_char == end), None)
+                    if confirmed_nugget is None:
+                        confirmed_nugget = InformationNugget(feedback_result["document"], start, end)
+                        confirmed_nugget[ExtractorNameSignal] = "<CUSTOM_SELECTION>"
+                        confirmed_nugget[LabelSignal] = attribute.name
+                        run_nugget_pipeline([confirmed_nugget])
+                        feedback_result["document"].nuggets.append(confirmed_nugget)
                     logger.info(f"Custom match: '{confirmed_nugget}'")
-                    confirmed_nugget[ExtractorNameSignal] = "<CUSTOM_SELECTION>"
-                    confirmed_nugget[LabelSignal] = attribute.name
-
-                    run_nugget_pipeline([confirmed_nugget])
 
                     # add other signals for this nugget
                     confirmed_nugget[CachedDistanceSignal] = CachedDistanceSignal(0.0)
                     # TODO: think about other signals that should be added
 
                     # add this nugget to the document as a match and remove the document from remaining documents
-                    feedback_result["document"].nuggets.append(confirmed_nugget)
                     feedback_result["document"].attribute_mappings[attribute.name] = [confirmed_nugget]
                     remaining_documents.remove(feedback_result["document"])
 
@@ -472,23 +515,30 @@ class RankingBasedMatcher(BaseMatcher):
                     t_custom_extraction = time.time() - t_minus_custom_extraction
 
                     # Perform time keeping and logging
-                    self._find_additional_nuggets.perform_time_keeping(
-                        feedback_result["document"],
-                        len(remaining_documents),
-                        t_custom_extraction,
-                        feedback_result["start"],
-                        feedback_result["end"]
-                    )
+                    timing_hook = getattr(self._find_additional_nuggets, "perform_time_keeping", None)
+                    if callable(timing_hook):
+                        timing_hook(feedback_result["document"], len(remaining_documents), t_custom_extraction,
+                                    feedback_result["start"], feedback_result["end"])
                     logger.info(f"Execution of custom match extraction"
                                 f" with {str(self._find_additional_nuggets)}"
                                 f" took {t_custom_extraction} seconds"
                                 f" for {len(remaining_documents)} documents.")
 
+                    validated_additional_nuggets = []
+                    seen_spans = set()
+                    for document, start, end in additional_nuggets:
+                        document = self._feedback_document(document_base, document)
+                        start, end = self._feedback_span(document, start, end)
+                        if document not in remaining_documents:
+                            raise ValueError("Additional extraction belongs to a confirmed document")
+                        key = (document.name, start, end)
+                        if key not in seen_spans and not any(n.start_char == start and n.end_char == end for n in document.nuggets):
+                            validated_additional_nuggets.append(InformationNugget(document, start, end))
+                            seen_spans.add(key)
+                    additional_nuggets = validated_additional_nuggets
                     statistics[attribute.name]["num_additional_nuggets"] += len(additional_nuggets)
                     if len(additional_nuggets) > 0:
                         logger.info(f"Found {len(additional_nuggets)} additional nuggets.")
-                        # convert nugget description into InformationNugget
-                        additional_nuggets = list(map(lambda i: InformationNugget(*i), additional_nuggets))
                         for additional_nugget in additional_nuggets:
                             additional_nugget[LabelSignal] = attribute.name
                             additional_nugget[ExtractorNameSignal] = str(self._find_additional_nuggets)
@@ -520,26 +570,31 @@ class RankingBasedMatcher(BaseMatcher):
 
                 elif feedback_result["message"] in ("is-match", "multi-match"):
                     is_batch = feedback_result["message"] == "multi-match"
-                    requested_nuggets = (feedback_result.get("nuggets", []) if is_batch
-                                         else [feedback_result["nugget"]])
+                    requested_nuggets = (feedback_result.get("nuggets") if is_batch
+                                         else [feedback_result.get("nugget")])
+                    if not isinstance(requested_nuggets, (list, tuple)) or not requested_nuggets:
+                        raise ValueError("Select at least one nugget to confirm")
                     pending_documents = {id(document) for document in remaining_documents}
                     displayed_nuggets = {id(nugget) for nugget in feedback_nuggets}
                     confirmed_nuggets = []
                     confirmed_documents = set()
-                    for nugget in requested_nuggets:
+                    for value in requested_nuggets:
+                        # Web feedback carries JSON; desktop feedback already has loaded objects.
+                        nugget = value if isinstance(value, InformationNugget) else self._feedback_nugget(document_base, value)
                         if (id(nugget.document) not in pending_documents
                                 or not any(candidate is nugget for candidate in nugget.document.nuggets)
                                 or (is_batch and id(nugget) not in displayed_nuggets)):
-                            logger.warning("Ignoring confirmation containing a stale or unavailable nugget.")
-                            confirmed_nuggets = []
-                            break
+                            raise ValueError("The selected nugget is stale or unavailable. Reload feedback and select it again.")
                         if id(nugget.document) not in confirmed_documents:
                             confirmed_nuggets.append(nugget)
                             confirmed_documents.add(id(nugget.document))
 
-                    if not confirmed_nuggets:
-                        # Empty or stale feedback must not discard label-based distances.
-                        continue
+                    negative = feedback_result.get("not_a_match", feedback_result.get("not-a-match"))
+                    if not is_batch and negative is not None:
+                        positive = confirmed_nuggets[0]
+                        negative = self._feedback_nugget(document_base, negative)
+                        if negative.document is not positive.document or negative is positive:
+                            raise ValueError("The negative example must be a different nugget in the same document")
 
                     statistics[attribute.name]["num_confirmed_match"] += len(confirmed_nuggets)
                     for nugget in confirmed_nuggets:
@@ -574,7 +629,7 @@ class RankingBasedMatcher(BaseMatcher):
                             new_to_old_match[new_best_match.text] = previous_best_match.text
                     distances_based_on_label = False
 
-                    if self._adjust_threshold and (is_batch or feedback_result.get("not-a-match") is None):
+                    if self._adjust_threshold and (is_batch or negative is None):
                         ranked_indices = {id(nugget): ix for ix, nugget in enumerate(feedback_nuggets)}
                         # Follow ranked-list order, independent of payload ordering.
                         for confirmed_nugget in sorted(
