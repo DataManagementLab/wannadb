@@ -33,7 +33,7 @@ import pickle
 from uuid import UUID
 from typing import Optional
 
-from wannadb_web.postgres.queries import get_document_base_data, get_document_by_name_and_content, get_feedbacks_for_document, get_document_by_name, get_base_id, get_organisation_authorisation, documents_available_for_base
+from wannadb_web.postgres.queries import get_document_base_data, get_document_by_name_and_content, get_feedbacks_for_document, get_document_by_name, get_base_id, get_organisation_authorisation, documents_available_for_base, get_document_ids_for_snapshot
 from wannadb_web.postgres.transactions import add_feedback, add_document_base, delete_document_base_data
 
 from flask import Blueprint, make_response, request, g, abort
@@ -429,6 +429,13 @@ def task_status(token: str,task_id: str):
 	snapshot = session.snapshot(include_payload=include_payload, include_feedback=include_feedback)
 	signals = Signals(user_id, base_id=scope["base_id"], session_id=scope["session_id"]).to_json(
 		include_payload=include_payload, include_feedback=include_feedback, snapshot=snapshot)
+	base = signals["document_base_to_ui"]
+	if base:
+		document_ids = get_document_ids_for_snapshot(scope["base_id"], scope["organisation_id"], user_id,
+			{document["name"]: document["text"] for document in base["documents"]})
+		base.update(id=scope["base_id"], organization_id=scope["organisation_id"], name=scope["base_name"])
+		for document in base["documents"]:
+			document["id"] = document_ids.get(document["name"])
 	publication = snapshot["publication"]
 	command = session.command(scope["command_id"]) if scope.get("command_id") else None
 	if command is not None:
@@ -772,7 +779,7 @@ def add_public_feedback():
 	document_id, _, _ = get_document_by_name_and_content(
 		document_name,
 		document_content,
-		user_id, organisation_id=organisation_id
+		user_id, organisation_id=organisation_id, base_name=form.get("baseName")
 	)
 	if document_id is None:
 		return make_response({"error": "document not found"}, 404)
@@ -825,7 +832,7 @@ def get_public_feedback():
 	document_id, _, _ = get_document_by_name_and_content(
 		form.get("documentName"),
 		form.get("documentContent"),
-		user_id, organisation_id=organisation_id
+		user_id, organisation_id=organisation_id, base_name=form.get("baseName")
 	)
 	if document_id is None:
 		return make_response({"error": "document not found"}, 404)

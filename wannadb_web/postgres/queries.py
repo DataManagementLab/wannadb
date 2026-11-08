@@ -278,6 +278,25 @@ def get_document_base_data(base_name: str, organisation_id: int):
 	}
 
 
+def get_document_ids_for_snapshot(base_id: int, organisation_id: int, user_id: int, documents: dict[str, str]):
+	"""Find raw document IDs only where the scoped row still agrees with the published text."""
+	if not documents:
+		return {}
+	query = sql.SQL("""SELECT d.id, d.name, d.content FROM documents d
+		WHERE d.documentbaseid = %s AND d.organisationid = %s AND d.name = ANY(%s)
+		AND EXISTS (SELECT 1 FROM membership m WHERE m.userid = %s
+			AND m.organisationid = d.organisationid AND m.authorisation IN (0, 1, 10));""")
+	result = execute_query(query, (base_id, organisation_id, list(documents), user_id))
+	if result is False:
+		raise RuntimeError("Could not load document IDs for the base.")
+	matching_ids = {}
+	for document_id, name, content in result or ():
+		if documents[name] == content:
+			# Legacy duplicate rows have no unique ID for this snapshot document.
+			matching_ids[name] = None if name in matching_ids else document_id
+	return matching_ids
+
+
 @deprecated
 def _get_document(documentId: int):
 	"""

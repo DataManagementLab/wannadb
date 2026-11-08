@@ -30,25 +30,30 @@ def convert_signal(signal: BaseSignal) -> _BaseSignal:
 
 @dataclass
 class _InformationNugget:
-	text:str
-	signals:dict[str,BaseSignal]
-	document:Document
-	end_char:int
-	start_char:int
+	text: str
+	signals: dict[str, BaseSignal]
+	document: Document
+	end_char: int
+	start_char: int
+	nugget_id: Optional[int] = None
 
 	def to_json(self):
-		return {
-		"text": self.text,
-		"signals": [{"name": name, "signal": convert_signal(signal).to_json()} for name, signal in
-					self.signals.items()],
-		"document": {"name": self.document.name, "text": self.document.text},
-		"end_char": str(self.end_char),
-		"start_char": str(self.start_char)}
+		data = {
+			"text": self.text,
+			"signals": [{"name": name, "signal": convert_signal(signal).to_json()}
+				for name, signal in self.signals.items()],
+			"document": {"name": self.document.name, "text": self.document.text},
+			"end_char": int(self.end_char),
+			"start_char": int(self.start_char)
+		}
+		if self.nugget_id is not None:
+			data["id"] = self.nugget_id
+		return data
 
 
-
-def convert_to_nugget(nugget: InformationNugget):
-	return _InformationNugget(nugget.text,nugget.signals,nugget.document,nugget.end_char,nugget.start_char)
+def convert_to_nugget(nugget: InformationNugget, nugget_id: Optional[int] = None):
+	return _InformationNugget(nugget.text, nugget.signals, nugget.document,
+		nugget.end_char, nugget.start_char, nugget_id)
 
 
 @dataclass
@@ -73,14 +78,17 @@ class _Document:
 	nuggets:list[InformationNugget]
 
 	def to_json(self):
+		nuggets = [convert_to_nugget(nugget, index).to_json() for index, nugget in enumerate(self.nuggets)]
+		indices = {id(nugget): index for index, nugget in enumerate(self.nuggets)}
 		return {
-		"name": self.name,
-		"text": self.text,
-		"attribute_mappings": {name: [convert_to_nugget(nugget).to_json() for nugget in nuggets] for name, nuggets in self.attribute_mappings.items()},
-		"signals": [{"name": name, "signal": convert_signal(signal)} for name, signal in
-					self.signals.items()],
-		"nuggets": [convert_to_nugget(nugget).to_json() for nugget in self.nuggets]
-	}
+			"name": self.name,
+			"text": self.text,
+			"attribute_mappings": {name: [nuggets[indices[id(nugget)]] for nugget in matches]
+				for name, matches in self.attribute_mappings.items()},
+			"signals": [{"name": name, "signal": convert_signal(signal).to_json()}
+				for name, signal in self.signals.items()],
+			"nuggets": nuggets
+		}
 
 
 def convert_to_document(document: Document):
@@ -105,18 +113,18 @@ def convert_to_attribute(attribute: Attribute):
 @dataclass
 class _DocumentBase:
 	attributes:list[Attribute]
-	nuggets:list[InformationNugget]
 	documents:list[Document]
 
 	def to_json(self):
+		documents = [convert_to_document(document).to_json() for document in self.documents]
 		return {
 			"attributes": [attribute.name for attribute in self.attributes],
-			"nuggets": [convert_to_nugget(nugget).to_json() for nugget in self.nuggets],
-			"documents": [convert_to_document(document).to_json() for document in self.documents]
+			"nuggets": [nugget for document in documents for nugget in document["nuggets"]],
+			"documents": documents
 		}
 
 def convert_to_document_base(document_base: DocumentBase):
-	return _DocumentBase(document_base.attributes,document_base.nuggets,document_base.documents)
+	return _DocumentBase(document_base.attributes, document_base.documents)
 
 
 class Signals:
@@ -447,12 +455,21 @@ class _Feedback(Emitable):
 		# Preserve the matcher-owned request; change annotations are desktop-only.
 		status = status.copy()
 		status.pop("nugget-updates-context", None)
+		nugget_ids = {}
+
+		def serialize_nugget(nugget):
+			document_key = id(nugget.document)
+			if document_key not in nugget_ids:
+				nugget_ids[document_key] = {id(candidate): index
+					for index, candidate in enumerate(nugget.document.nuggets)}
+			return convert_to_nugget(nugget, nugget_ids[document_key].get(id(nugget))).to_json()
+
 		for key, value in status.items():
 			if isinstance(value, Attribute):
 				status[key] = value.toJSON()
 			if isinstance(value, Iterable) and not isinstance(value, str):
 				if all(isinstance(item, InformationNugget) for item in value):
-					status[key] = [convert_to_nugget(item).to_json() for item in value]
+					status[key] = [serialize_nugget(item) for item in value]
 		self.redis.set(self.type, json.dumps(status))
 
 
