@@ -44,7 +44,7 @@ class ContextSentenceCacher(BasePipelineElement):
         for nugget in nuggets:
             sent_start_chars: List[int] = nugget.document[SentenceStartCharsSignal]
             context_start_char: int = 0
-            context_end_char: int = 0
+            context_end_char: int = len(nugget.document.text)
             for ix, sent_start_char in enumerate(sent_start_chars):
                 if sent_start_char > nugget.start_char:
                     if ix == 0:
@@ -63,6 +63,8 @@ class ContextSentenceCacher(BasePipelineElement):
                     context_end_char: int = len(nugget.document.text)
                     statistics["num_context_sentence_is_final_sentence"] += 1
 
+            # A manual selection may span more than one sentence.
+            context_end_char = max(context_end_char, nugget.end_char)
             context_sentence: str = nugget.document.text[context_start_char:context_end_char]
             start_in_context: int = nugget.start_char - context_start_char
             end_in_context: int = nugget.end_char - context_start_char

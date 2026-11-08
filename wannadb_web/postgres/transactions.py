@@ -1,12 +1,15 @@
 import logging
+from contextlib import closing
 from typing import Union
 from deprecated import deprecated
 
 import bcrypt
 from psycopg2 import sql, IntegrityError
+from wannadb.data.data import Document, DocumentBase, InformationNugget
+from wannadb.data.signals import SentenceStartCharsSignal
 from wannadb_web.util import Token, Authorisation, tokenDecode
 from wannadb_web.postgres.queries import check_password, get_organisation_authorisation
-from wannadb_web.postgres.util import execute_transaction
+from wannadb_web.postgres.util import connectPG, execute_transaction
 
 logger: logging.Logger = logging.getLogger(__name__)
 
@@ -685,6 +688,87 @@ def add_document(name: str, content: Union[str, bytes], organisationId: int, use
 	except Exception:
 		logger.error("Could not add document")
 	return None, None
+
+
+def mutate_base_documents(base_name, base_id, organisation_id, user_id, *,
+		additions=(), replacement=None, removal=None):
+	"""Commit preprocessed documents and their raw rows together against the latest base."""
+	with closing(connectPG()) as conn, conn, conn.cursor() as cur:
+		# Lock the base before its snapshot. Parallel batches wait only for this short
+		# transaction, and each reads the snapshot left by its predecessor.
+		cur.execute("""SELECT b.id FROM document_bases b WHERE b.id = %s
+			AND b.name = %s AND b.organisation_id = %s
+			AND EXISTS (SELECT 1 FROM membership m WHERE m.userid = %s
+			AND m.organisationid = b.organisation_id AND m.authorisation IN (0, 1, 10))
+			FOR UPDATE;""", (base_id, base_name, organisation_id, user_id))
+		if cur.fetchone() is None:
+			raise PermissionError("Document base access denied.")
+
+		cur.execute("""SELECT id, content_byte FROM documents WHERE name = %s
+			AND organisationid = %s AND documentbaseid IS NULL AND content IS NULL
+			AND content_byte IS NOT NULL FOR UPDATE;""", (base_name, organisation_id))
+		snapshots = cur.fetchall()
+		if len(snapshots) != 1:
+			raise RuntimeError("The document base has no unique saved snapshot.")
+		snapshot_id, content_byte = snapshots[0]
+		base = DocumentBase.from_bson(bytes(content_byte))
+
+		if additions:
+			cur.execute("SELECT name FROM documents WHERE organisationid = %s;", (organisation_id,))
+			used_names = {row[0] for row in cur.fetchall()} | {doc.name for doc in base.documents}
+			for document in additions:
+				name = document.name
+				counter = 0
+				while name in used_names:
+					counter += 1
+					name = f"{document.name}({counter})"
+				used_names.add(name)
+
+				cur.execute("""INSERT INTO documents (name, content, organisationid, userid, documentbaseid)
+					VALUES (%s, %s, %s, %s, %s);""", (name, document.text, organisation_id, user_id, base_id))
+				if name != document.name:
+					renamed = Document(name, document.text)
+					renamed.signals.update(document.signals)
+					for nugget in document.nuggets:
+						clone = InformationNugget(renamed, nugget.start_char, nugget.end_char)
+						clone.signals.update(nugget.signals)
+						renamed.nuggets.append(clone)
+					document = renamed
+				base.documents.append(document)
+
+		if replacement is not None:
+			document_id, old_text, document = replacement
+			cur.execute("""UPDATE documents SET content = %s WHERE id = %s AND name = %s
+				AND organisationid = %s AND documentbaseid = %s AND content = %s RETURNING id;""",
+				(document.text, document_id, document.name, organisation_id, base_id, old_text))
+			if cur.fetchone() is None:
+				raise ValueError("The document changed or was deleted. Reload the base before editing again.")
+			if document.text != old_text:
+				# These offsets describe the previous text.
+				cur.execute("""DELETE FROM document_feedback WHERE documentid = %s
+					AND (feedback_start IS NOT NULL OR feedback_end IS NOT NULL);""", (document_id,))
+			for index, existing in enumerate(base.documents):
+				if existing.name == document.name:
+					if existing.text != document.text or SentenceStartCharsSignal.identifier not in existing.signals:
+						base.documents[index] = document
+					break
+			else:
+				# Older uploads could write the raw row without saving the snapshot.
+				base.documents.append(document)
+
+		if removal is not None:
+			document_id, name = removal
+			cur.execute("""DELETE FROM documents WHERE id = %s AND name = %s
+				AND organisationid = %s AND documentbaseid = %s RETURNING id;""",
+				(document_id, name, organisation_id, base_id))
+			if cur.fetchone() is None:
+				raise ValueError("The document was already deleted. Reload the base.")
+			base.documents[:] = [doc for doc in base.documents if doc.name != name]
+
+		cur.execute("UPDATE documents SET content_byte = %s WHERE id = %s;",
+			(base.to_bson(), snapshot_id))
+		cur.execute("UPDATE document_bases SET last_modified = now() WHERE id = %s;", (base_id,))
+	return base
 
 
 def add_document_base(name: str, attributes: list[str], orgId: int, documents: list[int], user_id: int):

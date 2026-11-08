@@ -2,8 +2,7 @@ from flask import Blueprint, request, make_response, abort, g
 from flask_cors import cross_origin
 
 from wannadb_web.worker.tasks import DocumentBaseAddDocument, DocumentBaseRemoveDocument, DocumentBaseUpdateDocument
-from wannadb_web.postgres.queries import delete_document_content, get_base_id, get_document, get_document_bases_for_organisation, get_document_by_name, get_documents_for_organisation, get_document_scope, get_organisation_authorisation, \
-	update_document_content
+from wannadb_web.postgres.queries import delete_document_content, get_base_id, get_document, get_document_bases_for_organisation, get_document_by_name, get_documents_for_organisation, get_document_scope, get_organisation_authorisation
 
 from wannadb_web.util import tokenDecode
 from wannadb_web.postgres.transactions import add_document
@@ -45,54 +44,57 @@ def upload_files():
     
 	files = request.files.getlist('file')
 	form = request.form
-
-	authorization = request.headers.get("Authorization")
 	organisation_id = _require_organisation(form.get("organisationId"))
-
 	base_name = form.get("baseName")
-	if (base_name is not None):
-		if not isinstance(base_name, str) or not base_name:
+	if base_name is not None:
+		if not base_name.strip():
 			return make_response({'error': 'invalid document base'}, 400)
-		base_id = get_base_id(base_name, organisation_id)
-		if base_id is None:
-			# if document base name was passed but no id could be found, we return a 404 for resource not found
+		if get_base_id(base_name, organisation_id) is None:
 			return make_response({'error': 'document base not found'}, 404)
-	else:
-		base_id = None
 
-	token = tokenDecode(authorization)
-	if token is None:
-		return make_response({'error': 'no authorization'}, 401)
-
-
-	document_ids: list = []
-
+	user_id = g.auth_token.id
+	documents = []
+	document_ids = []
+	errors = []
 	for file in files:
+		filename = file.filename
 		content_type = file.mimetype or ''
 		is_text_file = content_type == 'text/plain' or (
-			content_type in ('', 'application/octet-stream') and (file.filename or '').lower().endswith('.txt')
+			content_type in ('', 'application/octet-stream') and (filename or '').lower().endswith('.txt')
 		)
-		if is_text_file:
-			filename = file.filename
+		if not is_text_file:
+			error = f"{filename}: wrong type {content_type}"
+		elif not filename or '\0' in filename:
+			error = "The file needs a valid name."
+		else:
 			try:
 				content = file.stream.read().decode('utf-8')
 			except UnicodeDecodeError:
-				document_ids.append(f"{filename}: file must contain UTF-8 text")
-				continue
-			document_id, document_name = add_document(filename, content, organisation_id, token.id, base_id)
-			if not isinstance(document_id, int) or isinstance(document_id, bool) or document_id <= 0:
-				document_ids.append(f"{filename}: could not save file")
-				continue
-			if isinstance(document_id, int) and base_id is not None:
-				# if the document was added successfully and a base_id was provided, we trigger the celery task to update the attributes of the document base
-				DocumentBaseAddDocument().apply_async(args=(token.id, document_name, content, base_name, organisation_id))
-			document_ids.append(document_id)
-		else:
-			document_ids.append(f"wrong type {content_type}")
+				error = f"{filename}: file must contain UTF-8 text"
+			else:
+				if '\0' in content:
+					error = f"{filename}: file contains a null character"
+				elif base_name is not None:
+					documents.append([filename, content])
+					continue
+				else:
+					document_id, _ = add_document(filename, content, organisation_id, user_id)
+					if type(document_id) is int and document_id > 0:
+						document_ids.append(document_id)
+						continue
+					error = f"{filename}: could not save file"
+		errors.append(error)
+		document_ids.append(error)
 
-	if all(isinstance(doc_id, str) for doc_id in document_ids):
+	if base_name is not None:
+		if not documents:
+			return make_response(errors or ["Select at least one text file."], 400)
+		task = DocumentBaseAddDocument().apply_async(args=(user_id, documents, base_name, organisation_id))
+		return make_response({'taskId': task.id, 'errors': errors}, 202)
+
+	if not document_ids or all(isinstance(doc_id, str) for doc_id in document_ids):
 		return make_response(document_ids, 400)
-	if any(isinstance(doc_id, str) for doc_id in document_ids):
+	if errors:
 		return make_response(document_ids, 207)
 	return make_response(document_ids, 201)
 
@@ -145,22 +147,21 @@ def update_file_content():
 	if not isinstance(doc_name, str) or not isinstance(base_name, str) or not base_name:
 		return make_response({'error': 'invalid document or base name'}, 400)
 
+	if not isinstance(newContent, str) or '\0' in newContent:
+		return make_response({'error': 'content must be valid text'}, 400)
 	try:
-		doc_id, _ = get_document_by_name(doc_name, organisation_id, token.id, base_name)
+		doc_id, old_content = get_document_by_name(doc_name, organisation_id, token.id, base_name)
 	except Exception:
 		return make_response({'error': 'document not found'}, 404)
 	scope = get_document_scope(doc_id, token.id)
 	if scope is None or scope[0] != organisation_id or scope[2] != base_name:
 		return make_response({'error': 'document not found'}, 404)
-	status = update_document_content(doc_id, newContent, organisation_id, scope[1], token.id)
+	if not isinstance(old_content, str):
+		return make_response({'error': 'document is not a text file'}, 400)
+	task = DocumentBaseUpdateDocument().apply_async(args=(
+		token.id, doc_name, newContent, base_name, organisation_id, int(doc_id), old_content))
+	return make_response({'taskId': task.id}, 202)
 
-	if status:
-		DocumentBaseUpdateDocument().apply_async(args=(token.id, doc_name, newContent, base_name, organisation_id))
-		print(f"Document with id {doc_id} updated successfully.")
-		return make_response({"status": status}, 200)
-	else:
-		print(f"Failed to update document with id {doc_id}.")
-		return make_response({"status": status}, 400)
 
 @main_routes.route('/file/delete', methods=['DELETE'])
 def delete_file():
@@ -200,11 +201,12 @@ def delete_file():
 	if base_name is not None and base_name != scope[2]:
 		return make_response({'error': 'document not found'}, 404)
 	organisation_id, base_id, base_name = scope
+	if base_name is not None:
+		task = DocumentBaseRemoveDocument().apply_async(args=(
+			token.id, document_name, base_name, organisation_id, int(docId)))
+		return make_response({'taskId': task.id}, 202)
+
 	status = delete_document_content(docId, organisation_id, base_id, token.id)
-
-	if status and base_name is not None:
-		DocumentBaseRemoveDocument().apply_async(args=(token.id, document_name, base_name, organisation_id))
-
 	if status:
 		print(f"Document with id {docId} deleted successfully.")
 		return make_response({"status": status}, 200)

@@ -227,10 +227,13 @@ class MultiNuggetsMatchFeedback:
 @dataclass
 class NoMatchFeedback:
 	message = "no-match-in-document"
-	nugget: InformationNugget
-	not_a_match: InformationNugget
+	nugget: Optional[InformationNugget]
+	not_a_match: Optional[InformationNugget]
+	document: Optional[Document] = None
 
 	def to_json(self):
+		if self.document is not None:
+			return {"message": self.message, "document": {"name": self.document.name, "text": self.document.text}}
 		return {"message": self.message, "nugget": convert_to_nugget(self.nugget).to_json(),
 				"not_a_match": convert_to_nugget(self.not_a_match).to_json() if self.not_a_match is not None else None}
 	
@@ -246,11 +249,13 @@ class StopMatching:
 @dataclass
 class DoAttributeRanking:
 	message = "start-ranking"
+	reset: bool = False
 
 	def to_json(self):
 		return {
 			"message": self.message,
 			"do-attribute": True,
+			"reset": self.reset,
 		}
 	
 @dataclass
@@ -285,8 +290,10 @@ def decode_feedback(payload):
 	if message == "multi-match":
 		return MultiNuggetsMatchFeedback(payload["nuggets"], payload.get("not_a_match"))
 	if message == "no-match-in-document":
-		return NoMatchFeedback(payload["nugget"], payload.get("not_a_match"))
-	classes = {"stop-interactive-matching": StopMatching, "start-ranking": DoAttributeRanking,
+		return NoMatchFeedback(payload.get("nugget"), payload.get("not_a_match"), payload.get("document"))
+	if message == "start-ranking":
+		return DoAttributeRanking(payload.get("reset") is True)
+	classes = {"stop-interactive-matching": StopMatching,
 		"skip-ranking": SkipAttributeRanking, "reload-document-base": ReloadDocumentBase}
 	if message in classes:
 		return classes[message]()

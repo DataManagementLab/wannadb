@@ -258,44 +258,24 @@ def get_base_id(base_name: str, org_id: int):
 
 
 def get_document_base_data(base_name: str, organisation_id: int):
-	select_query = sql.SQL(
-		"SELECT id, name, attributes from document_bases "
-		"WHERE name = (%s) AND organisation_id = (%s)"
-	)
-
-	result = execute_query(select_query, (base_name, organisation_id))
+	query = sql.SQL("""SELECT b.id, b.name,
+		(CASE WHEN b.attributes::text = '[]' THEN '{}' ELSE b.attributes::text END)::text[],
+		b.last_modified, d.id, d.name, d.content
+		FROM document_bases b LEFT JOIN documents d ON d.documentbaseid = b.id
+			AND d.organisationid = b.organisation_id AND d.content IS NOT NULL
+		WHERE b.name = %s AND b.organisation_id = %s ORDER BY d.id;""")
+	result = execute_query(query, (base_name, organisation_id))
 	if not result:
 		return None
-
-	data = {
-		'id': result[0][0],
-		'name': result[0][1],
-		'attributes': str(result[0][2]).replace('{', '').replace('}', '').split(","),
-		"documents": []
+	base_id, name, attributes, last_modified = result[0][:4]
+	return {
+		"id": base_id,
+		"name": name,
+		"attributes": attributes,
+		"lastModified": last_modified,
+		"documents": [{"id": doc_id, "name": doc_name, "content": content}
+			for *_, doc_id, doc_name, content in result if doc_id is not None]
 	}
-
-	select_documents_query = sql.SQL(
-		"SELECT id, name, content from documents "
-		"WHERE documentbaseid = (%s) AND organisationid = (%s)"
-	)
-
-	result = execute_query(select_documents_query, (data["id"], organisation_id))
-
-	if not result:
-		documents = []
-	else:
-		documents = [
-			{
-				"id": res[0],
-				"name": res[1],
-				"content": res[2]
-			}
-			for res in result if res[2]
-		]
-
-	data["documents"] = documents
-
-	return data
 
 
 @deprecated
@@ -530,21 +510,33 @@ def update_document_content(doc_id: int, new_content, organisation_id: int = Non
 
 
 def compare_and_swap_document_content(doc_id: int, new_bytes: bytes, expected_bytes: bytes,
-		organisation_id: int, user_id: int, base_id: int = None) -> bool:
+		organisation_id: int, user_id: int, base_id: int = None, attributes: list[str] = None) -> bool:
 	"""Replace a standalone BSON snapshot only while its exact loaded bytes remain current."""
 	if not isinstance(new_bytes, bytes) or not isinstance(expected_bytes, bytes):
 		return False
 	try:
+		base_guard = sql.SQL("""(%s IS NULL OR EXISTS (SELECT 1 FROM document_bases b
+			WHERE b.id = %s AND b.organisation_id = d.organisationid))""")
+		base_params = (base_id, base_id)
+		if attributes is not None:
+			base_guard = sql.SQL("EXISTS (SELECT 1 FROM locked_base)")
+			base_params = ()
 		query = sql.SQL("""UPDATE documents d SET content_byte = %s
 			WHERE d.id = %s AND d.organisationid = %s AND d.documentbaseid IS NULL
 			AND d.content IS NULL AND d.content_byte = %s
 			AND EXISTS (SELECT 1 FROM membership m WHERE m.userid = %s
 			AND m.organisationid = d.organisationid AND m.authorisation IN (0, 1, 10))
-			AND (%s IS NULL OR EXISTS (SELECT 1 FROM document_bases b
-			WHERE b.id = %s AND b.organisation_id = d.organisationid))
-			RETURNING d.id;""")
-		result = execute_transaction(query, (new_bytes, doc_id, organisation_id, expected_bytes,
-			user_id, base_id, base_id), commit=True)
+			AND {base_guard} RETURNING d.id""").format(base_guard=base_guard)
+		params = (new_bytes, doc_id, organisation_id, expected_bytes, user_id) + base_params
+		if attributes is not None:
+			query = sql.SQL("""WITH locked_base AS (
+				SELECT id FROM document_bases WHERE id = %s AND organisation_id = %s FOR UPDATE
+			), replaced AS ({snapshot})
+			UPDATE document_bases SET attributes = %s FROM locked_base
+			WHERE document_bases.id = locked_base.id AND EXISTS (SELECT 1 FROM replaced)
+			RETURNING document_bases.id;""").format(snapshot=query)
+			params = (base_id, organisation_id) + params + (attributes,)
+		result = execute_transaction(query, params, commit=True)
 		return isinstance(result, list) and bool(result)
 	except Exception:
 		logger.error("Could not replace document-base snapshot")

@@ -256,44 +256,32 @@ class DocumentBaseLoad(BaseTask):
 class DocumentBaseAddDocument(BaseTask):
 	name = "DocumentBaseAddDocument"
 
-	def run(self, user_id: int, document_name: str, document_content: str, base_name: str, organisation_id: int):
+	def run(self, user_id: int, documents: list[list[str]], base_name: str, organisation_id: int):
 		self.load()
-		api = WannaDB_WebAPI(user_id, base_name, organisation_id)
-		api.load_document_base_from_bson()
-		self.check_api_error(api)
-		api.add_document(Document(document_name, document_content))
-		return self.finish(api, persist=True)
+		api = WannaDB_WebAPI(user_id, base_name, organisation_id, build_query_cache=False)
+		api.mutate_documents(additions=[Document(name, content) for name, content in documents])
+		return self.finish(api)
 
 
 class DocumentBaseRemoveDocument(BaseTask):
 	name = "DocumentBaseRemoveDocument"
 
-	def run(self, user_id: int, document_name: str, base_name: str, organisation_id: int):
+	def run(self, user_id: int, document_name: str, base_name: str, organisation_id: int, document_id: int):
 		self.load()
-		api = WannaDB_WebAPI(user_id, base_name, organisation_id)
-		api.load_document_base_from_bson()
-		self.check_api_error(api)
-		_doc = None
-		for doc in api._document_base.documents:
-			if doc.name == document_name:
-				_doc = doc
-				break
-		if _doc is None:
-			raise Exception(f"Document with name {document_name} not found")
-		api.remove_document(_doc)
-		return self.finish(api, persist=True)
+		api = WannaDB_WebAPI(user_id, base_name, organisation_id, build_query_cache=False)
+		api.mutate_documents(removal=(document_id, document_name))
+		return self.finish(api)
 
 
 class DocumentBaseUpdateDocument(BaseTask):
 	name = "DocumentBaseUpdateDocument"
 
-	def run(self, user_id: int, document_name: str, document_content: str, base_name: str, organisation_id: int):
+	def run(self, user_id: int, document_name: str, document_content: str, base_name: str, organisation_id: int,
+			document_id: int, old_content: str):
 		self.load()
-		api = WannaDB_WebAPI(user_id, base_name, organisation_id)
-		api.load_document_base_from_bson()
-		self.check_api_error(api)
-		api.update_document(Document(document_name, document_content))
-		return self.finish(api, persist=True)
+		api = WannaDB_WebAPI(user_id, base_name, organisation_id, build_query_cache=False)
+		api.mutate_documents(replacement=(document_id, old_content, Document(document_name, document_content)))
+		return self.finish(api)
 
 
 class DocumentBaseAddAttributes(BaseTask):
@@ -312,11 +300,12 @@ class DocumentBaseAddAttributes(BaseTask):
 				raise Exception("Attribute names must be unique!")
 			attributes.append(Attribute(attribute_string))
 
-		api = WannaDB_WebAPI(user_id, base_name, organisation_id)
+		api = WannaDB_WebAPI(user_id, base_name, organisation_id, build_query_cache=False)
 		api.load_document_base_from_bson()
 		self.check_api_error(api)
 		api.add_attributes(attributes)
-		return self.finish(api, persist=True)
+		api.update_document_base_to_bson(update_attributes=True)
+		return self.finish(api)
 
 
 class DocumentBaseUpdateAttributes(BaseTask):
@@ -335,11 +324,12 @@ class DocumentBaseUpdateAttributes(BaseTask):
 				raise Exception("Attribute names must be unique!")
 			attributes.append(Attribute(attribute_string))
 
-		api = WannaDB_WebAPI(user_id, base_name, organisation_id)
+		api = WannaDB_WebAPI(user_id, base_name, organisation_id, build_query_cache=False)
 		api.load_document_base_from_bson()
 		self.check_api_error(api)
 		api.update_attributes(attributes)
-		return self.finish(api, persist=True)
+		api.update_document_base_to_bson(update_attributes=True)
+		return self.finish(api)
 
 
 class DocumentBaseRemoveAttributes(BaseTask):
@@ -358,11 +348,12 @@ class DocumentBaseRemoveAttributes(BaseTask):
 				raise Exception("Attribute names must be unique!")
 			attributes.append(Attribute(attribute_string))
 
-		api = WannaDB_WebAPI(user_id, base_name, organisation_id)
+		api = WannaDB_WebAPI(user_id, base_name, organisation_id, build_query_cache=False)
 		api.load_document_base_from_bson()
 		self.check_api_error(api)
 		api.remove_attributes(attributes)
-		return self.finish(api, persist=True)
+		api.update_document_base_to_bson(update_attributes=True)
+		return self.finish(api)
 
 
 class DocumentBaseForgetMatches(BaseTask):
@@ -438,10 +429,10 @@ class FeedbackTask(BaseTask):
 class DocumentBaseStartRanking(FeedbackTask):
 	name = "DocumentBaseStartRanking"
 
-	def run(self, user_id: int, do_attribute: bool):
+	def run(self, user_id: int, do_attribute: bool, reset: bool = False):
 
 		if do_attribute:
-			self.emit_command(DoAttributeRanking())
+			self.emit_command(DoAttributeRanking(reset))
 		else:
 			self.emit_command(SkipAttributeRanking())
 		return {"ok": True}
@@ -560,12 +551,13 @@ class DocumentBaseNoMatchForDocument(FeedbackTask):
 		"""
 
 		document = Document(document_name, document_text)
-		if nugget is None:
-			nugget = InformationNugget(document=document, start_char=int(start_index), end_char=int(end_index))
-	
-		self.emit_command(no_match(nugget, document, int(start_index), int(end_index)))
-		# no need to update the document base the doc will be saved in the interactive call
+		if nugget == "" and start_index == end_index == 0:
+			self.emit_command(NoMatchFeedback(None, None, document))
+		else:
+			nugget_exist(nugget, document, start_index, end_index)
+			self.emit_command(no_match(nugget, document, start_index, end_index))
 		return {"ok": True}
+
 
 
 def _validate_feedback_span(document: Document, start_index: int, end_index: int):

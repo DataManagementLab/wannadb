@@ -1,9 +1,8 @@
 import abc
 import logging
 import time
-from functools import partial
-from itertools import count
-from typing import Any, Dict, List, Optional, Set
+from bisect import bisect_left, bisect_right
+from typing import Any, Dict, List
 
 import numpy as np
 import torch
@@ -444,165 +443,77 @@ class BERTContextSentenceEmbedder(BaseEmbedder):
             return
         resources.MANAGER.load(self._bert_resource_identifier)
         bert = resources.MANAGER[self._bert_resource_identifier]
-        if bert["device"] is not None:
-            bert["model"].to(bert["device"])
+        device = bert["device"]
+        if device is not None:
+            bert["model"].to(device)
 
-        # Process shared contexts together, retaining only one context's hidden states.
+        # Process shared contexts together, retaining only one window's hidden states.
         context_groups: Dict[str, List[InformationNugget]] = {}
         for nugget in nuggets:
             context_groups.setdefault(nugget[CachedContextSentenceSignal]["text"], []).append(nugget)
         source_context = None
-        source_encodings = {}
-        output_context = None
+        output_window = None
         output = None
+        limit = 512
         for nugget_ix, nugget in enumerate(nugget for group in context_groups.values() for nugget in group):
             self._use_status_callback_for_embedder(status_callback, "nuggets", nugget_ix, len(nuggets))
 
-            context_sentence: str = nugget[CachedContextSentenceSignal]["text"]
-            start_in_context: int = nugget[CachedContextSentenceSignal]["start_char"]
-            end_in_context: int = nugget[CachedContextSentenceSignal]["end_char"]
-
-            device = bert["device"]
+            context = nugget[CachedContextSentenceSignal]
+            context_sentence = context["text"]
+            start_in_context = context["start_char"]
+            end_in_context = context["end_char"]
             if context_sentence != source_context:
+                encoding = bert["tokenizer"](
+                    context_sentence, return_tensors="pt", padding=True, return_offsets_mapping=True
+                )
+                num_tokens = encoding.input_ids.shape[1]
+                token_starts, token_ends = (), ()
+                if num_tokens > limit:
+                    # WordPiece offsets follow the order of tokens in the source.
+                    token_starts, token_ends = zip(*encoding["offset_mapping"][0, 1:-1].tolist())
                 source_context = context_sentence
-                source_encodings = {}
-                output_context = None
-                output = None
+                output_window = None
 
-            def set_arguments(**kwargs):
-                def wrapper(f):
-                    return partial(f, **kwargs)
+            # BERT adds [CLS] and [SEP] around the single input sentence.
+            window_start, window_end = 1, num_tokens - 1
+            if num_tokens > limit:
+                statistics["num_too_many_token_indices"] += 1
+                mention_start = bisect_right(token_ends, start_in_context) + 1
+                mention_end = (bisect_left(token_starts, end_in_context) + 1
+                               if end_in_context > start_in_context else mention_start)
+                capacity = limit - 2
+                mention_length = mention_end - mention_start
+                if mention_length > capacity:
+                    raise RuntimeError(f"Nugget requires {mention_length} tokens, exceeding BERT's {capacity}-token limit")
+                token_indices = range(mention_start, mention_end)
+                centered_start = (mention_start + mention_end - capacity) // 2
+                window_start = max(1, min(centered_start, window_end - capacity))
+                window_end = window_start + capacity
+            else:
+                token_indices = sorted({
+                    encoding.char_to_token(char_ix) for char_ix in range(start_in_context, end_in_context)
+                } - {None})
 
-                return wrapper
-
-            @set_arguments(device=device, tokenizer=bert["tokenizer"])
-            def get_encoding_data_with_limited_tokens_for_context(context_sentence, start_in_context, end_in_context,
-                                                                  device=None, tokenizer=None,
-                                                                  limit=512):
-                """
-                   Encodes the given context_sentence into tokens using the tokenizer
-                   If the number of tokens in the context_sentence exceeds the given limit,
-                   then a shorter context is selected such that the number is at or below the limit.
-
-                   Returns the encoding parameters, the char to token translation function and
-                   the selected context
-                   as (input_ids, token_type_ids, attention_mask, char_to_token, context_sentence)
-                """
-
-                def get_encoding_data(context_sentence, device):
-                    """
-                       Encodes the given context_sentence into tokens using the tokenizer
-                       Returns the encoding parameters and char to token translation function
-                       as (input_ids, token_type_ids, attention_mask, char_to_token)
-                    """
-                    if context_sentence in source_encodings:
-                        return source_encodings[context_sentence]
-                    encoding = tokenizer(
-                        context_sentence, return_tensors="pt", padding=True
-                    )
-
-                    if device is not None:
-                        input_ids = encoding.input_ids.to(device)
-                        token_type_ids = encoding.token_type_ids.to(device)
-                        attention_mask = encoding.attention_mask.to(device)
-                    else:
-                        input_ids = encoding.input_ids
-                        token_type_ids = encoding.token_type_ids
-                        attention_mask = encoding.attention_mask
-
-                    result = input_ids, token_type_ids, attention_mask, encoding.char_to_token
-                    if context_sentence == source_context:
-                        source_encodings[context_sentence] = result
-                    return result
-
-                # Try whole sentence
-                input_ids, token_type_ids, attention_mask, char_to_token = get_encoding_data(context_sentence, device)
-
-                if len(token_type_ids[0]) > limit:
-                    """
-                        The whole sentence is too long after encoding, so find a shorter one that is roughly centered
-                        on the nugget text and contains no more tokens than allowed
-                    """
-                    statistics["num_too_many_token_indices"] += 1
-                    logger.error(f"There are too many token indices in context sentence '{context_sentence}'!")
-
-                    def get_candidate_contexts(context_sentence, start_in_context, end_in_context):
-                        """
-                            Candidate contexts start at the nugget and incrementally add one character at each end.
-                            If one end of the original context is reached, then only the other side is incremented.
-                            Once the other end is reached, all following candidates are just the context_sentence
-                            On first call, yields (None, nugget_text)
-
-                            yields the previous and the next candidate context
-                        """
-                        prev_candidate_context = None
-                        for candidate_start, candidate_end in zip(map(lambda i: max(0, i), count(start_in_context, -1)),
-                                                                  map(lambda i: min(i, len(context_sentence) - 1),
-                                                                      count(end_in_context, 1))):
-                            candidate_context = context_sentence[candidate_start:candidate_end]
-                            yield prev_candidate_context, candidate_context
-                            prev_candidate_context = candidate_context
-
-                    for prev, candidate_context in get_candidate_contexts(context_sentence, start_in_context,
-                                                                          end_in_context):
-                        input_ids, token_type_ids, attention_mask, char_to_token = get_encoding_data(candidate_context,
-                                                                                                     device)
-                        # The condition will be true at some point
-                        # because token_type_ids[0] is monotonically increasing with longer context sentences
-                        # and we know that the whole sentence is above the limit
-                        if len(token_type_ids[0]) > limit:
-                            if prev == None:
-                                """
-                                    context_sentence must contain the nugget, but if the nugget itself is too big,
-                                    then raise RuntimeError, because we can't shrink the context_sentence enough
-                                """
-                                error = f"Nugget '{candidate_context}' contains too many tokens ({len(token_type_ids[0])} > {limit})"
-                                logger.error(error)
-                                raise RuntimeError(error)
-                            context_sentence = prev
-                            input_ids, token_type_ids, attention_mask, char_to_token = get_encoding_data(
-                                context_sentence, device)
-                            break
-                    logger.error(
-                        f"==> Using shorter context sentence '{context_sentence}' with {len(token_type_ids[0])} token indices "
-                        f"for nugget '{context_sentence[start_in_context:end_in_context]}'.")
-
-                return input_ids, token_type_ids, attention_mask, char_to_token, context_sentence
-
-            input_ids, token_type_ids, attention_mask, char_to_token, context_sentence = get_encoding_data_with_limited_tokens_for_context(
-                context_sentence,
-                start_in_context,
-                end_in_context)
-
-            if context_sentence != output_context:
+            if (window_start, window_end) != output_window:
+                model_inputs = {}
+                for name in ("input_ids", "token_type_ids", "attention_mask"):
+                    tensor = encoding[name]
+                    if num_tokens > limit:
+                        tensor = torch.cat((tensor[:, :1], tensor[:, window_start:window_end], tensor[:, -1:]), dim=1)
+                    model_inputs[name] = tensor.to(device) if device is not None else tensor
                 with torch.inference_mode():
-                    outputs = bert["model"](
-                        input_ids=input_ids,
-                        token_type_ids=token_type_ids,
-                        attention_mask=attention_mask
-                    )
-                torch_output = outputs[0].detach()
-                if device is not None:
-                    torch_output = torch_output.cpu()
-                output = torch_output[0].numpy()
-                output_context = context_sentence
+                    output = bert["model"](**model_inputs)[0].detach().cpu()[0].numpy()
+                output_window = (window_start, window_end)
 
-            # determine which tokens make up the nugget
-            token_indices_set: Set[int] = set()
-            for char_ix in range(start_in_context, end_in_context):
-                token_ix: Optional[int] = char_to_token(char_ix)
-                if token_ix is not None:
-                    token_indices_set.add(token_ix)
-            token_indices: List[int] = list(token_indices_set)
-
-            if token_indices == []:
+            if not token_indices:
                 statistics["num_no_token_indices"] += 1
                 logger.error(f"There are no token indices for nugget '{nugget.text}' in '{context_sentence}'!")
                 logger.error("==> Using all-zero embedding vector.")
                 embedding: np.ndarray = np.zeros_like(output[0])
             else:
-                # compute the embedding as the mean of the nugget's tokens' embeddings
-                embedding: np.ndarray = np.mean(output[token_indices], axis=0)
+                # Offsets refer to the original context. Shift token indices into the model's window.
+                window_indices = [ix - window_start + 1 for ix in token_indices]
+                embedding = np.mean(output[window_indices], axis=0)
             nugget[ContextSentenceEmbeddingSignal] = ContextSentenceEmbeddingSignal(embedding)
 
     def to_config(self) -> Dict[str, Any]:

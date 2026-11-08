@@ -377,70 +377,30 @@ def document_base_attribute_add():
 	if _token is None:
 		return make_response({"error": "invalid token"}, 401)
 
-	attributes_strings = attributes_string.split(",")
-
-	attributes = []
-	for att in attributes_strings:
-		attributes.append(Attribute(att))
-
-	statistics = Statistics(False)
-	user_id = _token.id
-
-	#attributesDump = pickle.dumps(attributes)
-	#statisticsDump = pickle.dumps(statistics)
-	task = DocumentBaseAddAttributes().apply_async(args=(user_id, attributes_strings,
-												  base_name, organisation_id))
-
+	attributes_strings = _attribute_names(attributes_string)
+	task = DocumentBaseAddAttributes().apply_async(args=(_token.id, attributes_strings, base_name, organisation_id))
 	return make_response({'task_id': task.id}, 202)
+
+
+def _attribute_names(value):
+	if isinstance(value, str):
+		value = value.split(",") if value else []
+	if (not isinstance(value, list) or any(
+		not isinstance(name, str) or not name.strip() or '\0' in name for name in value
+	) or len(set(value)) != len(value)):
+		abort(make_response({"error": "Attribute names must be nonempty and unique."}, 400))
+	return value
+
 
 @core_routes.route('/document_base/attributes/update', methods=['POST'])
 def document_base_attribute_update():
-	"""
-    Endpoint for update the attributes of a document base.
-
-	This endpoint is used to update the attributes of a document base from a list of attributes.
-
-	Header:
-	{
-		"Authorization": "your_authorization_token"
-	}
-    Example Form Payload:
-    {
-        "organisationId": "your_organisation_id",
-        "baseName": "your_document_base_name",
-        "attributes": "plane,car,bike"
-    }
-    """
 	form = request.get_json()
-	authorization = request.headers.get("Authorization")
-	organisation_id = form.get("organisationId")
 	base_name = form.get("baseName")
-	attributes_string = form.get("attributes")
-	if (organisation_id is None or base_name is None or attributes_string is None
-			or authorization is None):
+	if base_name is None or "attributes" not in form:
 		return make_response({"error": "missing parameters"}, 400)
-	_token = tokenDecode(authorization)
-
-	if _token is None:
-		return make_response({"error": "invalid token"}, 401)
-
-	attributes_strings = attributes_string.split(",")
-
-	#attributes = []
-	#for att in attributes_string:
-	#	attributes.append(Attribute(att))
-	#
-	#statistics = Statistics(False)
- 
-	user_id = _token.id
-
+	attributes = _attribute_names(form["attributes"])
 	task = DocumentBaseUpdateAttributes().apply_async(args=(
-     														user_id, 
-                   											attributes_strings,
-												  			base_name, 
-                 											organisation_id
-                            							))
-
+		g.auth_token.id, attributes, base_name, g.organisation_id))
 	return make_response({'task_id': task.id}, 202)
 
 
@@ -508,8 +468,9 @@ def document_base_do_current_attribute():
 	form = request.get_json()
 	authorization = request.headers.get("Authorization")
 	do_attribute = form.get("doAttribute")
-	if type(do_attribute) is not bool:
-		return make_response({"error": "doAttribute must be a boolean"}, 400)
+	reset = form.get("reset", False)
+	if type(do_attribute) is not bool or type(reset) is not bool or (reset and not do_attribute):
+		return make_response({"error": "Invalid ranking or reset option"}, 400)
 	if authorization is None or do_attribute is None:
 		return make_response({"error": "missing parameters"}, 400)
 
@@ -520,7 +481,7 @@ def document_base_do_current_attribute():
 
 	user_id = _token.id
 
-	task = DocumentBaseStartRanking().apply_async(args=(user_id, do_attribute), **g.feedback_options)
+	task = DocumentBaseStartRanking().apply_async(args=(user_id, do_attribute, reset), **g.feedback_options)
 
 	return make_response({'task_id': task.id}, 202)
 
@@ -720,46 +681,16 @@ def confirm_no_match_in_document():
     }
     """
 	form = request.get_json()
-
-	authorization = request.headers.get("Authorization")
-	organisation_id: Optional[int] = form.get("organisationId")
+	name, content = form.get("documentName"), form.get("documentContent")
 	base_name = form.get("baseName")
-
-	document_name = form.get("documentName")
-	document_content = form.get("documentContent")
-	nugget_text = form.get("nuggetText")
-	start_index: Optional[int]  = int(form.get("startIndex")) if form.get("startIndex") is not None else None
-	end_index: Optional[int]  = int(form.get("endIndex")) if form.get("endIndex") is not None else None
-
-	if (organisation_id is None
-     	or base_name is None
-      	or document_name is None
-       	or document_content is None
-        or authorization is None
-        or nugget_text is None
-        or start_index is None
-        or end_index is None):
-
-		return make_response({"error": "missing parameters"}, 400)
-
-	_token = tokenDecode(authorization)
-
-	if _token is None:
-		return make_response({"error": "invalid token"}, 401)
-
-	user_id = _token.id
-
+	text = form.get("nuggetText")
+	start, end = form.get("startIndex"), form.get("endIndex")
+	if not isinstance(name, str) or not name or not isinstance(content, str) or base_name is None:
+		return make_response({"error": "missing document or base"}, 400)
+	if not (text == "" and type(start) is int and type(end) is int and start == end == 0):
+		start, end = _selection_span(content, start, end, text)
 	task = DocumentBaseNoMatchForDocument().apply_async(args=(
-     													user_id,
-                                                      	base_name,
-                                                       	organisation_id,
-                                                        document_name,
-                                                        document_content,
-                                                        nugget_text,
-                                                        start_index,
-                                                        end_index
-                                                    ), **g.feedback_options)
-
+		g.auth_token.id, base_name, g.organisation_id, name, content, text, start, end), **g.feedback_options)
 	return make_response({'task_id': task.id}, 202)
 
 

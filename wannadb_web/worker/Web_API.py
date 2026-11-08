@@ -6,11 +6,13 @@ import re
 import time
 from typing import Optional, Any
 
+from psycopg2 import DatabaseError
+
 import wannadb
 from wannadb import resources
 from wannadb.configuration import Pipeline
 from wannadb.data.data import Attribute, Document, DocumentBase, InformationNugget
-from wannadb.data.signals import CachedDistanceSignal
+from wannadb.data.signals import CachedDistanceSignal, SentenceStartCharsSignal
 from wannadb.interaction import EmptyInteractionCallback, InteractionCallback
 from wannadb.matching.distance import SignalsMeanDistance
 from wannadb.matching.matching import RankingBasedMatcher
@@ -26,7 +28,7 @@ from wannadb.status import StatusCallback
 from wannadb_web.SQLite.Cache_DB import SQLiteCacheDBWrapper
 from wannadb_web.postgres.queries import get_document_by_name, get_document_by_name_and_content, compare_and_swap_document_content, \
 	get_document
-from wannadb_web.postgres.transactions import add_document
+from wannadb_web.postgres.transactions import add_document, mutate_base_documents
 from wannadb_web.Redis.RedisCache import SessionState, get_signal_scope
 from wannadb_web.worker.data import decode_feedback, MultiNuggetsMatchFeedback, DoAttributeRanking, ReloadDocumentBase, Signals, CustomMatchFeedback, NuggetMatchFeedback, NoMatchFeedback, SkipAttributeRanking, StopMatching
 
@@ -75,9 +77,9 @@ class WannaDB_WebAPI:
 					elif isinstance(msg, MultiNuggetsMatchFeedback):
 						return {"message": "multi-match", "nuggets": msg.nuggets, "not_a_match": msg.not_a_match}
 					elif isinstance(msg, NoMatchFeedback):
-						return {"message": "no-match-in-document", "nugget": msg.nugget, "not_a_match": msg.not_a_match}
+						return {"message": "no-match-in-document", "nugget": msg.nugget, "not_a_match": msg.not_a_match, "document": msg.document}
 					elif isinstance(msg, DoAttributeRanking):
-						return {"message": "start-ranking", "do-attribute": True}
+						return {"message": "start-ranking", "do-attribute": True, "reset": msg.reset}
 					elif isinstance(msg, SkipAttributeRanking):
 						return {"message": "skip-ranking", "do-attribute": False}
 					elif isinstance(msg, ReloadDocumentBase):
@@ -189,24 +191,7 @@ class WannaDB_WebAPI:
 				logger.error("Document base is inconsistent!")
 				self.signals.error.emit(Exception("Document base is inconsistent!"))
 
-			# load default preprocessing phase
-			self.signals.status.emit("Loading preprocessing phase...")
-
-			# noinspection PyTypeChecker
-			preprocessing_phase = Pipeline([
-				StanzaNERExtractor(),
-				SpacyNERExtractor("SpacyEnCoreWebLg"),
-				ContextSentenceCacher(),
-				CopyNormalizer(),
-				OntoNotesLabelParaphraser(),
-				SplitAttributeNameLabelParaphraser(do_lowercase=True, splitters=[" ", "_"]),
-				SBERTLabelEmbedder("SBERTBertLargeNliMeanTokensResource"),
-				SBERTTextEmbedder("SBERTBertLargeNliMeanTokensResource"),
-				BERTContextSentenceEmbedder("BertLargeCasedResource"),
-				RelativePositionEmbedder()
-			])
-
-			preprocessing_phase(document_base, EmptyInteractionCallback(), self.status_callback, statistics)
+			self._preprocess(document_base, statistics)
 
 			self.document_base = document_base
 
@@ -219,6 +204,26 @@ class WannaDB_WebAPI:
 			logger.error(str(e))
 			self.signals.error.emit(e)
 			raise e
+
+	def _preprocess(self, document_base: DocumentBase, statistics: Statistics):
+		# load default preprocessing phase
+		self.signals.status.emit("Loading preprocessing phase...")
+
+		# noinspection PyTypeChecker
+		preprocessing_phase = Pipeline([
+			StanzaNERExtractor(),
+			SpacyNERExtractor("SpacyEnCoreWebLg"),
+			ContextSentenceCacher(),
+			CopyNormalizer(),
+			OntoNotesLabelParaphraser(),
+			SplitAttributeNameLabelParaphraser(do_lowercase=True, splitters=[" ", "_"]),
+			SBERTLabelEmbedder("SBERTBertLargeNliMeanTokensResource"),
+			SBERTTextEmbedder("SBERTBertLargeNliMeanTokensResource"),
+			BERTContextSentenceEmbedder("BertLargeCasedResource"),
+			RelativePositionEmbedder()
+		])
+
+		preprocessing_phase(document_base, EmptyInteractionCallback(), self.status_callback, statistics)
 
 	def load_document_base_from_bson(self):
 		logger.debug("Called function 'load_document_base_from_bson'.")
@@ -286,14 +291,15 @@ class WannaDB_WebAPI:
 			self.signals.error.emit(e)
 			raise e
 
-	def update_document_base_to_bson(self):
+	def update_document_base_to_bson(self, *, update_attributes=False):
 		if self._document_id is None or self._expected_bson is None:
 			self.signals.error.emit(RuntimeError("PERSISTENCE_FAILED"))
 			raise RuntimeError("Document base has no persistence snapshot")
 		serialized = self.document_base.to_bson()
 		scope = get_signal_scope()
+		metadata = {"attributes": [attribute.name for attribute in self.document_base.attributes]} if update_attributes else {}
 		status = compare_and_swap_document_content(self.document_id, serialized, self._expected_bson,
-			self.organisation_id, self.user_id, scope["base_id"])
+			self.organisation_id, self.user_id, scope["base_id"], **metadata)
 		if not status:
 			self.signals.error.emit(RuntimeError("STALE_BASE"))
 			raise RuntimeError("The base changed or access was lost; reload before editing again.")
@@ -354,118 +360,45 @@ class WannaDB_WebAPI:
 			self.signals.error.emit(e)
 			raise e
 
-	def add_document(self, document: Document):
-		logger.debug("Called function 'add_document'.")
-		if not isinstance(document, Document):
-			logger.error("Document must be of type Document!")
-			self.signals.error.emit(Exception("Document must be of type Document!"))
-			return
+	def mutate_documents(self, *, additions=(), replacement=None, removal=None):
+		documents = list(additions)
+		if replacement is not None:
+			documents.append(replacement[2])
+		scope = get_signal_scope()
 		try:
-			self.document_base.documents.append(document)
-			self.sqLiteCacheDBWrapper.cache_db.add_document_to_input_docs_table(INPUT_DOCS_COLUMN_NAME, len(self.document_base.documents) - 1, document.name)
-			logger.info(f"Document '{document.name}' added to document base.")
-			self.signals.status.emit(f"Document '{document.name}' added to document base.")
-		except Exception as e:
-			logger.error(str(e))
-			self.signals.error.emit(e)
-			raise e
-
-	def remove_document(self, document: Document):
-		logger.debug("Called function 'remove_document'.")
-		if not isinstance(document, Document):
-			logger.error("Document must be of type Document!")
-			self.signals.error.emit(Exception("Document must be of type Document!"))
-			return
-		try:
-			if document in self.document_base.documents:
-				idx = self.document_base.documents.index(document)
-				self.document_base.documents.remove(document)
-				self.sqLiteCacheDBWrapper.cache_db.remove_document_from_input_docs_table(INPUT_DOCS_COLUMN_NAME, idx)
-				logger.info(f"Document '{document.name}' removed from document base.")
-				self.signals.status.emit(f"Document '{document.name}' removed from document base.")
-			else:
-				logger.error(f"Document '{document.name}' not found in document base.")
-				self.signals.error.emit(Exception(f"Document '{document.name}' not found in document base."))
-		except Exception as e:
-			logger.error(str(e))
-			self.signals.error.emit(e)
-			raise e
-
-	def update_document(self, document: Document):
-		logger.debug("Called function 'update_document'.")
-		if not isinstance(document, Document):
-			logger.error("Document must be of type Document!")
-			self.signals.error.emit(Exception("Document must be of type Document!"))
-			return
-		try:
-			for ix, doc in enumerate(self.document_base.documents):
-				if doc.name == document.name:
-					_old_doc = self.document_base.documents[ix]
-					self.document_base.documents[ix] = document
-					self.sqLiteCacheDBWrapper.cache_db.update_document_in_input_docs_table(INPUT_DOCS_COLUMN_NAME, ix, document.name)
-					logger.info(f"Document '{document.name}' updated in document base.")
-					self.signals.status.emit(f"Document '{document.name}' updated in document base.")
-					return
-			logger.error(f"Document '{document.name}' not found in document base.")
-			self.signals.error.emit(Exception(f"Document '{document.name}' not found in document base."))
-		except Exception as e:
-			logger.error(str(e))
-			self.signals.error.emit(e)
-			raise e
-
-	def add_attribute(self, attribute: Attribute):
-		logger.debug("Called function 'add_attribute'.")
-		if attribute in self.document_base.attributes:
-			logger.error("Attribute name already exists!")
-			self.signals.error.emit(Exception("Attribute name already exists!"))
-		else:
-			self.document_base.attributes.append(attribute)
-			logger.debug(f"Attribute '{attribute.name}' added.")
-			self.signals.status.emit(f"Attribute '{attribute.name}' added.")
-			self.sqLiteCacheDBWrapper.cache_db.create_table_by_name(attribute.name)
+			if documents:
+				self._preprocess(DocumentBase(documents, []), Statistics(False))
+			self.document_base = mutate_base_documents(self.document_base_name, scope["base_id"],
+				self.organisation_id, self.user_id, additions=additions, replacement=replacement, removal=removal)
+		except DatabaseError:
+			logger.exception("Could not commit document changes")
+			self.signals.error.emit(RuntimeError("PERSISTENCE_FAILED"))
+			raise
+		except (PermissionError, RuntimeError, ValueError) as error:
+			self.signals.error.emit(error)
+			raise
+		self.signals.status.emit("Changes saved.")
 
 	def add_attributes(self, attributes: list[Attribute]):
-		logger.debug("Called function 'add_attributes'.")
-		already_existing_names = []
-		for attribute in attributes:
-			if attribute in self.document_base.attributes:
-				logger.info(f"Attribute name '{attribute.name}' already exists and was thus not added.")
-				already_existing_names.append(attribute)
-			elif attribute is None:
-				logger.info("Attribute name must not be empty and was thus ignored.")
-			else:
-				self.document_base.attributes.append(attribute)
-				self.sqLiteCacheDBWrapper.cache_db.create_table_by_name(attribute.name)
-				logger.debug(f"Attribute '{attribute.name}' added.")
-		return already_existing_names
+		existing = {attribute.name for attribute in self.document_base.attributes}
+		self.update_attributes(self.document_base.attributes + [
+			attribute for attribute in attributes if attribute.name not in existing
+		])
 
 	def remove_attributes(self, attributes: list[Attribute]):
-		logger.debug("Called function 'remove_attribute'.")
-		for attribute in attributes:
-			if attribute in self.document_base.attributes:
-				for document in self.document_base.documents:
-					if attribute.name in document.attribute_mappings.keys():
-						del document.attribute_mappings[attribute.name]
-
-				for old_attribute in self.document_base.attributes:
-					if old_attribute == attribute:
-						self.document_base.attributes.remove(attribute)
-						break
-				self.signals.status.emit(f"Attribute '{attribute.name}' removed.")
-			else:
-				logger.error("Attribute name does not exist!")
-				self.signals.error.emit(Exception("Attribute name does not exist!"))
+		names = {attribute.name for attribute in attributes}
+		remaining = [attribute for attribute in self.document_base.attributes if attribute.name not in names]
+		if len(self.document_base.attributes) - len(remaining) != len(names):
+			raise ValueError("Attribute name does not exist!")
+		self.update_attributes(remaining)
 
 	def update_attributes(self, attributes: list[Attribute]):
-		logger.debug("Called function 'update_attributes'.")
-		self.document_base.attributes.clear()
-		for attribute in attributes:
-			if attribute is None:
-				logger.info("Attribute name must not be empty and was thus ignored.")
-			else:
-				self.document_base.attributes.append(attribute)
-				self.sqLiteCacheDBWrapper.cache_db.create_table_by_name(attribute.name)
-				logger.debug(f"Attribute '{attribute.name}' added.")
+		existing = {attribute.name: attribute for attribute in self.document_base.attributes}
+		names = {attribute.name for attribute in attributes}
+		for document in self.document_base.documents:
+			for removed in document.attribute_mappings.keys() - names:
+				del document.attribute_mappings[removed]
+		self.document_base.attributes[:] = [existing.get(attribute.name, attribute) for attribute in attributes]
 
 	def forget_matches_for_attribute(self, attribute: Attribute):
 		logger.debug("Called function 'forget_matches_for_attribute'.")
@@ -521,6 +454,12 @@ class WannaDB_WebAPI:
 				self.signals.error.emit(Exception("Document base not loaded!"))
 				return
 
+			# Older add/edit tasks could save raw documents without preprocessing.
+			raw_documents = [document for document in self.document_base.documents
+				if SentenceStartCharsSignal.identifier not in document.signals]
+			if raw_documents:
+				self._preprocess(DocumentBase(raw_documents, []), Statistics(False))
+
 			# load default matching phase
 			self.signals.status.emit("Loading matching phase...")
 
@@ -565,7 +504,8 @@ class WannaDB_WebAPI:
 								RelativePositionEmbedder()
 							]
 						),
-						find_additional_nuggets=find_additional_nuggets
+						find_additional_nuggets=find_additional_nuggets,
+						allow_manual_without_candidates=True
 					)
 				]
 			)
