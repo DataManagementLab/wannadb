@@ -3,7 +3,11 @@ import os
 
 from flask import Flask, make_response, render_template_string
 from flask_cors import CORS
+from kombu.exceptions import OperationalError
+from redis.exceptions import RedisError
+from werkzeug.exceptions import RequestEntityTooLarge
 #from flask_debugtoolbar import DebugToolbarExtension
+from wannadb_web.limits import MAX_REQUEST_BYTES, MAX_UPLOAD_FILES, QueueFullError, WorkLimitError
 from wannadb_web.log_filters import _RedactLegacyTaskStatus
 from wannadb_web.routing.core import core_routes
 from wannadb_web.routing.user import user_management
@@ -18,6 +22,8 @@ app = Flask(__name__)
 # Combine Flask and Celery configs
 app.config.from_mapping(
 	SECRET_KEY=os.environ.get('WANNA_DB_JWT_SECRET'),
+	MAX_CONTENT_LENGTH=MAX_REQUEST_BYTES,
+	MAX_FORM_PARTS=MAX_UPLOAD_FILES + 16,
 	DEBUG=False,
 	DEBUG_TB_ENABLED=False,
 	DEBUG_TB_PROFILER_ENABLED=False,
@@ -42,6 +48,27 @@ CORS(
     origins=["http://localhost:3000"],
     resources={r"/*": {"origins": "http://localhost:3000"}}
 )
+
+
+@app.errorhandler(RequestEntityTooLarge)
+def request_too_large(error):
+	return make_response({"error": "The request exceeds the upload size or form part limit."}, 413)
+
+
+@app.errorhandler(WorkLimitError)
+def work_limit_reached(error):
+	return make_response({"error": str(error)}, 413)
+
+
+@app.errorhandler(QueueFullError)
+def queue_full(error):
+	return make_response({"error": "The worker queue is full. Try again shortly."}, 429)
+
+
+@app.errorhandler(RedisError)
+@app.errorhandler(OperationalError)
+def queue_unavailable(error):
+	return make_response({"error": "The task service is temporarily unavailable."}, 503)
 
 
 @app.errorhandler(404)

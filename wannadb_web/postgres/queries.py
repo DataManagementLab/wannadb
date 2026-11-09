@@ -6,6 +6,7 @@ from deprecated import deprecated
 import bcrypt
 from psycopg2 import sql
 
+from wannadb_web.limits import MAX_BASE_BYTES, MAX_BASE_DOCUMENTS, MAX_FILE_BYTES, WorkLimitError
 from wannadb_web.postgres.util import connectPG, execute_query, execute_transaction
 
 logger = logging.getLogger(__name__)
@@ -60,17 +61,24 @@ def documents_available_for_base(document_ids: list[int], user_id: int, organisa
 
 def get_creation_documents(document_ids: list[int], user_id: int, organisation_id: int):
 	"""Read the exact inputs to preprocess. The commit checks these same rows again."""
+	if isinstance(document_ids, list) and len(document_ids) > MAX_BASE_DOCUMENTS:
+		raise WorkLimitError(f"Select at most {MAX_BASE_DOCUMENTS} documents.")
 	if not _valid_document_ids(document_ids):
 		return None
-	query = sql.SQL("""SELECT d.id, d.name, d.content FROM documents d WHERE d.id = ANY(%s)
+	query = sql.SQL("""SELECT d.id, d.name,
+		CASE WHEN octet_length(d.content) <= %s AND sum(octet_length(d.content)) OVER () <= %s
+			THEN d.content END AS content
+		FROM documents d WHERE d.id = ANY(%s)
 		AND d.organisationid = %s AND d.documentbaseid IS NULL AND d.content IS NOT NULL
 		AND EXISTS (SELECT 1 FROM membership m WHERE m.userid = %s
 			AND m.organisationid = d.organisationid AND m.authorisation IN (0, 1, 10));""")
-	result = execute_query(query, (document_ids, organisation_id, user_id))
+	result = execute_query(query, (MAX_FILE_BYTES, MAX_BASE_BYTES, document_ids, organisation_id, user_id))
 	if result is False:
 		raise RuntimeError("Could not load documents for base creation.")
 	if not isinstance(result, list) or len(result) != len(document_ids):
 		return None
+	if any(content is None for _, _, content in result):
+		raise WorkLimitError("The selected text exceeds the per-document or document base byte limit.")
 	by_id = {row[0]: row for row in result}
 	return [by_id[document_id] for document_id in document_ids]
 

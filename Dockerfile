@@ -1,4 +1,4 @@
-FROM python:3.11-slim-bullseye as build
+FROM python:3.11-slim-bookworm AS build
 
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONDONTWRITEBYTECODE=1
@@ -8,8 +8,6 @@ RUN apt-get update \
   && apt-get install -y --no-install-recommends build-essential \
   # psycopg2 dependencies
   && apt-get install -y --no-install-recommends libpq-dev \
-  # Additional dependencies
-  && apt-get install -y --no-install-recommends telnet netcat \
   # PyQt6 / Qt runtime dependencies
   && apt-get install -y --no-install-recommends \
   netcat-openbsd \
@@ -41,60 +39,48 @@ RUN pip install --use-pep517 -r core-requirements.txt
 COPY backend-requirements.txt backend-requirements.txt
 RUN pip install --use-pep517 -r backend-requirements.txt
 
-##################################
-##      do not change above     ##
-##      changes above cause     ##
-##      long loading times      ##
-##################################
-
-# Install the spaCy model before starting the backend.
-# Replace en_core_web_sm with the value of cls._spacy_package_str.
-ARG SPACY_MODEL=en_core_web_sm
-RUN python -m spacy download "${SPACY_MODEL}"
-ARG SPACY_MODEL=en_core_web_trf
-RUN python -m spacy download "${SPACY_MODEL}"
+# The web pipeline uses the large English spaCy model.
 ARG SPACY_MODEL=en_core_web_lg
 RUN python -m spacy download "${SPACY_MODEL}"
-ARG SPACY_MODEL=en_core_web_md
-RUN python -m spacy download "${SPACY_MODEL}"
+RUN pip install --use-pep517 pytest
+
+FROM build AS dev-models
+
+# The desktop and experimental pipelines use these additional assets.
+RUN python -m spacy download en_core_web_sm \
+  && python -m spacy download en_core_web_trf \
+  && python -m spacy download en_core_web_md
 
 RUN mkdir -p models/spacy models/fasttext models/glove
 
 COPY scripts/prepare_models.py /home/wannadb/scripts/prepare_models.py
 RUN python /home/wannadb/scripts/prepare_models.py
 
-# Download and extract the GloVe vectors
 COPY scripts/prepare_glove.py /home/wannadb/scripts/prepare_glove.py
 RUN python /home/wannadb/scripts/prepare_glove.py
 
+FROM dev-models AS worker
 
-# Run tests
-RUN pip install --use-pep517 pytest
-# RUN pytest
-
-
-FROM build as worker
-
-
-FROM build as worker-prod
-
-# copy the rest
-COPY . .
-
-
-FROM build as dev
-
-# CMD ["python", "app.py"]
-
-# Note: only the last CMD in a Docker stage is used.
-# CMD ["mypy", "--install-types", "--non-interactive"]
-
+FROM dev-models AS dev
 CMD ["flask", "--app", "app", "--no-debug", "run", "--host", "0.0.0.0", "--port", "8000"]
 
+FROM build AS worker-prod
 
-FROM worker-prod as prod
+# Seed the caches used by the web preprocessing and matching pipelines.
+RUN python -c "import stanza; stanza.download('en', model_dir='models/stanza', processors='tokenize,mwt,pos,ner')"
+RUN python -c "from transformers import BertModel, BertTokenizerFast; \
+    BertTokenizerFast.from_pretrained('bert-large-cased', cache_dir='models/transformers'); \
+    BertModel.from_pretrained('bert-large-cased', cache_dir='models/transformers')"
+RUN python -c "from sentence_transformers import SentenceTransformer; \
+    SentenceTransformer('bert-large-nli-mean-tokens', cache_folder='models/sentence-transformers', device='cpu')"
+ENV HF_HUB_OFFLINE=1
 
-RUN chmod +x wannadb_web/entrypoint.sh
+COPY app.py celery_app.py ./
+COPY wannadb ./wannadb
+COPY wannadb_parsql ./wannadb_parsql
+COPY wannadb_ui ./wannadb_ui
+COPY wannadb_web ./wannadb_web
+COPY tests ./tests
 
-# Define the entrypoint.sh
+FROM worker-prod AS prod
 CMD ["sh", "./wannadb_web/entrypoint.sh"]

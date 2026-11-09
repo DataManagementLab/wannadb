@@ -1,9 +1,15 @@
 import logging
+from hashlib import sha256
 from typing import Optional
 
 from wannadb_parsql.cache_db import SQLiteCacheDB
 
 logger = logging.getLogger(__name__)
+
+
+def _attribute_table_name(attribute_name: str) -> str:
+	"""Keep display names separate from internal tables and SQLite's case folding."""
+	return "attribute_" + sha256(attribute_name.encode("utf-8")).hexdigest()
 
 
 class SQLiteCacheDBWrapper:
@@ -24,6 +30,12 @@ class SQLiteCacheDBWrapper:
 		if self.__cache_db is None:
 			raise Exception("Cache db is not initialized")
 		return self.__cache_db
+
+	def create_attribute_table(self, attribute_name: str):
+		self.cache_db.create_table_by_name(_attribute_table_name(attribute_name))
+
+	def delete_attribute_table(self, attribute_name: str):
+		self.cache_db.delete_table(_attribute_table_name(attribute_name))
 
 	def delete(self):
 		self.cache_db.conn.close()

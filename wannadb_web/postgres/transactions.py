@@ -11,6 +11,7 @@ from wannadb_web.util import Token, Authorisation, tokenDecode
 from wannadb_web.postgres.queries import (
 	check_password, document_base_snapshot_query, document_base_snapshot_scope, get_organisation_authorisation,
 )
+from wannadb_web.limits import validate_corpus
 from wannadb_web.postgres.util import connectPG, execute_transaction
 
 logger: logging.Logger = logging.getLogger(__name__)
@@ -765,6 +766,8 @@ def mutate_base_documents(base_name, base_id, organisation_id, user_id, *,
 				raise ValueError("The document was already deleted. Reload the base.")
 			base.documents[:] = [doc for doc in base.documents if doc.name != name]
 
+		if additions or replacement is not None:
+			validate_corpus(document.text for document in base.documents)
 		cur.execute("UPDATE documents SET content_byte = %s WHERE id = %s;",
 			(base.to_bson(), snapshot_id))
 		if cur.rowcount != 1:
@@ -854,7 +857,7 @@ def delete_document_base_data(base_name: str, organisation_id: int, user_id: int
 		return False
 
 
-def add_feedback(document_id: int, user_id: int, positive: bool, attribute: str, feedback_start: int = None, feedback_end: int = None, organisation_id: int = None):
+def add_feedback(document_id: int, user_id: int, positive: bool, attribute: str, feedback_start: int = None, feedback_end: int = None, organisation_id: int = None, *, expected_content: str = None, base_name: str = None):
 	"""
 	Add a public feedback for a certain attribute to a document.
  
@@ -874,18 +877,27 @@ def add_feedback(document_id: int, user_id: int, positive: bool, attribute: str,
 	:rtype: int
 	"""
 	try:
-		insert_data_query = sql.SQL(
-			"INSERT INTO document_feedback (documentid, userid, positive, attribute, feedback_start, feedback_end) "
-			"SELECT %s, %s, %s, %s, %s, %s WHERE EXISTS (SELECT 1 FROM documents d "
-			"JOIN membership m ON m.organisationid = d.organisationid WHERE d.id = %s AND d.content IS NOT NULL "
-			"AND m.userid = %s AND m.authorisation IN (0, 1, 10) "
-			"AND (%s IS NULL OR d.organisationid = %s)) RETURNING id;"
-		)
+		# Share-lock the source row through the insert. Editing a document then
+		# either invalidates this feedback or makes the old text fail the check.
+		insert_data_query = sql.SQL("""INSERT INTO document_feedback
+			(documentid, userid, positive, attribute, feedback_start, feedback_end)
+			SELECT %s, %s, %s, %s, %s, %s FROM documents d
+			WHERE d.id = %s AND d.content IS NOT NULL
+			AND (%s IS NULL OR d.organisationid = %s)
+			AND (%s IS NULL OR d.content = %s)
+			AND (%s IS NULL OR d.documentbaseid = (
+				SELECT b.id FROM document_bases b WHERE b.name = %s AND b.organisation_id = d.organisationid
+			))
+			AND EXISTS (SELECT 1 FROM membership m WHERE m.organisationid = d.organisationid
+				AND m.userid = %s AND m.authorisation IN (0, 1, 10))
+			FOR SHARE OF d RETURNING id;""")
 		data = (document_id, user_id, positive, attribute, feedback_start, feedback_end,
-			document_id, user_id, organisation_id, organisation_id)
+			document_id, organisation_id, organisation_id, expected_content, expected_content, base_name, base_name, user_id)
 		response = execute_transaction(insert_data_query, data, commit=True)
-		if not isinstance(response, list) or not response:
-			return -403
+		if response is False:
+			return -500
+		if not isinstance(response, list) or len(response) != 1:
+			return -409 if expected_content is not None else -403
 		feedback_id = int(response[0][0])
 		return feedback_id
 

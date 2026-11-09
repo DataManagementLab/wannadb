@@ -1,4 +1,3 @@
-import logging
 import os
 
 import redis
@@ -6,19 +5,18 @@ import redis
 CACHE_HOST = os.environ.get("CACHE_HOST", "127.0.0.1")
 CACHE_PORT = int(os.environ.get("CACHE_PORT", 6379))
 CACHE_DB = int(os.environ.get("CACHE_DB", 0))
-CACHE_PASSWORD = int(os.environ.get("CACHE_PASSWORD", 0))
+# Older deployments use 0 to mean that the cache does not require authentication.
+CACHE_PASSWORD = os.environ.get("CACHE_PASSWORD") or None
+if CACHE_PASSWORD == "0":
+	CACHE_PASSWORD = None
 
-logger = logging.getLogger(__name__)
-logger.debug(f"Redis Cache Config - Host: {CACHE_HOST}, Port: {CACHE_PORT}, DB: {CACHE_DB}, Password: {CACHE_PASSWORD}")
 
 def connectRedis():
-	try:
-		redis_client = redis.Redis(
-			host=CACHE_HOST,
-			port=CACHE_PORT,
-			db=CACHE_DB,
-			password=CACHE_PASSWORD,
-		)
-		return redis_client
-	except Exception as e:
-		raise Exception("Redis connection failed because:", e)
+	return redis.Redis(
+		host=CACHE_HOST,
+		port=CACHE_PORT,
+		db=CACHE_DB,
+		password=CACHE_PASSWORD,
+		socket_connect_timeout=5,
+		socket_timeout=5,
+	)

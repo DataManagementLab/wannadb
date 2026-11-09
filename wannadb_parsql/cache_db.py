@@ -28,14 +28,8 @@ def create_connection(db_file):
     return conn
 
 
-def alter_table(conn, entry):
-    if entry["type"] is None:
-        entry["type"] = 'text'
-    sql = ''' ALTER TABLE {} ADD COLUMN {} {}'''.format(entry["table"], entry["attribute"], entry["type"])
-    cur = conn.cursor()
-    cur.execute(sql)
-    conn.commit()
-    return cur.lastrowid
+def _quote_identifier(identifier: str | ColumnToken) -> str:
+    return '"' + str(identifier).replace('"', '""') + '"'
 
 
 class SQLiteCacheDB:
@@ -52,7 +46,7 @@ class SQLiteCacheDB:
 
     def table_empty(self, attribute_name):
         c = self.conn.cursor()
-        c.execute(f'SELECT * FROM {attribute_name}')
+        c.execute(f"SELECT * FROM {_quote_identifier(attribute_name)}")
         return c.fetchone() is None
 
     def create_tables(self, attributes: List[ColumnToken]):
@@ -65,37 +59,13 @@ class SQLiteCacheDB:
     def create_table(self, attribute: ColumnToken):
         if self.conn is None:
             raise EnvironmentError("No database connection found.")
-        data = []
-
-        data.append({"table": attribute.name, "attribute": "value", "type": attribute.datatype})
-        data.append({"table": attribute.name, "attribute": DOCUMENT_ID, "type": "integer"})
-
-        tableName = attribute.name
-
-        try:
-            c = self.conn.cursor()
-            c.execute(
-                ''' SELECT count(name) FROM sqlite_master WHERE type='table' AND name='{}' '''.format(tableName))
-        except Error as e:
-            print(e)
-
-        # if the count is 1, then table exists and does not need to be created again
-        if c.fetchone()[0] != 1:
-
-            sql_create_table = """ CREATE TABLE IF NOT EXISTS {} (
-                                            id integer PRIMARY KEY
-                                        )""".format(tableName)
-
-            try:
-                c = self.conn.cursor()
-                c.execute(sql_create_table)
-            except Error as e:
-                print(e)
-
-            with self.conn:
-                for entry in data:
-                    # Insert the attributes
-                    alter_table(self.conn, entry)
+        table = _quote_identifier(attribute.name)
+        datatype = _quote_identifier(attribute.datatype or "text")
+        self.conn.execute(f"""CREATE TABLE IF NOT EXISTS {table} (
+            id integer PRIMARY KEY,
+            value {datatype},
+            {DOCUMENT_ID} integer
+        )""")
 
     def create_input_docs_table(self, table_name, documents):
         self.create_table_by_name(table_name)
@@ -106,21 +76,21 @@ class SQLiteCacheDB:
 
     def remove_document_from_input_docs_table(self, table_name, document_id):
         c = self.conn.cursor()
-        c.execute(f''' DELETE FROM {table_name} WHERE {DOCUMENT_ID} = ? ''', (document_id,))
+        c.execute(f''' DELETE FROM {_quote_identifier(table_name)} WHERE {DOCUMENT_ID} = ? ''', (document_id,))
         self.conn.commit()
 
     def update_document_in_input_docs_table(self, table_name, document_id, document_name):
         c = self.conn.cursor()
-        c.execute(f''' UPDATE {table_name} SET value = ? WHERE {DOCUMENT_ID} = ? ''', (Path(document_name).name, document_id))
+        c.execute(f''' UPDATE {_quote_identifier(table_name)} SET value = ? WHERE {DOCUMENT_ID} = ? ''', (Path(document_name).name, document_id))
         self.conn.commit()
 
     def delete_tables(self, attributes: List[ColumnToken]):
         c = self.conn.cursor()
         for attribute in attributes:
-            c.execute(''' DELETE FROM {}  '''.format(attribute.name))
+            c.execute(f"DELETE FROM {_quote_identifier(attribute.name)}")
 
     def delete_table(self, attribute):
-        self.conn.execute(f"DROP TABLE IF EXISTS {attribute}")
+        self.conn.execute(f"DROP TABLE IF EXISTS {_quote_identifier(attribute)}")
 
     def execute_queries(self, *queries) -> List[pd.DataFrame]:
         res = []
@@ -140,21 +110,16 @@ class SQLiteCacheDB:
         return res
 
     def store_many(self, attr, iter: Generator[tuple[int, Any], None, None]):
-        self.conn.executemany(f"INSERT INTO {attr}({DOCUMENT_ID}, value) VALUES (?, ?)", iter)
+        self.conn.executemany(f"INSERT INTO {_quote_identifier(attr)}({DOCUMENT_ID}, value) VALUES (?, ?)", iter)
 
     def store_and_split_entry(self, data):
         for doc_idx, item in enumerate(data):
-
-            question_marks = ",".join(["?"] * 2)
-            attrs = []
-            val = []
             for attribute, value in item.items():
-                attrs = [DOCUMENT_ID, "value"]
-                val = [doc_idx, value]
-                sql = ' INSERT INTO ' + attribute + "(" + ",".join(attrs) + ")" + ' VALUES(' + question_marks + ')'
-
-                cur = self.conn.cursor()
-                cur.execute(sql, val)
+                table = _quote_identifier(attribute)
+                self.conn.execute(
+                    f"INSERT INTO {table}({DOCUMENT_ID}, value) VALUES (?, ?)",
+                    (doc_idx, value),
+                )
                 self.conn.commit()
 
     def drop_all_and_reconnect(self):

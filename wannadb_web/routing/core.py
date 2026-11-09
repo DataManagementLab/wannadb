@@ -36,6 +36,7 @@ from wannadb_web.postgres.transactions import add_feedback, delete_document_base
 
 from flask import Blueprint, make_response, request, g, abort
 from wannadb_web.Redis.RedisCache import TaskAccess, SessionState
+from wannadb_web.limits import MAX_BASE_DOCUMENTS, QueueFullError, WorkLimitError, validate_attribute_count
 from wannadb_web.util import tokenDecode
 from wannadb_web.worker.data import Signals
 
@@ -176,8 +177,12 @@ def create_document_base():
 		return make_response({"error": "A document base name and attributes are required."}, 400)
 
 	attributes = _attribute_names(form["attributes"])
+	if not attributes:
+		return make_response({"error": "Enter at least one attribute."}, 400)
 	if isinstance(document_ids, str):
 		document_ids = [_positive_id(part.strip()) for part in document_ids.split(",")]
+	if isinstance(document_ids, list) and len(document_ids) > MAX_BASE_DOCUMENTS:
+		raise WorkLimitError(f"Select at most {MAX_BASE_DOCUMENTS} documents.")
 	if (not isinstance(document_ids, list) or not document_ids
 		or any(type(doc_id) is not int or _positive_id(doc_id) is None for doc_id in document_ids)
 		or len(document_ids) != len(set(document_ids))):
@@ -198,6 +203,8 @@ def create_document_base():
 		task = CreateDocumentBase().apply_async(args=(user_id, document_ids, attributes, base_name, organisation_id))
 	except PermissionError:
 		return make_response({"error": "Document base access denied."}, 403)
+	except QueueFullError:
+		raise
 	except Exception as error:
 		logger.warning("Could not enqueue document base creation (%s)", type(error).__name__)
 		return make_response({"error": "Could not queue creation. Check the document base list before retrying."}, 503)
@@ -361,6 +368,7 @@ def _attribute_names(value):
 		not isinstance(name, str) or not name.strip() or '\0' in name for name in value
 	) or len(set(value)) != len(value)):
 		abort(make_response({"error": "Attribute names must be nonempty and unique."}, 400))
+	validate_attribute_count(len(value))
 	return value
 
 
@@ -429,6 +437,7 @@ def task_status(task_id: str):
 			"CREATE_ACCESS_DENIED": "Document base access denied.",
 			"CREATE_FAILED": "Could not prepare or save the document base. You can retry creation.",
 			"CREATE_INVALID": "Check the selected documents and attribute names.",
+			"TASK_LIMIT": "The worker reached its processing time limit. Retry with less work.",
 		}
 		signals["error"] = error_messages.get(signals["error"], signals["error"])
 	if command and command.get("state") == "rejected":
@@ -721,73 +730,34 @@ def stop_feedback():
 
 @core_routes.route('/document_base/feedback/public', methods=['POST'])
 def add_public_feedback():
-	"""
-	Endpoint to add public feedback for a document.
-
-	header: {
-		"Authorization": "your_authorization_token"
-	}
-	Example Form Payload:
-	{
-		"organisationId": "your_organisation_id",
-		"documentName": "your_document_name",
-		"documentContent": "your_document_content",
-		"nuggetText": "nugget_as_text",
-		"startIndex": "start_index_of_nugget",
-		"endIndex": "end_index_of_nugget",
-		"isPositive": true
-	}
-	"""
+	"""Save document feedback, using half-open Unicode code-point offsets for a span."""
 	form = request.get_json()
+	name, content = form.get("documentName"), form.get("documentContent")
+	attribute, positive = form.get("attribute"), form.get("isPositive")
+	if (not isinstance(name, str) or not name or not isinstance(content, str)
+		or not isinstance(attribute, str) or not attribute.strip() or '\0' in attribute
+		or type(positive) is not bool):
+		return make_response({"error": "invalid document feedback"}, 400)
 
-	authorization = request.headers.get("Authorization")
-	organisation_id = int(form.get("organisationId")) if form.get("organisationId") is not None else None
-	attribute = form.get("attribute")
- 
-	document_name = form.get("documentName")
-	document_content = form.get("documentContent")
+	start, end, text = form.get("startIndex"), form.get("endIndex"), form.get("nuggetText")
+	if start is not None or end is not None or text is not None:
+		start, end = _selection_span(content, start, end, text)
 
-	start_index: Optional[int]  = int(form.get("startIndex")) if form.get("startIndex") is not None else None
-	end_index: Optional[int]  = int(form.get("endIndex")) if form.get("endIndex") is not None else None
-	is_positive: bool = form.get("isPositive")
-
-	if (organisation_id is None
-	 	or attribute is None
-		or authorization is None
-		or is_positive is None
-		or document_name is None
-		or document_content is None):
-
-
-		return make_response({"error": "missing parameters"}, 400)
-
-	_token = tokenDecode(authorization)
-
-	if _token is None:
-		return make_response({"error": "invalid token"}, 401)
-
-	user_id = _token.id
- 
+	user_id = g.auth_token.id
+	base_name = form.get("baseName")
 	document_id, _, _ = get_document_by_name_and_content(
-		document_name,
-		document_content,
-		user_id, organisation_id=organisation_id, base_name=form.get("baseName")
-	)
+		name, content, user_id, organisation_id=g.organisation_id, base_name=base_name)
 	if document_id is None:
 		return make_response({"error": "document not found"}, 404)
- 
-	feedback_id = add_feedback(
-    	document_id=int(document_id),
-     	user_id=user_id,
-      	positive=is_positive,
-       	attribute=attribute,
-        feedback_start=start_index,
-        feedback_end=end_index, organisation_id=organisation_id
-	)
- 
-	if feedback_id < 0:
-		return make_response({"error": "An error occured!"}, -feedback_id)
 
+	feedback_id = add_feedback(
+		document_id=document_id, user_id=user_id, positive=positive, attribute=attribute,
+		feedback_start=start, feedback_end=end, organisation_id=g.organisation_id,
+		expected_content=content, base_name=base_name)
+	if feedback_id == -409:
+		return make_response({"error": "The document changed or feedback conflicted. Reload before retrying."}, 409)
+	if feedback_id < 0:
+		return make_response({"error": "Could not save document feedback."}, -feedback_id)
 	return make_response({'feedback_id': feedback_id}, 200)
 
 @core_routes.route('/document_base/feedback/public/get', methods=['POST'])

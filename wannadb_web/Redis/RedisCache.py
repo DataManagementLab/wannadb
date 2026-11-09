@@ -4,6 +4,7 @@ import json
 from contextvars import ContextVar
 
 from wannadb_web.Redis import util
+from wannadb_web.limits import QueueFullError
 
 logger = logging.getLogger(__name__)
 
@@ -75,6 +76,38 @@ class RedisCache:
 		"""Close the Redis connection for the user-specific space."""
 		self.redis_client.close()
 		self.redis_client = None
+
+
+class TaskAdmission:
+	"""Bound the number of waiting and running tasks in each worker queue."""
+	def __init__(self, queue: str, user_id: int, task_id: str):
+		self.redis = util.connectRedis()
+		self.key = f"wannadb:task-admission:{queue}"
+		self.member = f"{user_id}:{task_id}"
+
+	def reserve(self, maximum: int, seconds: int) -> bool:
+		script = """
+local now = tonumber(redis.call('TIME')[1])
+redis.call('ZREMRANGEBYSCORE', KEYS[1], '-inf', tostring(now))
+if redis.call('ZSCORE', KEYS[1], ARGV[1]) then return 0 end
+if redis.call('ZCARD', KEYS[1]) >= tonumber(ARGV[2]) then return -1 end
+local seconds = tonumber(ARGV[3])
+redis.call('ZADD', KEYS[1], tostring(now + seconds), ARGV[1])
+if redis.call('TTL', KEYS[1]) < seconds then
+  redis.call('EXPIRE', KEYS[1], ARGV[3])
+end
+return 1
+"""
+		result = self.redis.eval(script, 1, self.key, self.member, maximum, seconds)
+		if result == -1:
+			raise QueueFullError("The worker queue is full.")
+		return result == 1
+
+	def release(self):
+		try:
+			self.redis.zrem(self.key, self.member)
+		except Exception as error:
+			logger.warning("Task admission release failed. error_type=%s", type(error).__name__)
 
 
 class TaskAccess:

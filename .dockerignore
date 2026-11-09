@@ -3,3 +3,12 @@
 LICENSE.md
 README.md
 venv/
+.venv/
+**/__pycache__/
+.pytest_cache/
+tmp/
+models/
+.env
+.env.*
+**/.env
+**/.env.*

@@ -27,6 +27,7 @@ from wannadb_web.SQLite.Cache_DB import SQLiteCacheDBWrapper
 from wannadb_web.postgres.queries import get_document_base_snapshot, get_document_by_name_and_content, compare_and_swap_document_content, \
 	get_document
 from wannadb_web.postgres.transactions import DocumentBaseCreationConflict, create_document_base_with_snapshot, mutate_base_documents
+from wannadb_web.limits import validate_attribute_count, validate_corpus
 from wannadb_web.Redis.RedisCache import SessionState, get_signal_scope
 from wannadb_web.worker.data import decode_feedback, MultiNuggetsMatchFeedback, DoAttributeRanking, ReloadDocumentBase, Signals, CustomMatchFeedback, NuggetMatchFeedback, NoMatchFeedback, SkipAttributeRanking, StopMatching
 
@@ -203,6 +204,8 @@ class WannaDB_WebAPI:
 		return base_id
 
 	def _preprocess(self, document_base: DocumentBase, statistics: Statistics):
+		validate_corpus(document.text for document in document_base.documents)
+		validate_attribute_count(len(document_base.attributes))
 		# load default preprocessing phase
 		self.signals.status.emit("Loading preprocessing phase...")
 
@@ -239,7 +242,7 @@ class WannaDB_WebAPI:
 			document_base = DocumentBase.from_bson(document)
 			if self.sqLiteCacheDBWrapper is not None:
 				for attribute in document_base.attributes:
-					self.sqLiteCacheDBWrapper.cache_db.create_table_by_name(attribute.name)
+					self.sqLiteCacheDBWrapper.create_attribute_table(attribute.name)
 				self.sqLiteCacheDBWrapper.cache_db.create_input_docs_table(INPUT_DOCS_COLUMN_NAME, document_base.documents)
 
 			self.document_base = document_base
@@ -350,6 +353,7 @@ class WannaDB_WebAPI:
 		self.update_attributes(remaining)
 
 	def update_attributes(self, attributes: list[Attribute]):
+		validate_attribute_count(len(attributes))
 		existing = {attribute.name: attribute for attribute in self.document_base.attributes}
 		names = {attribute.name for attribute in attributes}
 		for document in self.document_base.documents:
@@ -360,7 +364,7 @@ class WannaDB_WebAPI:
 	def forget_matches_for_attribute(self, attribute: Attribute):
 		logger.debug("Called function 'forget_matches_for_attribute'.")
 
-		self.sqLiteCacheDBWrapper.cache_db.delete_table(attribute.name)
+		self.sqLiteCacheDBWrapper.delete_attribute_table(attribute.name)
 		try:
 			if attribute in self.document_base.attributes:
 				for document in self.document_base.documents:
@@ -378,8 +382,8 @@ class WannaDB_WebAPI:
 	def forget_matches(self):
 		logger.debug("Called function 'forget_matches'.")
 		for attribute in self.document_base.attributes:
-			self.sqLiteCacheDBWrapper.cache_db.delete_table(attribute.name)
-			self.sqLiteCacheDBWrapper.cache_db.create_table_by_name(attribute.name)
+			self.sqLiteCacheDBWrapper.delete_attribute_table(attribute.name)
+			self.sqLiteCacheDBWrapper.create_attribute_table(attribute.name)
 		try:
 			for document in self.document_base.documents:
 				document.attribute_mappings.clear()

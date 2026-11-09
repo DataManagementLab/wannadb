@@ -205,7 +205,7 @@ class StanzaNERPipeline(BaseResource):
         super(StanzaNERPipeline, self).__init__()
         path: str = os.path.join(os.path.dirname(__file__), "..", "models", "stanza")
         self._stanza_ner_pipeline: Pipeline = Pipeline(
-            lang="en", processors="tokenize,mwt,pos,ner", model_dir=path, verbose=False
+            lang="en", processors="tokenize,mwt,pos,ner", model_dir=path, verbose=False, download_method="reuse_resources"
         )
 
     @classmethod

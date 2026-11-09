@@ -8,13 +8,18 @@ from uuid import uuid4
 from typing import Optional, Any, Union
 
 from celery import Task
-from celery.exceptions import TaskPredicate
+from celery.exceptions import SoftTimeLimitExceeded, TaskPredicate
 
 import wannadb.resources
 from wannadb.data.data import Document, Attribute, InformationNugget
 from wannadb.resources import ResourceManager
 from wannadb.statistics import Statistics
-from wannadb_web.Redis.RedisCache import RedisCache, TaskAccess, SessionState, set_signal_scope, get_signal_scope
+from wannadb_web.Redis.RedisCache import RedisCache, TaskAccess, TaskAdmission, SessionState, set_signal_scope, get_signal_scope
+from wannadb_web.limits import (
+	COMPUTE_SECONDS, MATCHING_SECONDS, MAX_BASE_DOCUMENTS, MAX_COMPUTE_TASKS, MAX_FEEDBACK_TASKS,
+	QUEUE_SECONDS, FEEDBACK_QUEUE_SECONDS, FEEDBACK_SECONDS, WorkLimitError,
+	validate_attribute_count, validate_corpus,
+)
 from wannadb_web.postgres.queries import get_creation_documents, get_base_id
 from wannadb_web.worker.Web_API import WannaDB_WebAPI
 from wannadb_web.worker.data import DoAttributeRanking, MultiNuggetsMatchFeedback, ReloadDocumentBase, Signals, NoMatchFeedback, NuggetMatchFeedback, CustomMatchFeedback, SkipAttributeRanking, StopMatching
@@ -36,6 +41,8 @@ class InitManager(Task):
 
 class BaseTask(Task):
 	name = "BaseTask"
+	soft_time_limit = COMPUTE_SECONDS
+	time_limit = COMPUTE_SECONDS + 30
 	@property
 	def _signals(self):
 		scope = get_signal_scope()
@@ -61,6 +68,12 @@ class BaseTask(Task):
 			return super().__call__(*args, **kwargs)
 		except TaskPredicate:
 			raise
+		except SoftTimeLimitExceeded:
+			self._signals.error.emit(RuntimeError("TASK_LIMIT"))
+			raise RuntimeError("TASK_LIMIT") from None
+		except WorkLimitError as error:
+			self._signals.error.emit(error)
+			raise RuntimeError("WORK_LIMIT") from None
 		except Exception as error:
 			# Celery records the raised exception and traceback. Keep library/SQL messages private.
 			logger.error("Task failed. task=%s error_type=%s", self.name, type(error).__name__)
@@ -100,9 +113,25 @@ class BaseTask(Task):
 				scope["base_id"] = get_base_id(scope["base_name"], scope["organisation_id"])
 			if not access.permitted(scope):
 				raise PermissionError("Document base access denied.")
-		access.register(task_id, scope)
-		options.update(argsrepr="[redacted]", kwargsrepr="[redacted]")
-		return super().apply_async(args=args, kwargs=kwargs, task_id=task_id, **options)
+		feedback = isinstance(self, FeedbackTask)
+		queue = "feedback" if feedback else "celery"
+		wait_seconds = FEEDBACK_QUEUE_SECONDS if feedback else QUEUE_SECONDS
+		admission = TaskAdmission(queue, user_id, task_id)
+		reserved = admission.reserve(MAX_FEEDBACK_TASKS if feedback else MAX_COMPUTE_TASKS,
+			wait_seconds + self.time_limit + 30)
+		try:
+			if not reserved and access.task(task_id) is None:
+				raise ValueError("The task is being submitted. Retry shortly.")
+			access.register(task_id, scope)
+			if not reserved:
+				return self.AsyncResult(task_id=task_id)
+			options.setdefault("expires", wait_seconds)
+			options.update(argsrepr="[redacted]", kwargsrepr="[redacted]")
+			return super().apply_async(args=args, kwargs=kwargs, task_id=task_id, **options)
+		except Exception:
+			if reserved:
+				admission.release()
+			raise
 
 	def before_start(self, task_id, args, kwargs):
 		set_signal_scope()
@@ -148,6 +177,9 @@ class BaseTask(Task):
 			logger.warning("Task session finalization failed. task=%s error_type=%s", self.name, type(error).__name__)
 		finally:
 			set_signal_scope()
+			user_id = kwargs.get("user_id", args[0] if args else None)
+			if user_id is not None:
+				TaskAdmission("feedback" if isinstance(self, FeedbackTask) else "celery", user_id, task_id).release()
 
 	@staticmethod
 	def load():
@@ -215,14 +247,17 @@ class CreateDocumentBase(BaseTask):
 	def run(self, user_id: int, document_ids: list[int], attributes_strings: list[str],
 			base_name: str, organisation_id: int):
 		signals = self._signals
+		if isinstance(document_ids, list) and len(document_ids) > MAX_BASE_DOCUMENTS:
+			raise WorkLimitError(f"Select at most {MAX_BASE_DOCUMENTS} documents.")
 		if (not isinstance(document_ids, list) or not document_ids or
 			any(type(doc_id) is not int or not 0 < doc_id <= 9223372036854775807 for doc_id in document_ids) or
-			len(set(document_ids)) != len(document_ids) or not isinstance(attributes_strings, list) or
+			len(set(document_ids)) != len(document_ids) or not isinstance(attributes_strings, list) or not attributes_strings or
 			any(not isinstance(name, str) or not name.strip() or "\0" in name for name in attributes_strings) or
 			len(set(attributes_strings)) != len(attributes_strings)):
 			signals.error.emit(RuntimeError("CREATE_INVALID"))
 			raise ValueError("Invalid document or attribute selection.")
 
+		validate_attribute_count(len(attributes_strings))
 		signals.status.emit("Reading documents.")
 		if get_base_id(base_name, organisation_id) is not None:
 			signals.error.emit(RuntimeError("CREATE_CONFLICT"))
@@ -402,6 +437,8 @@ class DocumentBaseForgetMatchesForAttribute(BaseTask):
 
 class DocumentBaseInteractiveTablePopulation(BaseTask):
 	name = "DocumentBaseInteractiveTablePopulation"
+	soft_time_limit = MATCHING_SECONDS
+	time_limit = MATCHING_SECONDS + 30
 	track_started = False  # STARTED below means the base is loaded, not just dequeued.
 
 	def run(self, user_id: int, base_name: str, organisation_id: int):
@@ -410,6 +447,8 @@ class DocumentBaseInteractiveTablePopulation(BaseTask):
 		api = WannaDB_WebAPI(user_id, base_name, organisation_id, build_query_cache=False)
 		api.load_document_base_from_bson()
 		self.check_api_error(api)
+		validate_corpus(document.text for document in api.document_base.documents)
+		validate_attribute_count(len(api.document_base.attributes))
 		# Preserve F08 readiness: this task's base is loaded before STARTED.
 		self.update(State.STARTED)
 		try:
@@ -424,6 +463,8 @@ class DocumentBaseInteractiveTablePopulation(BaseTask):
 class FeedbackTask(BaseTask):
 	# Keep feedback runnable while compute workers wait for user input.
 	queue = "feedback"
+	soft_time_limit = FEEDBACK_SECONDS - 15
+	time_limit = FEEDBACK_SECONDS
 
 	def emit_command(self, feedback):
 		record = self._signals.match_feedback.emit(feedback)

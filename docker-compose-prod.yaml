@@ -12,8 +12,10 @@ services:
     env_file:
       - wannadb_web/.env/.dev
     depends_on:
-      - postgres
-      - redis
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     networks:
       - mynetwork
 
@@ -21,55 +23,60 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-      target: worker
+      target: worker-prod
     tty: true
-    command: ["celery", "-A", "celery_app", "worker", "-l", "info", "-Q", "celery"]
+    command: ["celery", "-A", "celery_app", "worker", "-l", "info", "--concurrency=1", "-Q", "celery"]
     env_file:
       - wannadb_web/.env/.dev
-    volumes:
-      - ./:/home/wannadb
     networks:
       - mynetwork
     depends_on:
-      - wannadb
-      - redis
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
 
   feedback-worker:
     build:
       context: .
       dockerfile: Dockerfile
-      target: worker
+      target: worker-prod
     tty: true
     command: ["celery", "-A", "celery_app", "worker", "-l", "info", "--concurrency=1", "--prefetch-multiplier=1", "-Q", "feedback"]
     env_file:
       - wannadb_web/.env/.dev
-    volumes:
-      - ./:/home/wannadb
     networks:
       - mynetwork
     depends_on:
-      - wannadb
-      - redis
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
 
   flower:
     build:
       context: .
       dockerfile: Dockerfile
-      target: worker
+      target: worker-prod
     tty: true
-    command: ['celery', '-A', 'celery_app', 'flower']
+    profiles: ["monitoring"]
+    command:
+      - sh
+      - -ec
+      - |
+        : "$${FLOWER_BASIC_AUTH:?Set FLOWER_BASIC_AUTH to username:password}"
+        exec celery -A celery_app flower
+    environment:
+      FLOWER_MAX_TASKS: "1000"
     env_file:
       - wannadb_web/.env/.dev
-    volumes:
-      - ./:/home/wannadb
     networks:
       - mynetwork
     ports:
       - "127.0.0.1:5555:5555"
     depends_on:
-      - wannadb
-      - redis
-
+      redis:
+        condition: service_healthy
 
   postgres:
     image: postgres:16
@@ -83,10 +90,20 @@ services:
       - "127.0.0.1:5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", 'pg_isready -h 127.0.0.1 -U "$${POSTGRES_USER:-postgres}" -d "$$POSTGRES_DB"']
+      interval: 5s
+      timeout: 5s
+      retries: 12
 
   redis:
     image: redis:alpine
     container_name: redis-container
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli ping | grep -qx PONG"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
     ports:
       - "127.0.0.1:6379:6379"
     networks:

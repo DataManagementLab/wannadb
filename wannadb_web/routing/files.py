@@ -1,6 +1,7 @@
 from flask import Blueprint, request, make_response, abort, g
 from flask_cors import cross_origin
 
+from wannadb_web.limits import MAX_FILE_BYTES, MAX_UPLOAD_FILES, WorkLimitError, validate_document_text
 from wannadb_web.worker.tasks import DocumentBaseAddDocument, DocumentBaseRemoveDocument, DocumentBaseUpdateDocument
 from wannadb_web.postgres.queries import delete_document_content, get_base_id, get_document, get_document_bases_for_organisation, get_document_by_name, get_documents_for_organisation, get_document_scope, get_organisation_authorisation
 
@@ -43,6 +44,8 @@ def _require_organisation(value):
 def upload_files():
     
 	files = request.files.getlist('file')
+	if len(files) > MAX_UPLOAD_FILES:
+		raise WorkLimitError(f"Upload at most {MAX_UPLOAD_FILES} files at once.")
 	form = request.form
 	organisation_id = _require_organisation(form.get("organisationId"))
 	base_name = form.get("baseName")
@@ -68,21 +71,26 @@ def upload_files():
 			error = "The file needs a valid name."
 		else:
 			try:
-				content = file.stream.read().decode('utf-8')
+				data = file.stream.read(MAX_FILE_BYTES + 1)
+				if len(data) > MAX_FILE_BYTES:
+					raise WorkLimitError(f"File exceeds the {MAX_FILE_BYTES}-byte limit.")
+				content = data.decode('utf-8')
+				if '\0' in content:
+					raise ValueError("File contains a null character.")
+				validate_document_text(content)
 			except UnicodeDecodeError:
 				error = f"{filename}: file must contain UTF-8 text"
+			except (ValueError, WorkLimitError) as reason:
+				error = f"{filename}: {reason}"
 			else:
-				if '\0' in content:
-					error = f"{filename}: file contains a null character"
-				elif base_name is not None:
+				if base_name is not None:
 					documents.append([filename, content])
 					continue
-				else:
-					document_id, _ = add_document(filename, content, organisation_id, user_id)
-					if type(document_id) is int and document_id > 0:
-						document_ids.append(document_id)
-						continue
-					error = f"{filename}: could not save file"
+				document_id, _ = add_document(filename, content, organisation_id, user_id)
+				if type(document_id) is int and document_id > 0:
+					document_ids.append(document_id)
+					continue
+				error = f"{filename}: could not save file"
 		errors.append(error)
 		document_ids.append(error)
 
@@ -149,6 +157,10 @@ def update_file_content():
 
 	if not isinstance(newContent, str) or '\0' in newContent:
 		return make_response({'error': 'content must be valid text'}, 400)
+	try:
+		validate_document_text(newContent)
+	except ValueError:
+		return make_response({'error': 'content must be valid UTF-8 text'}, 400)
 	try:
 		doc_id, old_content = get_document_by_name(doc_name, organisation_id, token.id, base_name)
 	except Exception:
@@ -232,6 +244,6 @@ def get_file(_id):
 	if document is None:
 		return make_response(document_ids, 404)
 	if isinstance(document, str):
-		return make_response(document, 200)
+		return make_response(document, 200, {"Content-Type": "text/plain; charset=utf-8"})
 	if isinstance(document, bytes):
 		return make_response(document, 206)

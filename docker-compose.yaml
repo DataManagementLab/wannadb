@@ -13,8 +13,10 @@ services:
         env_file:
             - wannadb_web/.env/.dev
         depends_on:
-            - postgres
-            - redis
+            postgres:
+                condition: service_healthy
+            redis:
+                condition: service_healthy
         volumes:
             - ./:/home/wannadb
         networks:
@@ -34,8 +36,10 @@ services:
         networks:
             - mynetwork
         depends_on:
-            - wannadb
-            - redis
+            wannadb:
+                condition: service_started
+            redis:
+                condition: service_healthy
 
     feedback-worker:
         build:
@@ -51,8 +55,10 @@ services:
         networks:
             - mynetwork
         depends_on:
-            - wannadb
-            - redis
+            wannadb:
+                condition: service_started
+            redis:
+                condition: service_healthy
 
     flower:
         build:
@@ -70,8 +76,10 @@ services:
         ports:
             - '127.0.0.1:5555:5555'
         depends_on:
-            - wannadb
-            - redis
+            wannadb:
+                condition: service_started
+            redis:
+                condition: service_healthy
 
     postgres:
         image: postgres:16
@@ -85,10 +93,20 @@ services:
             - '127.0.0.1:5432:5432'
         volumes:
             - pgdata:/var/lib/postgresql/data
+        healthcheck:
+            test: ['CMD-SHELL', 'pg_isready -U "$${POSTGRES_USER:-postgres}" -d "$${POSTGRES_DB}"']
+            interval: 5s
+            timeout: 3s
+            retries: 12
 
     redis:
         image: redis:alpine
         container_name: redis-container
+        healthcheck:
+            test: ['CMD-SHELL', 'redis-cli ping | grep -qx PONG']
+            interval: 5s
+            timeout: 3s
+            retries: 12
         ports:
             - '127.0.0.1:6379:6379'
         networks:

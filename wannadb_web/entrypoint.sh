@@ -1,10 +1,5 @@
 #!/bin/sh
+set -eu
 
-# Create and activate the virtual environment
-python -m venv venv
-. venv/bin/activate
-export PYTHONPATH="."
-
-pytest
-
-gunicorn -w 4 --bind 0.0.0.0:8000 app:app
+python -m pytest tests
+exec python -m gunicorn -w 4 --bind 0.0.0.0:8000 app:app
