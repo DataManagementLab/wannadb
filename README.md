@@ -206,21 +206,57 @@ The diagram below illustrates the backend application’s Entity-Relationship Di
 
 ## Start the Web-Backend Docker Build
 
-To build and start the production environment, use the following commands:
+### Fresh installation
+
+Configure the existing backend environment file with the PostgreSQL connection settings
+`DATABASE_HOST`, `DATABASE_PORT`, `DATABASE_NAME`, `DATABASE_USER`, and `DATABASE_PASSWORD`.
+The database role must be able to create objects in `public` and own the existing
+WannaDB schema objects during an upgrade.
+
+Start the production stack with:
 
 ```shell
-docker compose -f "docker-compose-prod.yaml" build
-docker compose -f "docker-compose-prod.yaml" up
+docker compose -f docker-compose-prod.yaml up -d --build
 ```
 
-For development purposes, use the following commands:
+For development, run:
 
 ```shell
-docker compose build
-docker compose up
+docker compose up -d --build
 ```
 
-Flask and other services will start automatically.
+The private `migrate` service waits for PostgreSQL, then applies the versioned application
+schema. The web service and both workers wait for the migration to succeed. Check
+`docker compose -f docker-compose-prod.yaml logs migrate` if the services stay stopped.
+
+### Upgrading and restoring a database
+
+1. Finish active jobs and feedback sessions, then stop `wannadb`, `worker`, and
+   `feedback-worker` with the Compose file used for the deployment.
+2. Back up PostgreSQL before an upgrade. To restore a backup, restore it to the configured
+   database before starting the application services.
+3. Remove the previous completed migration container with `docker compose rm -f migrate`,
+   then start with `up -d --build`. Use the same Compose file and project name for both
+   commands. Keep the existing `pgdata` volume. Check the migration log before resuming work.
+
+Migration `0001` creates the public WannaDB tables on a fresh volume. It also adopts
+the unversioned schema created by the previous setup, including installs that lack
+`documents.documentbaseid`, `document_bases.last_modified`, or `document_feedback`.
+Existing rows and IDs are kept. The migration checks the required columns and keys
+before recording the version. An incompatible schema or failed migration leaves the
+transaction rolled back and startup blocked.
+
+Run the same migration as a one-off operation with the application services stopped:
+
+```shell
+docker compose -f docker-compose-prod.yaml build migrate
+docker compose -f docker-compose-prod.yaml run --rm migrate
+```
+
+The job runs `python -m wannadb_web.postgres.migrate`. It serializes concurrent migration
+attempts and records each applied version and checksum in `public.wannadb_schema_migrations`.
+Repeating it against a migrated database is safe. Add a new versioned migration for
+future schema changes.
 
 For more information on the structure of the web server, click [here](https://github.com/lw86ruwo/wannadbBackend/blob/main/WEBSERVER_STRUCTURE.md).
 
@@ -230,4 +266,4 @@ To attach to the container and work within the Docker environment, use the `code
 
 Please note that Git operations require the `gh` command to be installed and authenticated using `gh auth`. Once authenticated, you can work with Git as usual.
 
-A Docker rebuild is only necessary if there have been changes to the dependencies.
+Rebuild production images after source or dependency changes. The development services mount the checkout and need an image rebuild when dependencies change.

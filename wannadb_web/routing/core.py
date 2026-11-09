@@ -31,7 +31,8 @@ import logging
 from uuid import UUID
 from typing import Optional
 
-from wannadb_web.postgres.queries import get_document_base_data, get_document_by_name_and_content, get_feedbacks_for_document, get_document_by_name, get_base_id, get_organisation_authorisation, documents_available_for_base, get_document_ids_for_snapshot
+from bson import decode as decode_bson
+from wannadb_web.postgres.queries import get_document_base_data, get_document_by_name_and_content, get_feedbacks_for_document, get_document_by_name, get_base_id, get_organisation_authorisation, documents_available_for_base, get_document_ids_for_snapshot, get_document_base_snapshot
 from wannadb_web.postgres.transactions import add_feedback, delete_document_base_data
 
 from flask import Blueprint, make_response, request, g, abort
@@ -107,6 +108,12 @@ def authorize_core_request():
 		scope = access.task(view["task_id"])
 		if not access.permitted(scope) or not scope.get("session_id"):
 			return make_response({"error": "task not found"}, 404)
+		if request.args.get("feedbackSession") == "1" and (
+			not scope.get("interactive") or scope.get("session_id") != view["task_id"] or
+			_positive_id(request.args.get("organisationId")) != scope["organisation_id"] or
+			request.args.get("baseName") != scope["base_name"]
+		):
+			return make_response({"error": "interactive session not found"}, 404)
 		g.task_scope = scope
 		return None
 	if endpoint == "task_update":
@@ -138,29 +145,32 @@ def authorize_core_request():
 		g.feedback_scope = scope
 		if endpoint in {"document_base_do_current_attribute", "reload_document_base", "stop_feedback"}:
 			return None
-	organisation_id = _positive_id(view.get("organisation_id", data.get("organisationId")))
+		if endpoint == "confirm_nugget_multi_match":
+			if "organisationId" not in data or "baseName" not in data:
+				return make_response({"error": "an organization and document base are required"}, 400)
+			return None
+	base_scope = request.args if endpoint == "feedback_overview" else data
+	organisation_id = _positive_id(view.get("organisation_id", base_scope.get("organisationId")))
 	if organisation_id is None:
 		return make_response({"error": "invalid organization ID"}, 400)
 	role = get_organisation_authorisation(token.id, organisation_id)
 	if role is None or (endpoint == "delete_document_base" and role not in (0, 1)):
 		return make_response({"error": "organization access denied"}, 403)
 	g.organisation_id = organisation_id
-	base_name = view.get("base_name", data.get("baseName"))
+	base_name = view.get("base_name", base_scope.get("baseName"))
 	if base_name is not None and (not isinstance(base_name, str) or not base_name.strip()):
 		return make_response({"error": "invalid document base name"}, 400)
 	if endpoint != "create_document_base" and base_name is not None:
-		if get_base_id(base_name, organisation_id) is None:
+		base_id = get_base_id(base_name, organisation_id)
+		if base_id is None:
 			return make_response({"error": "document base not found"}, 404)
+		if endpoint == "feedback_overview":
+			g.feedback_overview_scope = (base_name, base_id)
 	# A caller must select documents from the requested organization and base,
 	# even when they also belong to another organization containing the same text.
-	documents = data.get("nuggets") if endpoint == "confirm_nugget_multi_match" else [data] if "documentName" in data else []
-	if not isinstance(documents, list) or (endpoint == "confirm_nugget_multi_match" and not documents):
-		return make_response({"error": "invalid documents"}, 400)
-	for document in documents:
-		if not isinstance(document, dict):
-			return make_response({"error": "invalid document"}, 400)
+	if "documentName" in data:
 		document_id, _, _ = get_document_by_name_and_content(
-			document.get("documentName"), document.get("documentContent"), token.id,
+			data.get("documentName"), data.get("documentContent"), token.id,
 			organisation_id=organisation_id, base_name=base_name)
 		if document_id is None:
 			return make_response({"error": "document not found"}, 404)
@@ -325,6 +335,34 @@ def interactive_document_base():
 	return make_response({'task_id': task.id}, 202)
 
 
+@core_routes.route('/document_base/feedback/overview', methods=['GET'])
+def feedback_overview():
+	"""Return saved attribute progress without starting a worker task."""
+	scope = getattr(g, "feedback_overview_scope", None)
+	if scope is None:
+		return make_response({"error": "a document base is required"}, 400)
+	base_name, base_id = scope
+	snapshot = get_document_base_snapshot(base_name, base_id, g.organisation_id, g.auth_token.id)
+	if snapshot is None:
+		return make_response({"error": "document base snapshot not found"}, 404)
+	base = decode_bson(snapshot[1])
+	documents = base["documents"]
+	document_count = len(documents)
+	attributes = []
+	for attribute in base["attributes"]:
+		name = attribute["name"]
+		mappings = [document["attribute_mappings"][name] for document in documents
+			if name in document["attribute_mappings"]]
+		attributes.append({
+			"name": name, "signals": {}, "populated": bool(document_count) and len(mappings) == document_count,
+			"partial": 0 < len(mappings) < document_count, "nrOfNuggets": sum(map(len, mappings)),
+		})
+	return make_response({
+		"name": base_name, "attributes": attributes, "documentCount": document_count,
+		"nuggetCount": sum(len(document["nuggets"]) for document in documents),
+	}, 200, {"Cache-Control": "no-store"})
+
+
 @core_routes.route('/document_base/attributes/add', methods=['POST'])
 def document_base_attribute_add():
 	"""
@@ -406,11 +444,10 @@ def task_status(task_id: str):
 	include_payload = request.args.get("summary") != "1"
 	include_feedback = request.args.get("feedback") != "0"
 	session = SessionState(user_id, scope["base_id"], scope["session_id"])
+	parent_failed = False
 	if scope.get("command_id"):
 		parent_status = BaseTask().AsyncResult(task_id=scope["session_id"]).status
-		if parent_status in ("FAILURE", "ERROR", "REVOKED") and not session.metadata().get("closed"):
-			# Worker loss can prevent after_return; never leave its accepted commands looking successful.
-			session.close(error="The interactive session stopped before publishing feedback. Reload the base.")
+		parent_failed = parent_status in ("FAILURE", "ERROR", "REVOKED")
 	snapshot = session.snapshot(include_payload=include_payload, include_feedback=include_feedback)
 	signals = Signals(user_id, base_id=scope["base_id"], session_id=scope["session_id"]).to_json(
 		include_payload=include_payload, include_feedback=include_feedback, snapshot=snapshot)
@@ -425,6 +462,11 @@ def task_status(task_id: str):
 	command = session.command(scope["command_id"]) if scope.get("command_id") else None
 	if command is not None:
 		command = {key: command[key] for key in ("command_id", "state", "expected_version", "consumed_version", "published_version", "error") if key in command}
+	if parent_failed and not publication["closed"] and (not command or command["state"] in ("accepted", "consumed")):
+		# Worker loss may prevent cleanup. Report the failed outcome without writing on GET.
+		message = "The interactive session stopped before publishing feedback. Reload the base."
+		command = dict(command or {}, command_id=scope["command_id"], expected_version=scope["expected_version"],
+			state="rejected", error=message)
 	if signals.get("error") == "STALE_BASE":
 		signals["error"] = "This base changed in another session or access was lost. Reload before editing again; no newer changes were overwritten."
 	else:
@@ -461,36 +503,31 @@ def task_update(task_id: str):
 
 @core_routes.route('/document_base/do_current_attribute', methods=['POST'])
 def document_base_do_current_attribute():
-	"""
-    Endpoint for giving feedback on doing the current attribute of a document base.
-
-	Header:
-	{
-		"Authorization": "your_authorization_token"
-	}
-    Example Form Payload:
-    {
-		"do-attribute": true
-    }
-    """
+	"""Start, reset, or skip the exact attribute waiting in this session."""
 	form = request.get_json()
-	authorization = request.headers.get("Authorization")
+	scope = g.feedback_scope
+	if _positive_id(form.get("organisationId")) is None or not isinstance(form.get("baseName"), str):
+		return make_response({"error": "an organization and document base are required"}, 400)
+	attribute = form.get("attribute")
+	if not isinstance(attribute, str) or not attribute.strip():
+		return make_response({"error": "an attribute is required"}, 400)
 	do_attribute = form.get("doAttribute")
 	reset = form.get("reset", False)
 	if type(do_attribute) is not bool or type(reset) is not bool or (reset and not do_attribute):
 		return make_response({"error": "Invalid ranking or reset option"}, 400)
-	if authorization is None or do_attribute is None:
-		return make_response({"error": "missing parameters"}, 400)
-
-	_token = tokenDecode(authorization)
-
-	if _token is None:
-		return make_response({"error": "invalid token"}, 401)
-
-	user_id = _token.id
-
-	task = DocumentBaseStartRanking().apply_async(args=(user_id, do_attribute, reset), **g.feedback_options)
-
+	user_id = g.auth_token.id
+	session = SessionState(user_id, scope["base_id"], scope["session_id"])
+	ranking = DocumentBaseStartRanking()
+	args = (user_id, do_attribute, reset, attribute)
+	replay = ranking.existing_submission(args, **g.feedback_options)
+	if replay is not None:
+		return make_response({'task_id': replay.id}, 202)
+	expected_version = g.feedback_options["expected_version"]
+	publication = session.metadata()
+	if (publication["closed"] or publication["phase"] != "selection" or
+		publication["version"] != expected_version or publication["attribute"] != attribute):
+		return make_response({"error": "This attribute is no longer waiting to start. Refresh the session."}, 409)
+	task = ranking.apply_async(args=args, **g.feedback_options)
 	return make_response({'task_id': task.id}, 202)
 
 
@@ -626,7 +663,7 @@ def confirm_nugget_match():
 @core_routes.route('/document_base/confirm/nugget/multiple', methods=['POST'])
 def confirm_nugget_multi_match():
 	"""
-	Endpoint to confirm multiple match nuggets in a document.
+	Endpoint to confirm one match per selected document.
 
 	Header:
     {
@@ -654,18 +691,46 @@ def confirm_nugget_multi_match():
         ]
     }
 	"""
-	form = request.get_json()
+	nuggets = request.get_json().get("nuggets")
+	if not isinstance(nuggets, list) or not nuggets:
+		return make_response({"error": "select at least one match"}, 400)
+	if len(nuggets) > MAX_BASE_DOCUMENTS:
+		raise WorkLimitError(f"Select matches from at most {MAX_BASE_DOCUMENTS} documents.")
+
 	documents_and_nuggets = []
-	document_names = set()
-	for selected in form["nuggets"]:
+	documents = {}
+	for selected in nuggets:
+		if not isinstance(selected, dict):
+			return make_response({"error": "invalid selection"}, 400)
 		name, content = selected.get("documentName"), selected.get("documentContent")
-		if not isinstance(name, str) or not name or name in document_names:
+		if not isinstance(name, str) or not name or "\0" in name or name in documents:
 			return make_response({"error": "select one match per document"}, 400)
-		document_names.add(name)
 		start, end = _selection_span(content, selected.get("startIndex"), selected.get("endIndex"), selected.get("text"))
+		documents[name] = content
 		documents_and_nuggets.append((name, content, start, end))
-	task = DocumentBaseConfirmMultipleNuggets().apply_async(args=(
-		g.auth_token.id, form.get("baseName"), g.organisation_id, documents_and_nuggets), **g.feedback_options)
+
+	scope = g.feedback_scope
+	user_id = g.auth_token.id
+	args = (user_id, scope["base_name"], scope["organisation_id"], documents_and_nuggets)
+	feedback = DocumentBaseConfirmMultipleNuggets()
+	session = SessionState(user_id, scope["base_id"], scope["session_id"])
+	replay = feedback.existing_submission(args, **g.feedback_options)
+	if replay is not None:
+		return make_response({"task_id": replay.id}, 202)
+	publication = session.metadata()
+	if (publication["closed"] or publication["phase"] != "ranking" or
+		publication["version"] != g.feedback_options["expected_version"]):
+		return make_response({"error": "This session is no longer waiting for this feedback. Refresh the session."}, 409)
+
+	try:
+		matched = get_document_ids_for_snapshot(scope["base_id"], scope["organisation_id"], user_id, documents)
+	except RuntimeError:
+		return make_response({"error": "Could not check the selected documents. Try again."}, 503)
+	# Exact stored-text matches validate the spans without needing the legacy raw row ID.
+	if documents.keys() - matched.keys():
+		return make_response({"error": "document not found"}, 404)
+
+	task = feedback.apply_async(args=args, **g.feedback_options)
 	return make_response({"task_id": task.id}, 202)
 
 @core_routes.route('/document_base/confirm/nugget/none', methods=['POST'])

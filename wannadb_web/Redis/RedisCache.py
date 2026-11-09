@@ -241,6 +241,8 @@ local allowed = publication and ((publication.phase=='selection' and (message=='
 if not publication or publication.closed then record.state='rejected'; record.error='SESSION_CLOSED'
 elseif publication.version ~= record.expected_version then record.state='rejected'; record.error='STALE_VERSION'
 elseif not allowed then record.state='rejected'; record.error='INVALID_PHASE'
+elseif (message=='start-ranking' or message=='skip-ranking') and publication.attribute~=record.payload.attribute then
+ record.state='rejected'; record.error='WRONG_ATTRIBUTE'
 else redis.call('RPUSH',KEYS[7],ARGV[1]); redis.call('EXPIRE',KEYS[7],ARGV[4]) end
 local encoded = cjson.encode(record)
 redis.call('HSET',KEYS[6],ARGV[1],encoded); redis.call('EXPIRE',KEYS[6],ARGV[4])
@@ -266,6 +268,8 @@ while true do
    if not publication or publication.closed then record.state='rejected'; record.error='SESSION_CLOSED'
    elseif publication.version ~= record.expected_version then record.state='rejected'; record.error='STALE_VERSION'
    elseif not allowed then record.state='rejected'; record.error='INVALID_PHASE'
+   elseif (message=='start-ranking' or message=='skip-ranking') and publication.attribute~=record.payload.attribute then
+    record.state='rejected'; record.error='WRONG_ATTRIBUTE'
    else
     record.state='consumed'; record.consumed_version=publication.version
     publication.phase='processing';redis.call('SET',KEYS[1],cjson.encode(publication),'EX',ARGV[1])

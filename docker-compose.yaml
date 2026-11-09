@@ -1,7 +1,7 @@
 version: '3.6'
 services:
     wannadb:
-        build:
+        build: &web-build
             context: .
             dockerfile: Dockerfile
             target: dev
@@ -13,6 +13,8 @@ services:
         env_file:
             - wannadb_web/.env/.dev
         depends_on:
+            migrate:
+                condition: service_completed_successfully
             postgres:
                 condition: service_healthy
             redis:
@@ -21,6 +23,19 @@ services:
             - ./:/home/wannadb
         networks:
             - mynetwork
+
+    migrate:
+        build: *web-build
+        command: ["python", "-m", "wannadb_web.postgres.migrate"]
+        env_file:
+            - wannadb_web/.env/.dev
+        depends_on:
+            postgres:
+                condition: service_healthy
+        networks:
+            - mynetwork
+        volumes:
+            - ./:/home/wannadb:ro
 
     worker:
         build:
@@ -36,6 +51,8 @@ services:
         networks:
             - mynetwork
         depends_on:
+            migrate:
+                condition: service_completed_successfully
             wannadb:
                 condition: service_started
             redis:
@@ -55,6 +72,8 @@ services:
         networks:
             - mynetwork
         depends_on:
+            migrate:
+                condition: service_completed_successfully
             wannadb:
                 condition: service_started
             redis:
@@ -94,7 +113,7 @@ services:
         volumes:
             - pgdata:/var/lib/postgresql/data
         healthcheck:
-            test: ['CMD-SHELL', 'pg_isready -U "$${POSTGRES_USER:-postgres}" -d "$${POSTGRES_DB}"']
+            test: ['CMD-SHELL', 'pg_isready -h 127.0.0.1 -U "$${POSTGRES_USER:-postgres}" -d "$${POSTGRES_DB}"']
             interval: 5s
             timeout: 3s
             retries: 12

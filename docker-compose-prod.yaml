@@ -1,7 +1,7 @@
 version: "3.6"
 services:
   wannadb:
-    build:
+    build: &web-build
       context: .
       dockerfile: Dockerfile
       target: prod
@@ -12,9 +12,22 @@ services:
     env_file:
       - wannadb_web/.env/.dev
     depends_on:
+      migrate:
+        condition: service_completed_successfully
       postgres:
         condition: service_healthy
       redis:
+        condition: service_healthy
+    networks:
+      - mynetwork
+
+  migrate:
+    build: *web-build
+    command: ["python", "-m", "wannadb_web.postgres.migrate"]
+    env_file:
+      - wannadb_web/.env/.dev
+    depends_on:
+      postgres:
         condition: service_healthy
     networks:
       - mynetwork
@@ -31,6 +44,8 @@ services:
     networks:
       - mynetwork
     depends_on:
+      migrate:
+        condition: service_completed_successfully
       postgres:
         condition: service_healthy
       redis:
@@ -48,6 +63,8 @@ services:
     networks:
       - mynetwork
     depends_on:
+      migrate:
+        condition: service_completed_successfully
       postgres:
         condition: service_healthy
       redis:

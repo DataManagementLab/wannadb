@@ -28,6 +28,10 @@ from wannadb_web.worker.util import State
 logger = logging.getLogger(__name__)
 
 
+def _request_fingerprint(task_name, parameters):
+	return hashlib.sha256(json.dumps([task_name, parameters], sort_keys=True).encode()).hexdigest()
+
+
 class InitManager(Task):
 	name = "InitManager"
 
@@ -99,7 +103,7 @@ class BaseTask(Task):
 				raise PermissionError("The feedback belongs to a different document base.")
 			task_id = command_id
 			scope = dict(parent, command_id=command_id, expected_version=expected_version,
-				request_fingerprint=hashlib.sha256(json.dumps([self.name, parameters], sort_keys=True).encode()).hexdigest())
+				request_fingerprint=_request_fingerprint(self.name, parameters))
 		else:
 			task_id = task_id or str(uuid4())
 			organisation_id = parameters.get("organisation_id")
@@ -466,6 +470,20 @@ class FeedbackTask(BaseTask):
 	soft_time_limit = FEEDBACK_SECONDS - 15
 	time_limit = FEEDBACK_SECONDS
 
+	def existing_submission(self, args, *, session_id, expected_version, command_id):
+		"""Return an exact replay only if the feedback worker recorded the command."""
+		parameters = inspect.signature(self.run).bind(*args).arguments
+		user_id = parameters["user_id"]
+		scope = TaskAccess(user_id).task(command_id)
+		if scope is None:
+			return None
+		if (scope.get("session_id") != session_id or scope.get("command_id") != command_id or
+			scope.get("expected_version") != expected_version or
+			scope.get("request_fingerprint") != _request_fingerprint(self.name, parameters)):
+			raise ValueError("Task ID belongs to different request parameters")
+		session = SessionState(user_id, scope["base_id"], session_id)
+		return self.AsyncResult(task_id=command_id) if session.command(command_id) is not None else None
+
 	def emit_command(self, feedback):
 		record = self._signals.match_feedback.emit(feedback)
 		if record.get("state") == "rejected":
@@ -476,12 +494,13 @@ class FeedbackTask(BaseTask):
 class DocumentBaseStartRanking(FeedbackTask):
 	name = "DocumentBaseStartRanking"
 
-	def run(self, user_id: int, do_attribute: bool, reset: bool = False):
+	@staticmethod
+	def payload(do_attribute: bool, reset: bool, attribute: str):
+		feedback = DoAttributeRanking(reset) if do_attribute else SkipAttributeRanking()
+		return dict(feedback.to_json(), attribute=attribute)
 
-		if do_attribute:
-			self.emit_command(DoAttributeRanking(reset))
-		else:
-			self.emit_command(SkipAttributeRanking())
+	def run(self, user_id: int, do_attribute: bool, reset: bool, attribute: str):
+		self.emit_command(self.payload(do_attribute, reset, attribute))
 		return {"ok": True}
 
 
