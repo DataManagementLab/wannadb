@@ -20,6 +20,7 @@ from wannadb_web.limits import (
 	QUEUE_SECONDS, FEEDBACK_QUEUE_SECONDS, FEEDBACK_SECONDS, WorkLimitError,
 	validate_attribute_count, validate_corpus,
 )
+from wannadb_web.postgres.attribute_schema import AttributeSchemaConflict, edit_attribute_schema
 from wannadb_web.postgres.queries import get_creation_documents, get_base_id
 from wannadb_web.worker.Web_API import WannaDB_WebAPI
 from wannadb_web.worker.data import DoAttributeRanking, MultiNuggetsMatchFeedback, ReloadDocumentBase, Signals, NoMatchFeedback, NuggetMatchFeedback, CustomMatchFeedback, SkipAttributeRanking, StopMatching
@@ -93,6 +94,9 @@ class BaseTask(Task):
 			session_id = options.pop("session_id", None)
 			expected_version = options.pop("expected_version", None)
 			command_id = options.pop("command_id", None)
+			durable_outcome = options.pop("durable_outcome", None)
+			if durable_outcome is not None:
+				return self._durable_replay(parameters, durable_outcome, session_id, expected_version, command_id)
 			parent = access.task(session_id) if session_id else None
 			if (not access.permitted(parent) or not parent.get("interactive") or
 				parent.get("session_id") != session_id or not isinstance(command_id, str) or
@@ -329,76 +333,20 @@ class DocumentBaseUpdateDocument(BaseTask):
 		return self.finish(api)
 
 
-class DocumentBaseAddAttributes(BaseTask):
-	name = "DocumentBaseAddAttributes"
-
-	def run(self, user_id: int, attributes_strings: list[str], base_name: str, organisation_id: int):
-		self.load()
-		attributes: list[Attribute] = []
-
-		for attribute_string in attributes_strings:
-			if attribute_string == "":
-				logger.error("Attribute names cannot be empty!")
-				raise Exception("Attribute names cannot be empty!")
-			if attribute_string in [attribute.name for attribute in attributes]:
-				logger.error("Attribute names must be unique!")
-				raise Exception("Attribute names must be unique!")
-			attributes.append(Attribute(attribute_string))
-
-		api = WannaDB_WebAPI(user_id, base_name, organisation_id, build_query_cache=False)
-		api.load_document_base_from_bson()
-		self.check_api_error(api)
-		api.add_attributes(attributes)
-		api.update_document_base_to_bson(update_attributes=True)
-		return self.finish(api)
-
-
 class DocumentBaseUpdateAttributes(BaseTask):
 	name = "DocumentBaseUpdateAttributes"
 
-	def run(self, user_id: int, attributes_strings: list[str], base_name: str, organisation_id: int):
-		self.load()
-		attributes: list[Attribute] = []
-
-		for attribute_string in attributes_strings:
-			if attribute_string == "":
-				logger.error("Attribute names cannot be empty!")
-				raise Exception("Attribute names cannot be empty!")
-			if attribute_string in [attribute.name for attribute in attributes]:
-				logger.error("Attribute names must be unique!")
-				raise Exception("Attribute names must be unique!")
-			attributes.append(Attribute(attribute_string))
-
-		api = WannaDB_WebAPI(user_id, base_name, organisation_id, build_query_cache=False)
-		api.load_document_base_from_bson()
-		self.check_api_error(api)
-		api.update_attributes(attributes)
-		api.update_document_base_to_bson(update_attributes=True)
-		return self.finish(api)
-
-
-class DocumentBaseRemoveAttributes(BaseTask):
-	name = "DocumentBaseRemoveAttributes"
-
-	def run(self, user_id: int, attributes_strings: list[str], base_name: str, organisation_id: int):
-		self.load()
-		attributes: list[Attribute] = []
-
-		for attribute_string in attributes_strings:
-			if attribute_string == "":
-				logger.error("Attribute names cannot be empty!")
-				raise Exception("Attribute names cannot be empty!")
-			if attribute_string in [attribute.name for attribute in attributes]:
-				logger.error("Attribute names must be unique!")
-				raise Exception("Attribute names must be unique!")
-			attributes.append(Attribute(attribute_string))
-
-		api = WannaDB_WebAPI(user_id, base_name, organisation_id, build_query_cache=False)
-		api.load_document_base_from_bson()
-		self.check_api_error(api)
-		api.remove_attributes(attributes)
-		api.update_document_base_to_bson(update_attributes=True)
-		return self.finish(api)
+	def run(self, user_id: int, operations: list[dict], base_name: str, organisation_id: int, expected_version: str):
+		try:
+			edit_attribute_schema(user_id, get_signal_scope()["base_id"], base_name, organisation_id,
+				expected_version, operations)
+		except AttributeSchemaConflict:
+			self._signals.error.emit(RuntimeError("ATTRIBUTES_CHANGED"))
+			raise
+		except ValueError as error:
+			self._signals.error.emit(error)
+			raise
+		return {"ok": True}
 
 
 class DocumentBaseForgetMatches(BaseTask):
@@ -470,9 +418,18 @@ class FeedbackTask(BaseTask):
 	soft_time_limit = FEEDBACK_SECONDS - 15
 	time_limit = FEEDBACK_SECONDS
 
-	def existing_submission(self, args, *, session_id, expected_version, command_id):
-		"""Return an exact replay only if the feedback worker recorded the command."""
+	def _durable_replay(self, parameters, outcome, session_id, expected_version, command_id):
+		if (outcome["session_id"] != session_id or outcome["command_id"] != command_id or
+			outcome["expected_version"] != expected_version or
+			outcome["request_fingerprint"] != _request_fingerprint(self.name, parameters)):
+			raise ValueError("Task ID belongs to different request parameters")
+		return self.AsyncResult(task_id=command_id)
+
+	def existing_submission(self, args, *, session_id, expected_version, command_id, durable_outcome=None):
+		"""Return an exact replay of a recorded command without queuing it again."""
 		parameters = inspect.signature(self.run).bind(*args).arguments
+		if durable_outcome is not None:
+			return self._durable_replay(parameters, durable_outcome, session_id, expected_version, command_id)
 		user_id = parameters["user_id"]
 		scope = TaskAccess(user_id).task(command_id)
 		if scope is None:

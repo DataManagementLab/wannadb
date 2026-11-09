@@ -32,7 +32,10 @@ from uuid import UUID
 from typing import Optional
 
 from bson import decode as decode_bson
+from redis.exceptions import RedisError
 from wannadb_web.postgres.queries import get_document_base_data, get_document_by_name_and_content, get_feedbacks_for_document, get_document_by_name, get_base_id, get_organisation_authorisation, documents_available_for_base, get_document_ids_for_snapshot, get_document_base_snapshot
+from wannadb_web.postgres.attribute_schema import attribute_ids_for_snapshot, get_attribute_schema_version, parse_attribute_edit
+from wannadb_web.postgres.queries import FeedbackOutcomeUnavailable, get_feedback_outcome
 from wannadb_web.postgres.transactions import add_feedback, delete_document_base_data
 
 from flask import Blueprint, make_response, request, g, abort
@@ -41,7 +44,7 @@ from wannadb_web.limits import MAX_BASE_DOCUMENTS, QueueFullError, WorkLimitErro
 from wannadb_web.util import tokenDecode
 from wannadb_web.worker.data import Signals
 
-from wannadb_web.worker.tasks import CreateDocumentBase, BaseTask, DocumentBaseAddAttributes, DocumentBaseConfirmMultipleNuggets, DocumentBaseConfirmNugget, DocumentBaseInteractiveTablePopulation, DocumentBaseLoad, DocumentBaseNoMatchForDocument, DocumentBaseStartRanking, DocumentBaseStopMatching, \
+from wannadb_web.worker.tasks import CreateDocumentBase, BaseTask, DocumentBaseConfirmMultipleNuggets, DocumentBaseConfirmNugget, DocumentBaseInteractiveTablePopulation, DocumentBaseLoad, DocumentBaseNoMatchForDocument, DocumentBaseStartRanking, DocumentBaseStopMatching, \
 	DocumentBaseUpdateAttributes, DocumentBaseGetOrderedNuggets, ReloadDocumentBaseTask
 
 core_routes = Blueprint('core_routes', __name__, url_prefix='/core')
@@ -57,6 +60,13 @@ def invalid_feedback_request(error):
 @core_routes.errorhandler(PermissionError)
 def feedback_access_denied(error):
 	return make_response({"error": str(error)}, 403)
+
+
+@core_routes.errorhandler(FeedbackOutcomeUnavailable)
+@core_routes.errorhandler(RedisError)
+def feedback_status_unavailable(error):
+	return make_response({"error": "Feedback status is temporarily unavailable. Check the result again shortly."},
+		503, {"Cache-Control": "no-store"})
 
 
 def _positive_id(value):
@@ -105,8 +115,20 @@ def authorize_core_request():
 			UUID(view.get("task_id"))
 		except (TypeError, ValueError, AttributeError):
 			return make_response({"error": "task not found"}, 404)
-		scope = access.task(view["task_id"])
-		if not access.permitted(scope) or not scope.get("session_id"):
+		cache_error = None
+		try:
+			scope = access.task(view["task_id"])
+		except RedisError as error:
+			cache_error = error
+			scope = None
+		if scope is None:
+			scope = get_feedback_outcome(token.id, view["task_id"])
+			if scope is None and cache_error is not None:
+				raise cache_error
+			g.feedback_outcome = scope
+		elif not access.permitted(scope):
+			scope = None
+		if scope is None or not scope.get("session_id"):
 			return make_response({"error": "task not found"}, 404)
 		if request.args.get("feedbackSession") == "1" and (
 			not scope.get("interactive") or scope.get("session_id") != view["task_id"] or
@@ -133,21 +155,30 @@ def authorize_core_request():
 			UUID(session_id); UUID(command_id)
 		except (ValueError, TypeError, AttributeError):
 			return make_response({"error": "an explicit feedback session and command ID are required"}, 400)
-		if type(expected_version) is not int or expected_version < 1:
+		if type(expected_version) is not int or not 0 < expected_version < 9223372036854775807:
 			return make_response({"error": "a published session version is required"}, 400)
-		scope = access.task(session_id)
-		if (not access.permitted(scope) or not scope.get("interactive") or scope.get("session_id") != session_id):
-			return make_response({"error": "interactive session not found"}, 404)
+		outcome = get_feedback_outcome(token.id, command_id)
+		if outcome is not None:
+			if outcome["session_id"] != session_id or outcome["expected_version"] != expected_version:
+				return make_response({"error": "command ID belongs to different request parameters"}, 409)
+			scope = outcome
+		else:
+			scope = access.task(session_id)
+			if (not access.permitted(scope) or not scope.get("interactive") or scope.get("session_id") != session_id):
+				return make_response({"error": "interactive session not found"}, 404)
 		if (("organisationId" in data and _positive_id(data["organisationId"]) != scope["organisation_id"]) or
 			("baseName" in data and data["baseName"] != scope["base_name"])):
 			return make_response({"error": "feedback belongs to another document base"}, 403)
 		g.feedback_options = {"session_id": session_id, "expected_version": expected_version, "command_id": command_id}
 		g.feedback_scope = scope
+		if outcome is not None:
+			g.feedback_options["durable_outcome"] = outcome
 		if endpoint in {"document_base_do_current_attribute", "reload_document_base", "stop_feedback"}:
 			return None
-		if endpoint == "confirm_nugget_multi_match":
+		if endpoint == "confirm_nugget_multi_match" or outcome is not None:
 			if "organisationId" not in data or "baseName" not in data:
 				return make_response({"error": "an organization and document base are required"}, 400)
+			g.organisation_id = scope["organisation_id"]
 			return None
 	base_scope = request.args if endpoint == "feedback_overview" else data
 	organisation_id = _positive_id(view.get("organisation_id", base_scope.get("organisationId")))
@@ -342,10 +373,13 @@ def feedback_overview():
 	if scope is None:
 		return make_response({"error": "a document base is required"}, 400)
 	base_name, base_id = scope
-	snapshot = get_document_base_snapshot(base_name, base_id, g.organisation_id, g.auth_token.id)
+	snapshot = get_document_base_snapshot(base_name, base_id, g.organisation_id, g.auth_token.id,
+		include_attribute_schema=True)
 	if snapshot is None:
 		return make_response({"error": "document base snapshot not found"}, 404)
-	base = decode_bson(snapshot[1])
+	_, content, version, stored_ids = snapshot
+	base = decode_bson(content)
+	ids = attribute_ids_for_snapshot(base, version, stored_ids)
 	documents = base["documents"]
 	document_count = len(documents)
 	attributes = []
@@ -354,49 +388,20 @@ def feedback_overview():
 		mappings = [document["attribute_mappings"][name] for document in documents
 			if name in document["attribute_mappings"]]
 		attributes.append({
-			"name": name, "signals": {}, "populated": bool(document_count) and len(mappings) == document_count,
+			"id": ids[name], "name": name, "signals": {}, "populated": bool(document_count) and len(mappings) == document_count,
 			"partial": 0 < len(mappings) < document_count, "nrOfNuggets": sum(map(len, mappings)),
 		})
 	return make_response({
-		"name": base_name, "attributes": attributes, "documentCount": document_count,
+		"name": base_name, "attributes": attributes, "attributeVersion": version, "documentCount": document_count,
 		"nuggetCount": sum(len(document["nuggets"]) for document in documents),
 	}, 200, {"Cache-Control": "no-store"})
 
 
 @core_routes.route('/document_base/attributes/add', methods=['POST'])
 def document_base_attribute_add():
-	"""
-    Endpoint for add attributes to a document base.
-
-	This endpoint is used to add attributes to a document base from a list of attributes.
-
-	Header:
-	{
-		"Authorization": "your_authorization_token"
-	}
-    Example Form Payload:
-    {
-        "organisationId": "your_organisation_id",
-        "baseName": "your_document_base_name",
-        "attributes": "plane,car,bike"
-    }
-    """
 	form = request.get_json()
-	authorization = request.headers.get("Authorization")
-	organisation_id = form.get("organisationId")
-	base_name = form.get("baseName")
-	attributes_string = form.get("attributes")
-	if (organisation_id is None or base_name is None or attributes_string is None
-			or authorization is None):
-		return make_response({"error": "missing parameters"}, 400)
-	_token = tokenDecode(authorization)
-
-	if _token is None:
-		return make_response({"error": "invalid token"}, 401)
-
-	attributes_strings = _attribute_names(attributes_string)
-	task = DocumentBaseAddAttributes().apply_async(args=(_token.id, attributes_strings, base_name, organisation_id))
-	return make_response({'task_id': task.id}, 202)
+	attributes = _attribute_names(form.get("attributes"))
+	return _queue_attribute_edit(form, [{"op": "add", "name": name} for name in attributes])
 
 
 def _attribute_names(value):
@@ -413,12 +418,25 @@ def _attribute_names(value):
 @core_routes.route('/document_base/attributes/update', methods=['POST'])
 def document_base_attribute_update():
 	form = request.get_json()
+	return _queue_attribute_edit(form, form.get("operations"))
+
+
+def _queue_attribute_edit(form, operations):
 	base_name = form.get("baseName")
-	if base_name is None or "attributes" not in form:
-		return make_response({"error": "missing parameters"}, 400)
-	attributes = _attribute_names(form["attributes"])
+	if not base_name:
+		return make_response({"error": "A document base is required."}, 400)
+	try:
+		version, operations = parse_attribute_edit(form.get("expectedVersion"), operations)
+	except ValueError as error:
+		return make_response({"error": str(error)}, 400)
+	try:
+		current_version = get_attribute_schema_version(base_name, g.organisation_id)
+	except RuntimeError:
+		return make_response({"error": "Could not read the attribute schema. Try again."}, 503)
+	if current_version != version:
+		return make_response({"error": "Attributes changed. Reload them before editing again."}, 409)
 	task = DocumentBaseUpdateAttributes().apply_async(args=(
-		g.auth_token.id, attributes, base_name, g.organisation_id))
+		g.auth_token.id, operations, base_name, g.organisation_id, version))
 	return make_response({'task_id': task.id}, 202)
 
 
@@ -429,10 +447,38 @@ def document_base_attribute_update():
 # 															task_id=task.id)}
 
 
+def _recovered_feedback_status(outcome):
+	version = outcome["published_version"]
+	return make_response({
+		"state": "SUCCESS", "meta": {},
+		"session": {"session_id": outcome["session_id"], "version": version, "phase": "finished",
+			"attribute": None, "closed": True, "error": None},
+		"command": {"command_id": outcome["command_id"], "state": "published",
+			"expected_version": outcome["expected_version"], "published_version": version,
+			"snapshot_version": outcome["snapshot_version"], "recovered": True},
+	}, 200, {"Cache-Control": "no-store"})
+
+
 @core_routes.route('/status/<task_id>', methods=['GET'])
 def task_status(task_id: str):
 	user_id = g.auth_token.id
 	scope = g.task_scope
+	outcome = getattr(g, "feedback_outcome", None)
+	if outcome is not None:
+		if not outcome["settled"]:
+			raise FeedbackOutcomeUnavailable("Waiting for feedback publication.")
+		return _recovered_feedback_status(outcome)
+	try:
+		return _read_task_status(task_id, user_id, scope)
+	except RedisError:
+		if scope.get("command_id"):
+			outcome = get_feedback_outcome(user_id, task_id)
+			if outcome is not None and outcome["settled"]:
+				return _recovered_feedback_status(outcome)
+		raise
+
+
+def _read_task_status(task_id, user_id, scope):
 	task = BaseTask().AsyncResult(task_id=task_id)
 	status = task.status
 	created_base_id = None
@@ -444,10 +490,8 @@ def task_status(task_id: str):
 	include_payload = request.args.get("summary") != "1"
 	include_feedback = request.args.get("feedback") != "0"
 	session = SessionState(user_id, scope["base_id"], scope["session_id"])
-	parent_failed = False
-	if scope.get("command_id"):
-		parent_status = BaseTask().AsyncResult(task_id=scope["session_id"]).status
-		parent_failed = parent_status in ("FAILURE", "ERROR", "REVOKED")
+	parent_status = BaseTask().AsyncResult(task_id=scope["session_id"]).status if scope.get("command_id") else None
+	parent_failed = parent_status in ("FAILURE", "ERROR", "REVOKED")
 	snapshot = session.snapshot(include_payload=include_payload, include_feedback=include_feedback)
 	signals = Signals(user_id, base_id=scope["base_id"], session_id=scope["session_id"]).to_json(
 		include_payload=include_payload, include_feedback=include_feedback, snapshot=snapshot)
@@ -462,6 +506,17 @@ def task_status(task_id: str):
 	command = session.command(scope["command_id"]) if scope.get("command_id") else None
 	if command is not None:
 		command = {key: command[key] for key in ("command_id", "state", "expected_version", "consumed_version", "published_version", "error") if key in command}
+	live_processing = (parent_status == "STARTED" and publication["phase"] == "processing" and
+		command is not None and command["state"] == "consumed")
+	if scope.get("command_id") and (parent_failed or status in ("FAILURE", "ERROR", "REVOKED") or
+		signals.get("error") or not command or command["state"] == "rejected" or
+		(command["state"] == "consumed" and not live_processing)):
+		outcome = get_feedback_outcome(user_id, task_id)
+		if outcome is not None:
+			if parent_failed or publication["closed"] or (outcome["settled"] and not live_processing):
+				return _recovered_feedback_status(outcome)
+			if status in ("FAILURE", "ERROR", "REVOKED") or signals.get("error") or (command and command["state"] == "rejected"):
+				raise FeedbackOutcomeUnavailable("Waiting for feedback publication.")
 	if parent_failed and not publication["closed"] and (not command or command["state"] in ("accepted", "consumed")):
 		# Worker loss may prevent cleanup. Report the failed outcome without writing on GET.
 		message = "The interactive session stopped before publishing feedback. Reload the base."
@@ -472,6 +527,7 @@ def task_status(task_id: str):
 	else:
 		error_messages = {
 			"PERSISTENCE_FAILED": "Changes could not be saved.",
+			"ATTRIBUTES_CHANGED": "Attributes changed. Reload them before editing again.",
 			"MATCHING_FAILED": "The feedback session could not continue. Reload the base before retrying.",
 			"BASE_LOAD_FAILED": "The saved document base could not be loaded.",
 			"CREATE_CONFLICT": "A document base with that name already exists.",
@@ -516,12 +572,12 @@ def document_base_do_current_attribute():
 	if type(do_attribute) is not bool or type(reset) is not bool or (reset and not do_attribute):
 		return make_response({"error": "Invalid ranking or reset option"}, 400)
 	user_id = g.auth_token.id
-	session = SessionState(user_id, scope["base_id"], scope["session_id"])
 	ranking = DocumentBaseStartRanking()
 	args = (user_id, do_attribute, reset, attribute)
 	replay = ranking.existing_submission(args, **g.feedback_options)
 	if replay is not None:
 		return make_response({'task_id': replay.id}, 202)
+	session = SessionState(user_id, scope["base_id"], scope["session_id"])
 	expected_version = g.feedback_options["expected_version"]
 	publication = session.metadata()
 	if (publication["closed"] or publication["phase"] != "selection" or
@@ -713,10 +769,10 @@ def confirm_nugget_multi_match():
 	user_id = g.auth_token.id
 	args = (user_id, scope["base_name"], scope["organisation_id"], documents_and_nuggets)
 	feedback = DocumentBaseConfirmMultipleNuggets()
-	session = SessionState(user_id, scope["base_id"], scope["session_id"])
 	replay = feedback.existing_submission(args, **g.feedback_options)
 	if replay is not None:
 		return make_response({"task_id": replay.id}, 202)
+	session = SessionState(user_id, scope["base_id"], scope["session_id"])
 	publication = session.metadata()
 	if (publication["closed"] or publication["phase"] != "ranking" or
 		publication["version"] != g.feedback_options["expected_version"]):

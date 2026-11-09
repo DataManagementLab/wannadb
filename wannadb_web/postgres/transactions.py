@@ -367,28 +367,44 @@ def change_password(user: str, old_password: str, new_password: str):
 		logger.error("Could not change password")
 
 
-def delete_user_transaction(user: str, password: str):
-	"""
-	Deletes an existing user from the database.
- 
-	:param user: the username of the user
-	:type user: str
-	:param password: the password of the user
-	:type password: str
-	:return: bool
-	:raises: Exception if the user could not be deleted
-	"""
-	pwcheck = check_password(user, password)
-	if isinstance(pwcheck, Exception):
-		raise pwcheck
-	if isinstance(pwcheck, bool):
-		return bool(pwcheck)
-	if isinstance(pwcheck, int):
-		user_id = int(pwcheck)
-		delete_query = sql.SQL("""DELETE FROM users WHERE id = %s""")
-		response = execute_transaction(delete_query, (user_id,), commit=True, fetch=False)
-		if isinstance(response, bool):
-			return response
+class OrganisationLifecycleConflict(RuntimeError):
+	"""The current organization membership prevents the requested action."""
+
+
+def _lock_organisation(cursor, organisation_id: int):
+	cursor.execute("SELECT id FROM organisations WHERE id = %s FOR NO KEY UPDATE", (organisation_id,))
+	if cursor.fetchone() is None:
+		raise PermissionError("Organization access denied.")
+
+
+def _require_replacement_admin(cursor, user_id: int, organisation_ids: list[int]):
+	cursor.execute("""SELECT o.name FROM organisations o JOIN membership m ON m.organisationid = o.id
+		WHERE m.userid = %s AND m.organisationid = ANY(%s) AND m.authorisation IN (0, 1)
+		AND NOT EXISTS (
+			SELECT 1 FROM membership other
+			WHERE other.organisationid = o.id AND other.userid <> m.userid AND other.authorisation IN (0, 1)
+		)
+		ORDER BY o.id LIMIT 1""", (user_id, organisation_ids))
+	blocked = cursor.fetchone()
+	if blocked:
+		raise OrganisationLifecycleConflict(
+			f'You are the last administrator of “{blocked[0]}”. Transfer ownership or explicitly delete the organization first.'
+		)
+
+
+def delete_user_transaction(user_id: int):
+	"""Delete a verified account after locking every organization it belongs to."""
+	with closing(connectPG()) as conn, conn, conn.cursor() as cur:
+		# Prevent new memberships referencing this account during the check and cascade.
+		cur.execute("SELECT id FROM users WHERE id = %s FOR UPDATE", (user_id,))
+		if cur.fetchone() is None:
+			raise PermissionError("Account access denied.")
+		# The order is shared by concurrent deletions of accounts with overlapping memberships.
+		cur.execute("""SELECT o.id FROM organisations o
+			WHERE EXISTS (SELECT 1 FROM membership m WHERE m.organisationid = o.id AND m.userid = %s)
+			ORDER BY o.id FOR NO KEY UPDATE""", (user_id,))
+		_require_replacement_admin(cur, user_id, [row[0] for row in cur.fetchall()])
+		cur.execute("DELETE FROM users WHERE id = %s", (user_id,))
 
 
 def add_organisation(organisationName: str, sessionToken: str):
@@ -421,45 +437,53 @@ def add_organisation(organisationName: str, sessionToken: str):
 		return None, f"addOrganisation failed because: \n{e}"
 
 
-def leave_organisation_transaction(organisationId: int, sessionToken: str):
-	"""
-	Allows a user to leave an organisation. If the user is the last member, the organisation is deleted.
- 
-	:param organisationId: ID of the organisation to leave
-	:type organisationId: int
-	:param sessionToken: Session token of the user leaving the organisation
-	:type sessionToken: str
-	:return: Tuple indicating success status and an optional error message
-	:rtype: Tuple[bool, Union[None, str]]
-	"""
-	try:
-		token: Token = tokenDecode(sessionToken)
-		if token is None:
-			return False, "Authentication failed."
-		userid = token.id
+def leave_organisation_transaction(organisation_id: int, user_id: int):
+	"""Remove a membership while retaining the organization and its data."""
+	with closing(connectPG()) as conn, conn, conn.cursor() as cur:
+		_lock_organisation(cur, organisation_id)
+		_require_replacement_admin(cur, user_id, [organisation_id])
+		cur.execute("DELETE FROM membership WHERE organisationid = %s AND userid = %s",
+			(organisation_id, user_id))
+		if cur.rowcount != 1:
+			raise PermissionError("Organization access denied.")
 
-		count_query = sql.SQL("SELECT COUNT(*) FROM membership WHERE userid = (%s) AND organisationid = (%s)")
-		count = execute_transaction(count_query, (userid, organisationId,), commit=True)
-		count = int(count[0][0])
-		if count != 1:
-			return False, "You are not in this organisation"
 
-		delete_query = sql.SQL(
-			"DELETE FROM membership WHERE userid = (%s) AND organisationid = (%s) returning organisationid")
-		execute_transaction(delete_query, (userid, organisationId,), commit=True)
+def can_manage_organisation_ownership(actor_role, has_owner):
+	"""An administrator can recover an older organization without an owner."""
+	return actor_role == 0 or (actor_role == 1 and not has_owner)
 
-		count_query = sql.SQL("SELECT COUNT(*) FROM membership WHERE organisationid = (%s)")
-		count = execute_transaction(count_query, [organisationId], commit=True)
-		count = int(count[0][0])
-		if count > 0:
-			return True, None
 
-		delete_query = sql.SQL("DELETE FROM organisations WHERE id = (%s)")
-		execute_transaction(delete_query, [organisationId], commit=True, fetch=False)
-		return True, None
-	except Exception:
-		logger.error("Could not leave organization")
-		return False, e
+def _require_organisation_owner(cursor, organisation_id: int, user_id: int):
+	cursor.execute("""SELECT m.authorisation, EXISTS (
+			SELECT 1 FROM membership owner WHERE owner.organisationid = m.organisationid
+				AND owner.authorisation = 0
+		)
+		FROM membership m WHERE m.organisationid = %s AND m.userid = %s""", (organisation_id, user_id))
+	role = cursor.fetchone()
+	if role is None or not can_manage_organisation_ownership(*role):
+		raise PermissionError("Organization owner access required.")
+
+
+def transfer_organisation_ownership(organisation_id: int, user_id: int, replacement: str):
+	"""Transfer ownership to an existing member and leave the former owner as an administrator."""
+	with closing(connectPG()) as conn, conn, conn.cursor() as cur:
+		_lock_organisation(cur, organisation_id)
+		_require_organisation_owner(cur, organisation_id, user_id)
+		cur.execute("""UPDATE membership m SET authorisation = 0 FROM users u
+			WHERE m.userid = u.id AND u.username = %s AND m.organisationid = %s
+			AND m.userid <> %s AND m.authorisation IN (0, 1, 10)""", (replacement, organisation_id, user_id))
+		if cur.rowcount != 1:
+			raise OrganisationLifecycleConflict("Choose another existing organization member.")
+		cur.execute("UPDATE membership SET authorisation = 1 WHERE organisationid = %s AND userid = %s",
+			(organisation_id, user_id))
+
+
+def delete_organisation_transaction(organisation_id: int, user_id: int):
+	"""Delete an organization after explicit confirmation at the API boundary."""
+	with closing(connectPG()) as conn, conn, conn.cursor() as cur:
+		_lock_organisation(cur, organisation_id)
+		_require_organisation_owner(cur, organisation_id, user_id)
+		cur.execute("DELETE FROM organisations WHERE id = %s", (organisation_id,))
 
 
 @deprecated
@@ -579,30 +603,17 @@ def remove_user_from_organisation(organisationName: str, sessionToken: str, user
   
   
 def remove_user_from_organisation_new(organisationId: int, userToRemove: str, actor_user_id: int):
-	"""
-	Remove a user from an organisation.
-	Reworked version without session token.
- 
-	:param organisationId: ID of the organisation
-	:type organisationId: int
-	:param userToRemove: Username of the user to be removed
-	:type userToRemove: str
-	:return: None
-	"""
-	try:
-		query = sql.SQL("""DELETE FROM membership target USING users u, membership actor
+	"""Remove a lower-ranked member under the same lock as leave and account deletion."""
+	with closing(connectPG()) as conn, conn, conn.cursor() as cur:
+		_lock_organisation(cur, organisationId)
+		cur.execute("""DELETE FROM membership target USING users u, membership actor
 			WHERE target.userid = u.id AND u.username = %s
 			AND target.organisationid = %s AND actor.organisationid = target.organisationid
 			AND actor.userid = %s AND actor.authorisation IN (0, 1)
-			AND target.authorisation > actor.authorisation AND target.authorisation IN (1, 10)
-			RETURNING target.organisationid;""")
-		result = execute_transaction(query, (userToRemove, organisationId, actor_user_id), commit=True)
-		if isinstance(result, list) and result:
-			return True, None
-		return False, "Member not found or insufficient administrator privileges"
-	except Exception:
-		logger.error("Could not remove organization member")
-		return False, "Could not remove organization member"
+			AND target.authorisation > actor.authorisation AND target.authorisation IN (1, 10);""",
+			(userToRemove, organisationId, actor_user_id))
+		if cur.rowcount != 1:
+			raise PermissionError("Member not found or insufficient administrator privileges.")
 
 
 def adjust_user_authorization(organisationName: str, sessionToken: str, userToAdjust: str, newAuthorisation: int):

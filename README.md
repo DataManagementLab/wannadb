@@ -246,6 +246,11 @@ Existing rows and IDs are kept. The migration checks the required columns and ke
 before recording the version. An incompatible schema or failed migration leaves the
 transaction rolled back and startup blocked.
 
+Migration `0002` keeps shared documents, snapshots, and feedback with the organization
+when their contributor's account is deleted. It retains attribution while the account exists.
+Migration `0003` adds a version and stable IDs for document-base attribute edits.
+Migration `0004` adds durable acknowledgements for feedback decisions saved to PostgreSQL.
+
 Run the same migration as a one-off operation with the application services stopped:
 
 ```shell

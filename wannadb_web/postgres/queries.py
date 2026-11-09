@@ -1,5 +1,6 @@
 import logging
 from contextlib import closing
+from hashlib import sha256
 from typing import Union
 from deprecated import deprecated
 
@@ -127,18 +128,15 @@ def get_organisation_name(organisation_id: int):
 	return str(response[0])
 
 
-def get_members_of_organisation(organisation_id: int):
-	"""
-    Gets the usernames of all members in a given organisation.
-    
-    :param organisation_id: The ID of the organisation to look up.
-	:type organisation_id: int
-	:return: A list of usernames of members in the organisation.
-	:rtype: list[str]
-	"""
-	select_query = sql.SQL(
-		"SELECT username FROM users WHERE id IN (SELECT userid FROM membership WHERE organisationid = %s);")
-	return execute_query(select_query, (organisation_id,))
+def get_members_of_organisation(organisation_id: int, *, include_roles=False):
+	"""List usernames, or include the IDs and roles for ownership management."""
+	if include_roles:
+		query = sql.SQL("""SELECT u.username, m.userid, m.authorisation
+			FROM membership m JOIN users u ON u.id = m.userid
+			WHERE m.organisationid = %s ORDER BY u.username;""")
+	else:
+		query = sql.SQL("SELECT username FROM users WHERE id IN (SELECT userid FROM membership WHERE organisationid = %s);")
+	return execute_query(query, (organisation_id,))
 
 
 def get_member_ids_from_organisation_id(organisationID: int):
@@ -372,24 +370,27 @@ def document_base_snapshot_scope():
 		))""")
 
 
-def document_base_snapshot_query(*, lock=False):
-	query = sql.SQL("""SELECT d.id, d.content_byte
+def document_base_snapshot_query(*, lock=False, include_attribute_schema=False):
+	columns = sql.SQL(", b.attribute_schema_version::text, b.attribute_ids") if include_attribute_schema else sql.SQL("")
+	query = sql.SQL("""SELECT d.id, d.content_byte{columns}
 		FROM document_bases b JOIN documents d ON {scope}
 		WHERE b.name = %s AND b.id = %s AND b.organisation_id = %s
 		AND EXISTS (SELECT 1 FROM membership m WHERE m.userid = %s
 			AND m.organisationid = b.organisation_id AND m.authorisation IN (0, 1, 10))
-		LIMIT 2""").format(scope=document_base_snapshot_scope())
+		LIMIT 2""").format(scope=document_base_snapshot_scope(), columns=columns)
 	return query + sql.SQL(" FOR UPDATE OF d") if lock else query
 
 
-def get_document_base_snapshot(base_name: str, base_id: int, organisation_id: int, user_id: int):
-	"""Read only the authorized base's unique saved snapshot."""
-	result = execute_query(document_base_snapshot_query(), (base_name, base_id, organisation_id, user_id))
+def get_document_base_snapshot(base_name: str, base_id: int, organisation_id: int, user_id: int,
+		*, include_attribute_schema=False):
+	"""Read the authorized base's unique snapshot, optionally with its schema."""
+	result = execute_query(document_base_snapshot_query(include_attribute_schema=include_attribute_schema),
+		(base_name, base_id, organisation_id, user_id))
 	if result is False:
 		raise RuntimeError("Could not load the saved document base.")
 	if isinstance(result, list) and len(result) == 1:
-		snapshot_id, content = result[0]
-		return snapshot_id, bytes(content)
+		snapshot_id, content, *schema = result[0]
+		return snapshot_id, bytes(content), *schema
 	return None
 
 
@@ -490,19 +491,52 @@ def update_document_content(doc_id: int, new_content: str, organisation_id: int 
 		return False
 
 
+class FeedbackOutcomeUnavailable(RuntimeError):
+	"""The durable command outcome could not be read."""
+
+
+def get_feedback_outcome(user_id: int, command_id: str):
+	"""Read the saved outcome only for its submitting user and a current base member."""
+	query = sql.SQL("""SELECT f.base_id, b.organisation_id, b.name, f.session_id, f.expected_version,
+		f.request_fingerprint, f.snapshot_version, f.committed_at <= clock_timestamp() - interval '10 seconds'
+		FROM public.feedback_outcomes f JOIN public.document_bases b ON b.id = f.base_id
+		WHERE f.user_id = %s AND f.command_id = %s
+		AND EXISTS (SELECT 1 FROM public.membership m WHERE m.userid = f.user_id
+			AND m.organisationid = b.organisation_id AND m.authorisation IN (0, 1, 10));""")
+	rows = execute_query(query, (user_id, command_id))
+	if rows is False:
+		raise FeedbackOutcomeUnavailable("Could not read the saved feedback outcome.")
+	if not rows:
+		return None
+	base_id, organisation_id, base_name, session_id, version, fingerprint, snapshot_version, settled = rows[0]
+	return {
+		"base_id": base_id, "organisation_id": organisation_id, "base_name": base_name,
+		"session_id": session_id, "interactive": True, "command_id": command_id, "expected_version": version,
+		"published_version": version + 1, "request_fingerprint": fingerprint,
+		"snapshot_version": snapshot_version, "settled": settled,
+	}
+
+
 def compare_and_swap_document_content(doc_id: int, new_bytes: bytes, expected_bytes: bytes,
-		organisation_id: int, user_id: int, base_id: int = None, attributes: list[str] = None) -> bool:
+		organisation_id: int, user_id: int, base_id: int = None, attributes: list[str] = None, *, feedback=None,
+		expected_attribute_version=None) -> bool:
 	"""Replace the scoped snapshot if its bytes still match, updating metadata atomically."""
 	if type(base_id) is not int or base_id <= 0 or not isinstance(new_bytes, bytes) or not isinstance(expected_bytes, bytes):
 		return False
 	try:
 		with closing(connectPG()) as conn, conn, conn.cursor() as cur:
-			# Match the base-first lock order used by document edits and deletion.
-			cur.execute("""SELECT b.id FROM document_bases b WHERE b.id = %s AND b.organisation_id = %s
+			if feedback is not None:
+				# Account deletion locks the user before changing creator references on documents.
+				cur.execute("SELECT id FROM users WHERE id = %s FOR KEY SHARE;", (user_id,))
+				if cur.fetchone() is None:
+					return False
+			# Match the base-first snapshot lock order used by document edits and deletion.
+			cur.execute("""SELECT b.attribute_schema_version::text FROM document_bases b WHERE b.id = %s AND b.organisation_id = %s
 				AND EXISTS (SELECT 1 FROM membership m WHERE m.userid = %s
 					AND m.organisationid = b.organisation_id AND m.authorisation IN (0, 1, 10))
 				FOR UPDATE;""", (base_id, organisation_id, user_id))
-			if cur.fetchone() is None:
+			base = cur.fetchone()
+			if base is None or (expected_attribute_version is not None and base[0] != expected_attribute_version):
 				return False
 
 			replace = sql.SQL("""UPDATE documents d SET content_byte = %s FROM document_bases b
@@ -518,6 +552,13 @@ def compare_and_swap_document_content(doc_id: int, new_bytes: bytes, expected_by
 					(attributes, base_id))
 			if cur.rowcount != 1:
 				raise RuntimeError("The document base metadata could not be updated.")
+			if feedback is not None:
+				# A repeated command ID aborts this entire transaction, including the BSON write.
+				cur.execute("""INSERT INTO public.feedback_outcomes
+					(user_id, command_id, session_id, base_id, expected_version, request_fingerprint, snapshot_version)
+					VALUES (%s, %s, %s, %s, %s, %s, %s);""",
+					(user_id, feedback["command_id"], feedback["session_id"], base_id,
+						feedback["expected_version"], feedback["request_fingerprint"], sha256(new_bytes).hexdigest()))
 			return True
 	except Exception:
 		logger.error("Could not replace document-base snapshot")

@@ -28,7 +28,7 @@ from wannadb_web.postgres.queries import get_document_base_snapshot, get_documen
 	get_document
 from wannadb_web.postgres.transactions import DocumentBaseCreationConflict, create_document_base_with_snapshot, mutate_base_documents
 from wannadb_web.limits import validate_attribute_count, validate_corpus
-from wannadb_web.Redis.RedisCache import SessionState, get_signal_scope
+from wannadb_web.Redis.RedisCache import SessionState, TaskAccess, get_signal_scope
 from wannadb_web.worker.data import decode_feedback, MultiNuggetsMatchFeedback, DoAttributeRanking, ReloadDocumentBase, Signals, CustomMatchFeedback, NuggetMatchFeedback, NoMatchFeedback, SkipAttributeRanking, StopMatching
 
 logger = logging.getLogger(__name__)
@@ -45,7 +45,8 @@ class WannaDB_WebAPI:
 		self.user_id = user_id
 		self._feedback: Optional[dict[str, Any]] = None
 		self._expected_bson: Optional[bytes] = None
-		self._pending_command_id: Optional[str] = None
+		self._attribute_schema_version: Optional[str] = None
+		self._pending_feedback: Optional[dict] = None
 		self.session = SessionState.current(user_id)
 
 		self.signals = Signals(str(self.user_id))
@@ -65,7 +66,11 @@ class WannaDB_WebAPI:
 			while (time.monotonic() - start_time) < max(timeout, TIMEOUT):
 				command = self.signals.match_feedback.claim()
 				if command is not None:
-					self._pending_command_id = command["command_id"]
+					scope = TaskAccess(self.user_id).task(command["command_id"])
+					if (not scope or scope["session_id"] != self.session.session_id or
+						scope["base_id"] != self.session.base_id or scope["expected_version"] != command["expected_version"]):
+						raise RuntimeError("The feedback command scope is missing or changed.")
+					self._pending_feedback = scope
 					msg = decode_feedback(command["payload"])
 					self.signals.status.emit("Feedback received from UI")
 					logger.debug("Feedback received. wait_seconds=%.3f", time.monotonic() - start_time)
@@ -233,12 +238,12 @@ class WannaDB_WebAPI:
 
 			scope = get_signal_scope()
 			snapshot = get_document_base_snapshot(self.document_base_name, scope["base_id"],
-				self.organisation_id, self.user_id)
+				self.organisation_id, self.user_id, include_attribute_schema=True)
 			if snapshot is None:
 				self.signals.error.emit(RuntimeError("Document base snapshot not found."))
 				return
 
-			document_id, document = snapshot
+			document_id, document, self._attribute_schema_version, _ = snapshot
 			document_base = DocumentBase.from_bson(document)
 			if self.sqLiteCacheDBWrapper is not None:
 				for attribute in document_base.attributes:
@@ -259,31 +264,37 @@ class WannaDB_WebAPI:
 		serialized = self.document_base.to_bson()
 		scope = get_signal_scope()
 		metadata = {"attributes": [attribute.name for attribute in self.document_base.attributes]} if update_attributes else {}
+		if self._pending_feedback is not None:
+			metadata["feedback"] = self._pending_feedback
 		status = compare_and_swap_document_content(self.document_id, serialized, self._expected_bson,
-			self.organisation_id, self.user_id, scope["base_id"], **metadata)
+			self.organisation_id, self.user_id, scope["base_id"],
+			expected_attribute_version=self._attribute_schema_version, **metadata)
 		if not status:
 			self.signals.error.emit(RuntimeError("STALE_BASE"))
 			raise RuntimeError("The base changed or access was lost; reload before editing again.")
 		self._expected_bson = serialized
-		self.signals.status.emit("Changes saved.")
+		if self._pending_feedback is None:
+			self.signals.status.emit("Changes saved.")
 
 	def publish_feedback(self, feedback_request):
 		# A consumed command is acknowledged only after its changes are durable and
 		# both the base and next candidate payload have been atomically published.
-		if self._pending_command_id is not None:
+		command_id = self._pending_feedback["command_id"] if self._pending_feedback is not None else None
+		if command_id is not None:
 			self.update_document_base_to_bson()
 		self.signals.document_base_to_ui.emit(self.document_base)
 		self.signals.feedback_request_to_ui.emit(feedback_request)
 		phase = "selection" if "do-attribute-request" in feedback_request else "ranking"
 		attribute = feedback_request.get("attribute")
-		version = self.session.publish(phase, getattr(attribute, "name", None), self._pending_command_id)
+		version = self.session.publish(phase, getattr(attribute, "name", None), command_id)
 		logger.debug("Feedback published. phase=%s version=%s", phase, version)
-		self._pending_command_id = None
+		self._pending_feedback = None
 
 	def complete_session(self):
 		self.signals.document_base_to_ui.emit(self.document_base)
-		self.session.close(command_id=self._pending_command_id)
-		self._pending_command_id = None
+		command_id = self._pending_feedback["command_id"] if self._pending_feedback is not None else None
+		self.session.close(command_id=command_id)
+		self._pending_feedback = None
 
 	# todo: below not implemented yet
 	def save_table_to_csv(self):

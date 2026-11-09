@@ -9,7 +9,12 @@ from psycopg2 import Error
 
 from wannadb_web.postgres.util import connectPG
 
-MIGRATIONS = ("0001_baseline.sql",)
+MIGRATIONS = (
+    "0001_baseline.sql",
+    "0002_organization_ownership.sql",
+    "0003_attribute_schema.sql",
+    "0004_feedback_outcomes.sql",
+)
 ADVISORY_LOCK = (0x57414E4E, 0x414442)
 
 _INTEGER = ("int4", "int8")
@@ -21,6 +26,7 @@ _REQUIRED_COLUMNS = {
     "document_bases": {
         "id": _INTEGER, "name": _TEXT, "attributes": (*_TEXT, "_text"), "organisation_id": _INTEGER,
         "last_modified": ("timestamp", "timestamptz"),
+        "attribute_schema_version": ("uuid",), "attribute_ids": ("jsonb",),
     },
     "documents": {
         "id": _INTEGER, "name": _TEXT, "content": _TEXT, "content_byte": ("bytea",),
@@ -29,6 +35,11 @@ _REQUIRED_COLUMNS = {
     "document_feedback": {
         "id": _INTEGER, "documentid": _INTEGER, "userid": _INTEGER, "positive": ("bool",),
         "attribute": _TEXT, "feedback_start": _INTEGER, "feedback_end": _INTEGER,
+    },
+    "feedback_outcomes": {
+        "user_id": _INTEGER, "command_id": _TEXT, "session_id": _TEXT, "base_id": _INTEGER,
+        "expected_version": _INTEGER, "request_fingerprint": _TEXT, "snapshot_version": _TEXT,
+        "committed_at": ("timestamptz",),
     },
 }
 
@@ -43,6 +54,7 @@ _REQUIRED_KEYS = {
     ("document_bases", "u", ("name", "organisation_id")),
     ("documents", "p", ("id",)),
     ("document_feedback", "p", ("id",)),
+    ("feedback_outcomes", "p", ("command_id", "user_id")),
 }
 
 
@@ -65,6 +77,10 @@ def _validate_schema(cursor):
     )
     actual = {(table, column): (kind, nullable, identity, default)
               for table, column, kind, nullable, identity, default in cursor.fetchall()}
+    nullable_columns = {
+        "documents": {"content", "content_byte", "documentbaseid", "userid"},
+        "document_feedback": {"userid"},
+    }
     for table, columns in _REQUIRED_COLUMNS.items():
         for column, expected_types in columns.items():
             kind, nullable, identity, default = actual.get((table, column), (None, None, None, None))
@@ -72,7 +88,7 @@ def _validate_schema(cursor):
                 raise MigrationError(f"Unsupported column in public.{table}.{column}.")
             if column == "id" and identity != "YES" and not (default or "").startswith("nextval("):
                 raise MigrationError(f"Missing ID generation in public.{table}.")
-            if table == "documents" and column in ("content", "content_byte", "documentbaseid") and nullable != "YES":
+            if column in nullable_columns.get(table, ()) and nullable != "YES":
                 raise MigrationError(f"Column public.{table}.{column} must allow NULL.")
 
     cursor.execute(
