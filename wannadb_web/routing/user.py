@@ -255,6 +255,7 @@ def get_organisation_members(_id):
 	return make_response({
 		"members": [name for name, _, _ in members],
 		"canManageOwnership": can_manage_organisation_ownership(actor_role, has_owner),
+		"isOwner": actor_role == 0,
 	}, 200)
 
 

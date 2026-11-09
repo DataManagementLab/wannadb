@@ -453,22 +453,23 @@ def can_manage_organisation_ownership(actor_role, has_owner):
 	return actor_role == 0 or (actor_role == 1 and not has_owner)
 
 
-def _require_organisation_owner(cursor, organisation_id: int, user_id: int):
+def _require_organisation_owner(cursor, organisation_id: int, user_id: int, *, allow_recovery=False):
 	cursor.execute("""SELECT m.authorisation, EXISTS (
 			SELECT 1 FROM membership owner WHERE owner.organisationid = m.organisationid
 				AND owner.authorisation = 0
 		)
 		FROM membership m WHERE m.organisationid = %s AND m.userid = %s""", (organisation_id, user_id))
 	role = cursor.fetchone()
-	if role is None or not can_manage_organisation_ownership(*role):
-		raise PermissionError("Organization owner access required.")
+	if role is not None and (role[0] == 0 or (allow_recovery and can_manage_organisation_ownership(*role))):
+		return
+	raise PermissionError("Organization owner access required.")
 
 
 def transfer_organisation_ownership(organisation_id: int, user_id: int, replacement: str):
 	"""Transfer ownership to an existing member and leave the former owner as an administrator."""
 	with closing(connectPG()) as conn, conn, conn.cursor() as cur:
 		_lock_organisation(cur, organisation_id)
-		_require_organisation_owner(cur, organisation_id, user_id)
+		_require_organisation_owner(cur, organisation_id, user_id, allow_recovery=True)
 		cur.execute("""UPDATE membership m SET authorisation = 0 FROM users u
 			WHERE m.userid = u.id AND u.username = %s AND m.organisationid = %s
 			AND m.userid <> %s AND m.authorisation IN (0, 1, 10)""", (replacement, organisation_id, user_id))
