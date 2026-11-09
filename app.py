@@ -4,12 +4,14 @@ import os
 from flask import Flask, make_response, render_template_string
 from flask_cors import CORS
 #from flask_debugtoolbar import DebugToolbarExtension
+from wannadb_web.log_filters import _RedactLegacyTaskStatus
 from wannadb_web.routing.core import core_routes
 from wannadb_web.routing.user import user_management
 from wannadb_web.routing.files import main_routes
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 
+logging.getLogger("werkzeug").addFilter(_RedactLegacyTaskStatus())
 app = Flask(__name__)
 
 

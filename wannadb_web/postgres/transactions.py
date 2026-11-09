@@ -8,7 +8,9 @@ from psycopg2 import sql, IntegrityError
 from wannadb.data.data import Document, DocumentBase, InformationNugget
 from wannadb.data.signals import SentenceStartCharsSignal
 from wannadb_web.util import Token, Authorisation, tokenDecode
-from wannadb_web.postgres.queries import check_password, get_organisation_authorisation
+from wannadb_web.postgres.queries import (
+	check_password, document_base_snapshot_query, document_base_snapshot_scope, get_organisation_authorisation,
+)
 from wannadb_web.postgres.util import connectPG, execute_transaction
 
 logger: logging.Logger = logging.getLogger(__name__)
@@ -360,8 +362,8 @@ def change_password(user: str, old_password: str, new_password: str):
 			update_query = sql.SQL("UPDATE users SET password = %s WHERE username = %s;")
 			execute_transaction(update_query, (pwHash, user), commit=True)
 
-	except Exception as e:
-		logger.error(f"changePassword failed because: \n{e}")
+	except Exception:
+		logger.error("Could not change password")
 
 
 def delete_user_transaction(user: str, password: str):
@@ -413,8 +415,8 @@ def add_organisation(organisationName: str, sessionToken: str):
 	except IntegrityError:
 		return None, "name already exists."
 
-	except Exception as e:
-		logger.error("addOrganisation failed because: \n", e)
+	except Exception:
+		logger.error("Could not create organization")
 		return None, f"addOrganisation failed because: \n{e}"
 
 
@@ -454,8 +456,8 @@ def leave_organisation_transaction(organisationId: int, sessionToken: str):
 		delete_query = sql.SQL("DELETE FROM organisations WHERE id = (%s)")
 		execute_transaction(delete_query, [organisationId], commit=True, fetch=False)
 		return True, None
-	except Exception as e:
-		logger.error(f"leaveOrganisation failed because: \n{e}")
+	except Exception:
+		logger.error("Could not leave organization")
 		return False, e
 
 
@@ -505,8 +507,8 @@ INSERT INTO membership (userid, organisationid)
 	except IntegrityError:
 		return None, "name already exists."
 
-	except Exception as e:
-		logger.error(f"addUserToOrganisation failed because: \n{e}")
+	except Exception:
+		logger.error("Could not add organization member")
 
 
 def add_user_to_organisation_new(organisationId: int, newUser: str, actor_user_id: int):
@@ -571,8 +573,8 @@ def remove_user_from_organisation(organisationName: str, sessionToken: str, user
 										   str(Authorisation.Admin.value), userid),
 							commit=True)
 
-	except Exception as e:
-		logger.error(f"removeUserFromOrganisation failed because: \n{e}")
+	except Exception:
+		logger.error("Could not remove organization member")
   
   
 def remove_user_from_organisation_new(organisationId: int, userToRemove: str, actor_user_id: int):
@@ -640,8 +642,8 @@ def adjust_user_authorization(organisationName: str, sessionToken: str, userToAd
 										   author_userid),
 							commit=True)
 
-	except Exception as e:
-		logger.error(f"adjUserAuthorisation failed because: \n{e}")
+	except Exception:
+		logger.error("Could not change organization authorization")
 
 
 def add_document(name: str, content: Union[str, bytes], organisationId: int, userid: int, base_id: int = None):
@@ -704,9 +706,7 @@ def mutate_base_documents(base_name, base_id, organisation_id, user_id, *,
 		if cur.fetchone() is None:
 			raise PermissionError("Document base access denied.")
 
-		cur.execute("""SELECT id, content_byte FROM documents WHERE name = %s
-			AND organisationid = %s AND documentbaseid IS NULL AND content IS NULL
-			AND content_byte IS NOT NULL FOR UPDATE;""", (base_name, organisation_id))
+		cur.execute(document_base_snapshot_query(lock=True), (base_name, base_id, organisation_id, user_id))
 		snapshots = cur.fetchall()
 		if len(snapshots) != 1:
 			raise RuntimeError("The document base has no unique saved snapshot.")
@@ -759,7 +759,7 @@ def mutate_base_documents(base_name, base_id, organisation_id, user_id, *,
 		if removal is not None:
 			document_id, name = removal
 			cur.execute("""DELETE FROM documents WHERE id = %s AND name = %s
-				AND organisationid = %s AND documentbaseid = %s RETURNING id;""",
+				AND organisationid = %s AND documentbaseid = %s AND content IS NOT NULL RETURNING id;""",
 				(document_id, name, organisation_id, base_id))
 			if cur.fetchone() is None:
 				raise ValueError("The document was already deleted. Reload the base.")
@@ -767,80 +767,92 @@ def mutate_base_documents(base_name, base_id, organisation_id, user_id, *,
 
 		cur.execute("UPDATE documents SET content_byte = %s WHERE id = %s;",
 			(base.to_bson(), snapshot_id))
+		if cur.rowcount != 1:
+			raise RuntimeError("The document base snapshot could not be updated.")
 		cur.execute("UPDATE document_bases SET last_modified = now() WHERE id = %s;", (base_id,))
+		if cur.rowcount != 1:
+			raise RuntimeError("The document base metadata could not be updated.")
 	return base
 
 
-def add_document_base(name: str, attributes: list[str], orgId: int, documents: list[int], user_id: int):
-	"""
-	Add a new document base and associate documents with it.
- 
-	:param name: Name of the document base
-	:type name: str
-	:param attributes: List of attributes for the document base
-	:type attributes: list[str]
-	:param orgId: ID of the organisation the document base belongs to
-	:type orgId: int
-	:param documents: List of document IDs to associate with the document base
-	:type documents: list[int]
-	:return: ID of the newly created document base or an error code (-400 invalid IDs, -403 forbidden selection, -409 conflict, -500 failure)
-	:rtype: int
-	"""
-	if (not isinstance(documents, list) or
-		any(type(document_id) is not int or document_id <= 0 for document_id in documents) or
-		len(set(documents)) != len(documents)):
-		return -400
-	try:
-		query = sql.SQL("""WITH selected_documents AS (
-			SELECT d.id FROM documents d WHERE d.id = ANY(%s)
-			AND d.organisationid = %s AND d.documentbaseid IS NULL FOR UPDATE
-		), new_base AS (
-			INSERT INTO document_bases (name, attributes, organisation_id)
-			SELECT %s, %s, %s WHERE EXISTS (SELECT 1 FROM membership m
-			WHERE m.userid = %s AND m.organisationid = %s AND m.authorisation IN (0, 1, 10))
-			AND (SELECT count(*) FROM selected_documents) = %s RETURNING id
-		), associated AS (
-			UPDATE documents d SET documentbaseid = b.id FROM new_base b
-			WHERE d.id IN (SELECT id FROM selected_documents) AND d.organisationid = %s
-			RETURNING d.id
-		) SELECT id FROM new_base;""")
-		result = execute_transaction(query, (documents, orgId, name, attributes, orgId,
-			user_id, orgId, len(documents), orgId), commit=True)
-		if isinstance(result, list) and result:
-			return int(result[0][0])
-		return -403
-	except IntegrityError:
-		return -409
-	except Exception:
-		logger.error("Could not create document base")
-		return -500
+class DocumentBaseCreationConflict(ValueError):
+	pass
+
+
+def create_document_base_with_snapshot(name: str, attributes: list[str], organisation_id: int,
+		expected_docs: list[tuple[int, str, str]], user_id: int, snapshot: bytes) -> tuple[int, int]:
+	"""Publish a processed base, its source associations and its snapshot in one commit."""
+	document_ids = [document_id for document_id, _, _ in expected_docs]
+	if not document_ids or len(document_ids) != len(set(document_ids)):
+		raise ValueError("Choose distinct source documents.")
+	if not isinstance(snapshot, bytes) or not snapshot:
+		raise RuntimeError("The processed snapshot is missing.")
+
+	with closing(connectPG()) as conn, conn, conn.cursor() as cur:
+		cur.execute("""SELECT 1 FROM membership WHERE userid = %s AND organisationid = %s
+			AND authorisation IN (0, 1, 10) FOR SHARE;""", (user_id, organisation_id))
+		if cur.fetchone() is None:
+			raise PermissionError("Document base access denied.")
+
+		# Lock source rows in a consistent order. Concurrent workers may preprocess
+		# the same inputs, but only one may attach them, and only if text is unchanged.
+		cur.execute("""SELECT id, name, content FROM documents
+			WHERE id = ANY(%s) AND organisationid = %s AND documentbaseid IS NULL AND content IS NOT NULL
+			ORDER BY id FOR UPDATE;""", (document_ids, organisation_id))
+		if cur.fetchall() != sorted(expected_docs, key=lambda document: document[0]):
+			raise ValueError("The source documents changed or are no longer available.")
+
+		cur.execute("""INSERT INTO document_bases (name, attributes, organisation_id) VALUES (%s, %s, %s)
+			ON CONFLICT (name, organisation_id) DO NOTHING RETURNING id;""", (name, attributes, organisation_id))
+		new_base = cur.fetchone()
+		if new_base is None:
+			raise DocumentBaseCreationConflict("A document base with that name already exists.")
+		base_id = new_base[0]
+
+		cur.execute("""UPDATE documents SET documentbaseid = %s
+			WHERE id = ANY(%s) AND organisationid = %s AND documentbaseid IS NULL AND content IS NOT NULL;""",
+			(base_id, document_ids, organisation_id))
+		if cur.rowcount != len(document_ids):
+			raise RuntimeError("The source documents could not all be attached.")
+
+		cur.execute("""INSERT INTO documents (name, content_byte, organisationid, userid, documentbaseid)
+			VALUES (%s, %s, %s, %s, %s) RETURNING id;""", (name, snapshot, organisation_id, user_id, base_id))
+		artifact = cur.fetchone()
+		if artifact is None:
+			raise RuntimeError("The processed snapshot could not be saved.")
+		return base_id, artifact[0]
 
 
 def delete_document_base_data(base_name: str, organisation_id: int, user_id: int):
-	"""
-	Delete a document base and disassociate documents from it.
- 
-	:param base_name: Name of the document base to delete
-	:type base_name: str
-	:param organisation_id: ID of the organisation the document base belongs to
-	:type organisation_id: int
-	:return: True if deletion was successful, False otherwise
-	:rtype: bool
-	"""
+	"""Delete the authorized base and its linked artifacts, including a unique legacy snapshot."""
 	try:
-		delete_query = sql.SQL(
-			"DELETE FROM document_bases b "
-			"WHERE b.name = %s AND b.organisation_id = %s "
-			"AND EXISTS (SELECT 1 FROM membership m WHERE m.userid = %s "
-			"AND m.organisationid = b.organisation_id AND m.authorisation IN (0, 1)) RETURNING b.id;"
-		)
-		data = (base_name, organisation_id, user_id)
-		result = execute_transaction(delete_query, data, commit=True)
-		return isinstance(result, list) and bool(result)
+		with closing(connectPG()) as conn, conn, conn.cursor() as cur:
+			cur.execute("""SELECT b.id FROM document_bases b WHERE b.name = %s AND b.organisation_id = %s
+				AND EXISTS (SELECT 1 FROM membership m WHERE m.userid = %s
+					AND m.organisationid = b.organisation_id AND m.authorisation IN (0, 1))
+				FOR UPDATE;""", (base_name, organisation_id, user_id))
+			base = cur.fetchone()
+			if base is None:
+				return False
+			base_id = base[0]
 
-	except Exception as e:
-		logger.error(str(e))
+			legacy_snapshot = sql.SQL("""SELECT min(d.id) FROM document_bases b JOIN documents d ON {scope}
+				WHERE b.id = %s AND d.documentbaseid IS NULL HAVING count(*) = 1;""").format(
+				scope=document_base_snapshot_scope())
+			cur.execute(legacy_snapshot, (base_id,))
+			legacy = cur.fetchone()
+			if legacy is not None:
+				cur.execute("DELETE FROM documents WHERE id = %s;", (legacy[0],))
+				if cur.rowcount != 1:
+					raise RuntimeError("The legacy document base snapshot could not be removed.")
+			cur.execute("DELETE FROM document_bases WHERE id = %s;", (base_id,))
+			if cur.rowcount != 1:
+				raise RuntimeError("The document base could not be removed.")
+			return True
+	except Exception:
+		logger.error("Could not delete document base")
 		return False
+
 
 def add_feedback(document_id: int, user_id: int, positive: bool, attribute: str, feedback_start: int = None, feedback_end: int = None, organisation_id: int = None):
 	"""
@@ -865,7 +877,7 @@ def add_feedback(document_id: int, user_id: int, positive: bool, attribute: str,
 		insert_data_query = sql.SQL(
 			"INSERT INTO document_feedback (documentid, userid, positive, attribute, feedback_start, feedback_end) "
 			"SELECT %s, %s, %s, %s, %s, %s WHERE EXISTS (SELECT 1 FROM documents d "
-			"JOIN membership m ON m.organisationid = d.organisationid WHERE d.id = %s "
+			"JOIN membership m ON m.organisationid = d.organisationid WHERE d.id = %s AND d.content IS NOT NULL "
 			"AND m.userid = %s AND m.authorisation IN (0, 1, 10) "
 			"AND (%s IS NULL OR d.organisationid = %s)) RETURNING id;"
 		)
@@ -877,9 +889,9 @@ def add_feedback(document_id: int, user_id: int, positive: bool, attribute: str,
 		feedback_id = int(response[0][0])
 		return feedback_id
 
-	except IntegrityError as i:
-		logger.error(str(i))
+	except IntegrityError:
+		logger.error("Feedback write conflicted")
 		return -409
-	except Exception as e:
-		logger.error(str(e))
+	except Exception:
+		logger.error("Could not save feedback")
 		return -500

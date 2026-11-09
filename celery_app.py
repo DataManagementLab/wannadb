@@ -5,7 +5,7 @@ from celery import Celery
 
 from wannadb_web.worker.tasks import BaseTask, DocumentBaseAddAttributes, DocumentBaseAddDocument, DocumentBaseConfirmMultipleNuggets, DocumentBaseConfirmNugget, DocumentBaseForgetMatches, DocumentBaseForgetMatchesForAttribute, DocumentBaseGetOrderedNuggets, DocumentBaseInteractiveTablePopulation, DocumentBaseLoad, DocumentBaseNoMatchForDocument, DocumentBaseRemoveAttributes, DocumentBaseRemoveDocument, DocumentBaseStartRanking, DocumentBaseStopMatching, DocumentBaseUpdateAttributes, DocumentBaseUpdateDocument, ReloadDocumentBaseTask, TestTask, InitManager, CreateDocumentBase
 
-logging.basicConfig(level=logging.DEBUG, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 
 app = Celery(__name__)
 

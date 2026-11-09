@@ -172,10 +172,8 @@ class RankingBasedMatcher(BaseMatcher):
                 }
             )
 
-            print(f"Feedback result for attribute '{attribute.name}': {feedback_result}")
             if not feedback_result.get("do-attribute", False):
-                logger.info(f"Skip attribute '{attribute.name}'.")
-                print(f"Skip attribute '{attribute.name}'.")
+                logger.info("Attribute ranking skipped.")
                 statistics[attribute.name]["skipped"] = True
                 continue
 
@@ -188,10 +186,10 @@ class RankingBasedMatcher(BaseMatcher):
             remaining_documents = [document for document in document_base.documents
                                    if attribute.name not in document.attribute_mappings]
             if not remaining_documents:
-                logger.info(f"Attribute '{attribute.name}' has already been matched before.")
+                logger.info("Attribute already fully populated.")
                 continue
 
-            logger.info(f"Matching attribute '{attribute.name}'.")
+            logger.info("Starting attribute ranking.")
             start_matching: float = time.time()
             self._max_distance = (attribute[CurrentThresholdSignal]
                                   if CurrentThresholdSignal.identifier in attribute.signals
@@ -585,7 +583,7 @@ class RankingBasedMatcher(BaseMatcher):
                                 # Replace current guess with new nugget
                                 nugget.document[CurrentMatchIndexSignal] = nugget.document.nuggets.index(nugget)
                                 docs_with_added_nuggets[nugget.document] = distance_difference
-                                logger.info(f"Found nugget better than current best guess for document {nugget.document.name} with distance difference {distance_difference}.")
+                                logger.info("Updated a best guess (distance improvement %.4f).", distance_difference)
                             old_distances[nugget] = nugget[CachedDistanceSignal]
 
                     old_distances[confirmed_nugget] = confirmed_nugget[CachedDistanceSignal]

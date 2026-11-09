@@ -6,8 +6,6 @@ import re
 import time
 from typing import Optional, Any
 
-from psycopg2 import DatabaseError
-
 import wannadb
 from wannadb import resources
 from wannadb.configuration import Pipeline
@@ -26,9 +24,9 @@ from wannadb.preprocessing.other_processing import ContextSentenceCacher
 from wannadb.statistics import Statistics
 from wannadb.status import StatusCallback
 from wannadb_web.SQLite.Cache_DB import SQLiteCacheDBWrapper
-from wannadb_web.postgres.queries import get_document_by_name, get_document_by_name_and_content, compare_and_swap_document_content, \
+from wannadb_web.postgres.queries import get_document_base_snapshot, get_document_by_name_and_content, compare_and_swap_document_content, \
 	get_document
-from wannadb_web.postgres.transactions import add_document, mutate_base_documents
+from wannadb_web.postgres.transactions import DocumentBaseCreationConflict, create_document_base_with_snapshot, mutate_base_documents
 from wannadb_web.Redis.RedisCache import SessionState, get_signal_scope
 from wannadb_web.worker.data import decode_feedback, MultiNuggetsMatchFeedback, DoAttributeRanking, ReloadDocumentBase, Signals, CustomMatchFeedback, NuggetMatchFeedback, NoMatchFeedback, SkipAttributeRanking, StopMatching
 
@@ -69,6 +67,7 @@ class WannaDB_WebAPI:
 					self._pending_command_id = command["command_id"]
 					msg = decode_feedback(command["payload"])
 					self.signals.status.emit("Feedback received from UI")
+					logger.debug("Feedback received. wait_seconds=%.3f", time.monotonic() - start_time)
 					start_time = time.monotonic()
 					if isinstance(msg, CustomMatchFeedback):
 						return {"message": "custom-match", "document": msg.document, "start": msg.start, "end": msg.end, "not_a_match": msg.not_a_match}
@@ -139,8 +138,7 @@ class WannaDB_WebAPI:
 		logger.warning("get_ordert_nuggets is deprecated, use get_ordered_nuggets_by_doc_name instead!")
 		document = get_document(document_id, self.user_id, self.organisation_id, self.document_base_name)
 		if document[0] is None:
-			logger.error(f"Document with id {document_id} not found!")
-			self.signals.error.emit(Exception(f"Document with id {document_id} not found!"))
+			self.signals.error.emit(RuntimeError("Document not found."))
 			return
 		document_name = document[0]
 		logger.debug("get_ordert_nuggets")
@@ -149,61 +147,60 @@ class WannaDB_WebAPI:
 			if document.name == document_name:
 				self.signals.ordert_nuggets.emit(list(sorted(document.nuggets, key=lambda x: x[CachedDistanceSignal])))
 				return
-		logger.error(f"Document \"{document_name}\" not found in document base!")
-		self.signals.error.emit(Exception(f"Document \"{document_name}\" not found in document base!"))
+		self.signals.error.emit(RuntimeError("Document not found in the base."))
 
 	def get_ordered_nuggets_by_doc_name(self, document_name: str, document_content: str):
 		logger.warning("It is recommended to not use get_ordered_nuggets_by_doc_name!")
 		document = get_document_by_name_and_content(document_name, document_content, self.user_id,
 			organisation_id=self.organisation_id, base_name=self.document_base_name)
 		if document[0] is None:
-			logger.error(f"Document {document_name} not found!")
-			self.signals.error.emit(Exception(f"Document {document_name} not found!"))
+			self.signals.error.emit(RuntimeError("Document not found."))
 			return
 		logger.debug("get_ordered_nuggets_by_doc_name")
 		self.signals.status.emit("get_ordered_nuggets_by_doc_name")
 		for document in self.document_base.documents:
 			if document.name == document_name:
-				"""if not all(hasattr(nugget, CachedDistanceSignal) for nugget in document.nuggets):
-					logger.error(f"Document \"{document_name}\" does not have nuggets with CachedDistanceSignal!")
-					self.signals.error.emit(
-						Exception(f"Document \"{document_name}\" does not have nuggets with CachedDistanceSignal!"))
-					return
-				logger.debug(f"Emitting ordered nuggets for document {document_name}.")
-				self.signals.ordert_nuggets.emit(
-					list(sorted(document.nuggets, key=lambda x: x[CachedDistanceSignal])))"""
 				return
-		logger.error(f"Document \"{document_name}\" not found in document base!")
-		self.signals.error.emit(Exception(f"Document \"{document_name}\" not found in document base!"))
+		self.signals.error.emit(RuntimeError("Document not found in the base."))
 
-	def create_document_base(self, documents: list[Document], attributes: list[Attribute], statistics: Statistics):
-		logger.debug("Called slot 'create_document_base'.")
-		self.signals.status.emit("create_document_base")
+	def _report_error(self, code: str, error: Exception) -> None:
+		logger.warning("Worker operation failed. code=%s error_type=%s", code, type(error).__name__)
+		if self.signals.error.msg is None:
+			self.signals.error.emit(RuntimeError(code))
+
+	def create_document_base(self, source_documents: list[tuple[int, str, str]],
+			attributes: list[Attribute], statistics: Statistics) -> int:
+		started = time.monotonic()
 		try:
-			if self.sqLiteCacheDBWrapper is not None:
-				self.sqLiteCacheDBWrapper.reset_cache_db()
-
+			documents = [Document(name, content) for _, name, content in source_documents]
 			document_base = DocumentBase(documents, attributes)
-			if self.sqLiteCacheDBWrapper is not None:
-				self.sqLiteCacheDBWrapper.cache_db.create_input_docs_table(INPUT_DOCS_COLUMN_NAME, document_base.documents)
-
 			if not document_base.validate_consistency():
-				logger.error("Document base is inconsistent!")
-				self.signals.error.emit(Exception("Document base is inconsistent!"))
-
+				raise ValueError("Document base is inconsistent.")
 			self._preprocess(document_base, statistics)
+			serialized = document_base.to_bson()
+		except Exception as error:
+			self._report_error("CREATE_FAILED", error)
+			raise
 
-			self.document_base = document_base
-
-			self.signals.statistics.emit(statistics)
-			self.signals.finished.emit(1)
-			self.signals.status.emit("Finished!")
-
-
-		except Exception as e:
-			logger.error(str(e))
-			self.signals.error.emit(e)
-			raise e
+		self.signals.status.emit("Saving document base.")
+		try:
+			base_id, _ = create_document_base_with_snapshot(
+				self.document_base_name, [attribute.name for attribute in attributes],
+				self.organisation_id, source_documents, self.user_id, serialized)
+		except DocumentBaseCreationConflict as error:
+			self._report_error("CREATE_CONFLICT", error)
+			raise
+		except PermissionError as error:
+			self._report_error("CREATE_ACCESS_DENIED", error)
+			raise
+		except ValueError as error:
+			self._report_error("CREATE_INPUT_CHANGED", error)
+			raise
+		except Exception as error:
+			self._report_error("CREATE_FAILED", error)
+			raise
+		logger.info("Document base creation committed. duration_seconds=%.3f", time.monotonic() - started)
+		return base_id
 
 	def _preprocess(self, document_base: DocumentBase, statistics: Statistics):
 		# load default preprocessing phase
@@ -226,70 +223,31 @@ class WannaDB_WebAPI:
 		preprocessing_phase(document_base, EmptyInteractionCallback(), self.status_callback, statistics)
 
 	def load_document_base_from_bson(self):
-		logger.debug("Called function 'load_document_base_from_bson'.")
+		logger.debug("Loading document base snapshot.")
 		try:
 			if self.sqLiteCacheDBWrapper is not None:
 				self.sqLiteCacheDBWrapper.reset_cache_db()
 
-			try:
-				document_id, document = get_document_by_name(self.document_base_name, self.organisation_id, self.user_id)
-			except Exception as e:
-				if "No document with that name found" in str(e):
-					logger.error("Document not found!")
-					self.signals.error.emit(Exception("Document not found!"))
-					return
-				elif "Multiple documents with the same name found" in str(e):
-					logger.error("Multiple documents with the same name found!")
-					self.signals.error.emit(Exception("Multiple documents with the same name found!"))
-					return
-				else:
-					raise e
-
-			if not isinstance(document, bytes):
-				logger.error("document is not a DocumentBase!")
-				self.signals.error.emit(Exception("document is not a DocumentBase!"))
+			scope = get_signal_scope()
+			snapshot = get_document_base_snapshot(self.document_base_name, scope["base_id"],
+				self.organisation_id, self.user_id)
+			if snapshot is None:
+				self.signals.error.emit(RuntimeError("Document base snapshot not found."))
 				return
 
-			self._expected_bson = document
+			document_id, document = snapshot
 			document_base = DocumentBase.from_bson(document)
-
-			# from_bson already validates consistency before returning.
 			if self.sqLiteCacheDBWrapper is not None:
 				for attribute in document_base.attributes:
 					self.sqLiteCacheDBWrapper.cache_db.create_table_by_name(attribute.name)
 				self.sqLiteCacheDBWrapper.cache_db.create_input_docs_table(INPUT_DOCS_COLUMN_NAME, document_base.documents)
 
-			logger.info(f"Document base loaded from BSON with id {document_id}.")
 			self.document_base = document_base
 			self.document_id = document_id
-
-		except Exception as e:
-			logger.error(str(e))
-			self.signals.error.emit(e)
-			raise e
-
-	def save_document_base_to_bson(self):
-		logger.debug("Called function 'save_document_base_to_bson'.")
-
-		try:
-			serialized = self.document_base.to_bson()
-			document_id, _ = add_document(self.document_base_name, serialized, self.organisation_id,
-									  self.user_id)
-
-			if not isinstance(document_id, int) or isinstance(document_id, bool) or document_id <= 0:
-				message = "Document base could not be saved to BSON!"
-				logger.error(message)
-				self.signals.error.emit(Exception(message))
-				return
-			logger.info(f"Document base saved to BSON with ID {document_id}.")
-			self.signals.status.emit(f"Document base saved to BSON with ID {document_id}.")
-			self.document_id = document_id
-			self._expected_bson = serialized
-			return
-		except Exception as e:
-			logger.error(str(e))
-			self.signals.error.emit(e)
-			raise e
+			self._expected_bson = document
+		except Exception as error:
+			self._report_error("BASE_LOAD_FAILED", error)
+			raise
 
 	def update_document_base_to_bson(self, *, update_attributes=False):
 		if self._document_id is None or self._expected_bson is None:
@@ -315,7 +273,8 @@ class WannaDB_WebAPI:
 		self.signals.feedback_request_to_ui.emit(feedback_request)
 		phase = "selection" if "do-attribute-request" in feedback_request else "ranking"
 		attribute = feedback_request.get("attribute")
-		self.session.publish(phase, getattr(attribute, "name", None), self._pending_command_id)
+		version = self.session.publish(phase, getattr(attribute, "name", None), self._pending_command_id)
+		logger.debug("Feedback published. phase=%s version=%s", phase, version)
 		self._pending_command_id = None
 
 	def complete_session(self):
@@ -355,10 +314,9 @@ class WannaDB_WebAPI:
 				writer = csv.writer(buffer, delimiter=",", quotechar='"', quoting=csv.QUOTE_ALL)
 				writer.writerow(headers)
 				writer.writerows(rows)
-		except Exception as e:
-			logger.error(str(e))
-			self.signals.error.emit(e)
-			raise e
+		except Exception as error:
+			self._report_error("TABLE_EXPORT_FAILED", error)
+			raise
 
 	def mutate_documents(self, *, additions=(), replacement=None, removal=None):
 		documents = list(additions)
@@ -370,12 +328,11 @@ class WannaDB_WebAPI:
 				self._preprocess(DocumentBase(documents, []), Statistics(False))
 			self.document_base = mutate_base_documents(self.document_base_name, scope["base_id"],
 				self.organisation_id, self.user_id, additions=additions, replacement=replacement, removal=removal)
-		except DatabaseError:
-			logger.exception("Could not commit document changes")
-			self.signals.error.emit(RuntimeError("PERSISTENCE_FAILED"))
+		except PermissionError as error:
+			self._report_error("STALE_BASE", error)
 			raise
-		except (PermissionError, RuntimeError, ValueError) as error:
-			self.signals.error.emit(error)
+		except Exception as error:
+			self._report_error("PERSISTENCE_FAILED", error)
 			raise
 		self.signals.status.emit("Changes saved.")
 
@@ -409,15 +366,14 @@ class WannaDB_WebAPI:
 				for document in self.document_base.documents:
 					if attribute.name in document.attribute_mappings.keys():
 						del document.attribute_mappings[attribute.name]
-				self.signals.status.emit(f"Matches for attribute '{attribute.name}' forgotten.")
+				self.signals.status.emit("Matches forgotten.")
 				self.signals.document_base_to_ui.emit(self.document_base)
 			else:
 				logger.error("Attribute name does not exist!")
 				self.signals.error.emit(Exception("Attribute name does not exist!"))
-		except Exception as e:
-			logger.error(str(e))
-			self.signals.error.emit(e)
-			raise e
+		except Exception as error:
+			self._report_error("RESET_FAILED", error)
+			raise
 
 	def forget_matches(self):
 		logger.debug("Called function 'forget_matches'.")
@@ -429,10 +385,9 @@ class WannaDB_WebAPI:
 				document.attribute_mappings.clear()
 			self.signals.document_base_to_ui.emit(self.document_base)
 			self.signals.finished.emit(1)
-		except Exception as e:
-			logger.error(str(e))
-			self.signals.error.emit(e)
-			raise e
+		except Exception as error:
+			self._report_error("RESET_FAILED", error)
+			raise
 
 	## todo: below not implemented yet
 
@@ -440,10 +395,9 @@ class WannaDB_WebAPI:
 		logger.debug("Called function 'save_statistics_to_json'.")
 		try:
 			return json.dumps(self.signals.statistics.to_json(), indent=2)
-		except Exception as e:
-			logger.error(str(e))
-			self.signals.error.emit(e)
-			raise e
+		except Exception as error:
+			self._report_error("STATISTICS_EXPORT_FAILED", error)
+			raise
 
 	def interactive_table_population(self):
 		logger.debug("Called slot 'interactive_table_population'.")
@@ -514,7 +468,6 @@ class WannaDB_WebAPI:
 						   Statistics(False))
 			self.signals.document_base_to_ui.emit(self.document_base)
 			self.signals.finished.emit(1)
-		except Exception as e:
-			logger.error(str(e))
-			self.signals.error.emit(e)
-			raise e
+		except Exception as error:
+			self._report_error("MATCHING_FAILED", error)
+			raise

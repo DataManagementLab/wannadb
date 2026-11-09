@@ -763,7 +763,7 @@ class FaissSentenceSimilarityExtractor(BaseCustomMatchExtractor):
             s, e, t = doc.sentence(sentence_index)
             similar_sentences.append((doc_index, t, s, e))
         if len(similar_sentences) == 0:
-            logger.warning(f"Found no similar sentences to {sentence} in the remaining documents.")
+            logger.warning("No similar sentences found in the remaining documents.")
             return []
 
         # Second stage, find the most similar phrases in these sentences
@@ -779,7 +779,8 @@ class FaissSentenceSimilarityExtractor(BaseCustomMatchExtractor):
             # Generate n-grams from tokens
             phrases = [self.detokenizer.detokenize(ngram) for ngram in nltk.ngrams(tokens, min(n, len(tokens)))]
             if len(tokens) == 0 or len(phrases) == 0:
-                logger.warning(f"Failed to build phrases from '{sentence[1]}' (tokens: {tokens}, phrases: {phrases}, n: {n})")
+                logger.warning("Could not build extraction phrases (%d tokens, %d phrases, n=%d).",
+                               len(tokens), len(phrases), n)
                 continue
 
             # Compute the cosine similarity between the given phrase and the phrases in the list
@@ -800,7 +801,7 @@ class FaissSentenceSimilarityExtractor(BaseCustomMatchExtractor):
                 phrase_in_sentence = sentence[1][start_char:end_char]
                 phrase_in_text = doc.text[start_char + sentence[2]:end_char + sentence[2]]
                 if phrase != phrase_in_sentence or phrase != phrase_in_text:
-                    logger.warning(f"Extraction lookup failed ('{phrase}', in sentence '{phrase_in_sentence}', in text '{phrase_in_text}'). Original sentence was '{sentence[1]}'")
+                    logger.warning("Extracted phrase did not match its source span.")
                 else:
                     # Transform sentence-based start and end chars to document-based ones
                     # and append to matches

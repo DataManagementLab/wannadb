@@ -1,11 +1,12 @@
 import logging
+from contextlib import closing
 from typing import Union
 from deprecated import deprecated
 
 import bcrypt
 from psycopg2 import sql
 
-from wannadb_web.postgres.util import execute_query, execute_transaction
+from wannadb_web.postgres.util import connectPG, execute_query, execute_transaction
 
 logger = logging.getLogger(__name__)
 
@@ -27,26 +28,51 @@ def get_document_scope(document_id: int, user_id: int):
 		FROM documents d
 		JOIN membership m ON m.organisationid = d.organisationid
 		LEFT JOIN document_bases b ON b.id = d.documentbaseid AND b.organisation_id = d.organisationid
-		WHERE d.id = %s AND m.userid = %s AND m.authorisation IN (0, 1, 10);""")
+		WHERE d.id = %s AND d.content IS NOT NULL
+		AND m.userid = %s AND m.authorisation IN (0, 1, 10);""")
 	result = execute_query(query, (document_id, user_id))
 	if isinstance(result, list) and len(result) == 1:
 		return tuple(result[0])
 	return None
 
 
+def _valid_document_ids(document_ids: list[int]) -> bool:
+	return (
+		isinstance(document_ids, list) and bool(document_ids)
+		and all(type(document_id) is int and 0 < document_id <= 9223372036854775807 for document_id in document_ids)
+		and len(set(document_ids)) == len(document_ids)
+	)
+
+
 def documents_available_for_base(document_ids: list[int], user_id: int, organisation_id: int):
-	"""Require every selected document to be unassigned and in the authorized organization."""
-	if (not isinstance(document_ids, list) or
-		any(type(document_id) is not int or document_id <= 0 for document_id in document_ids) or
-		len(set(document_ids)) != len(document_ids)):
+	"""Require every selected text document to be unassigned and in the authorized organization."""
+	if not _valid_document_ids(document_ids):
 		return False
-	if get_organisation_authorisation(user_id, organisation_id) is None:
-		return False
-	query = sql.SQL("""SELECT id FROM documents WHERE id = ANY(%s)
-		AND organisationid = %s AND documentbaseid IS NULL;""")
-	result = execute_query(query, (document_ids, organisation_id))
-	return (not document_ids and result is None) or (
-		isinstance(result, list) and {row[0] for row in result} == set(document_ids))
+	query = sql.SQL("""SELECT d.id FROM documents d WHERE d.id = ANY(%s)
+		AND d.organisationid = %s AND d.documentbaseid IS NULL AND d.content IS NOT NULL
+		AND EXISTS (SELECT 1 FROM membership m WHERE m.userid = %s
+			AND m.organisationid = d.organisationid AND m.authorisation IN (0, 1, 10));""")
+	result = execute_query(query, (document_ids, organisation_id, user_id))
+	if result is False:
+		raise RuntimeError("Could not check document availability.")
+	return isinstance(result, list) and len(result) == len(document_ids)
+
+
+def get_creation_documents(document_ids: list[int], user_id: int, organisation_id: int):
+	"""Read the exact inputs to preprocess. The commit checks these same rows again."""
+	if not _valid_document_ids(document_ids):
+		return None
+	query = sql.SQL("""SELECT d.id, d.name, d.content FROM documents d WHERE d.id = ANY(%s)
+		AND d.organisationid = %s AND d.documentbaseid IS NULL AND d.content IS NOT NULL
+		AND EXISTS (SELECT 1 FROM membership m WHERE m.userid = %s
+			AND m.organisationid = d.organisationid AND m.authorisation IN (0, 1, 10));""")
+	result = execute_query(query, (document_ids, organisation_id, user_id))
+	if result is False:
+		raise RuntimeError("Could not load documents for base creation.")
+	if not isinstance(result, list) or len(result) != len(document_ids):
+		return None
+	by_id = {row[0]: row for row in result}
+	return [by_id[document_id] for document_id in document_ids]
 
 
 def get_user_id(user: str):
@@ -283,7 +309,7 @@ def get_document_ids_for_snapshot(base_id: int, organisation_id: int, user_id: i
 	if not documents:
 		return {}
 	query = sql.SQL("""SELECT d.id, d.name, d.content FROM documents d
-		WHERE d.documentbaseid = %s AND d.organisationid = %s AND d.name = ANY(%s)
+		WHERE d.documentbaseid = %s AND d.organisationid = %s AND d.name = ANY(%s) AND d.content IS NOT NULL
 		AND EXISTS (SELECT 1 FROM membership m WHERE m.userid = %s
 			AND m.organisationid = d.organisationid AND m.authorisation IN (0, 1, 10));""")
 	result = execute_query(query, (base_id, organisation_id, list(documents), user_id))
@@ -324,153 +350,94 @@ def _get_document(documentId: int):
 		return None
 
 
-def get_document_by_name(document_name: str, organisation_id: int, user_id: int, base_name: str = None) -> tuple[str, Union[str, bytes]]:
-	"""
-	Gets a document by its name within a specific organisation for a specific user.
- 
-	:param document_name: The name of the document to retrieve.
-	:type document_name: str
-	:param organisation_id: The ID of the organisation the document belongs to.
-	:type organisation_id: int
-	:param user_id: The ID of the user requesting the document.
-	:type user_id: int
-	:return: A tuple containing the document name and its content (as str or bytes).
-	:rtype: tuple[str, Union[str, bytes]]
-	:raises Exception: if no document with that name is found
-	:raises Exception: if multiple documents with that name are found
-	"""
-	select_query = sql.SQL("""SELECT id,content,content_byte
+def document_base_snapshot_scope():
+	"""Match a linked snapshot, or the exact legacy unlinked name if no linked snapshot exists."""
+	return sql.SQL("""d.organisationid = b.organisation_id
+		AND d.content IS NULL AND d.content_byte IS NOT NULL
+		AND (d.documentbaseid = b.id OR (
+			d.documentbaseid IS NULL AND d.name = b.name
+			AND NOT EXISTS (
+				SELECT 1 FROM documents linked
+				WHERE linked.documentbaseid = b.id AND linked.organisationid = b.organisation_id
+				AND linked.content IS NULL AND linked.content_byte IS NOT NULL
+			)
+		))""")
 
-							 FROM documents d
-							 JOIN membership m ON d.organisationid = m.organisationid
-							 WHERE d.name = (%s) AND m.userid = (%s) AND m.organisationid = (%s)
-							 AND m.authorisation IN (0, 1, 10)
-							 AND (%s IS NULL OR d.documentbaseid = (SELECT id FROM document_bases
-							 WHERE name = %s AND organisation_id = %s))
-							 """)
 
-	result = execute_query(select_query, (document_name, user_id, organisation_id, base_name, base_name, organisation_id))
+def document_base_snapshot_query(*, lock=False):
+	query = sql.SQL("""SELECT d.id, d.content_byte
+		FROM document_bases b JOIN documents d ON {scope}
+		WHERE b.name = %s AND b.id = %s AND b.organisation_id = %s
+		AND EXISTS (SELECT 1 FROM membership m WHERE m.userid = %s
+			AND m.organisationid = b.organisation_id AND m.authorisation IN (0, 1, 10))
+		LIMIT 2""").format(scope=document_base_snapshot_scope())
+	return query + sql.SQL(" FOR UPDATE OF d") if lock else query
+
+
+def get_document_base_snapshot(base_name: str, base_id: int, organisation_id: int, user_id: int):
+	"""Read only the authorized base's unique saved snapshot."""
+	result = execute_query(document_base_snapshot_query(), (base_name, base_id, organisation_id, user_id))
+	if result is False:
+		raise RuntimeError("Could not load the saved document base.")
+	if isinstance(result, list) and len(result) == 1:
+		snapshot_id, content = result[0]
+		return snapshot_id, bytes(content)
+	return None
+
+
+def get_document_by_name(document_name: str, organisation_id: int, user_id: int, base_name: str = None) -> tuple[str, str]:
+	"""Get a raw text document by name, scoped to the organization and optional base."""
+	query = sql.SQL("""SELECT d.id, d.content FROM documents d
+		JOIN membership m ON d.organisationid = m.organisationid
+		WHERE d.name = %s AND m.userid = %s AND m.organisationid = %s
+		AND d.content IS NOT NULL AND m.authorisation IN (0, 1, 10)
+		AND (%s IS NULL OR d.documentbaseid = (SELECT id FROM document_bases
+			WHERE name = %s AND organisation_id = %s));""")
+	result = execute_query(query, (document_name, user_id, organisation_id, base_name, base_name, organisation_id))
 	if not isinstance(result, list) or not result:
-		raise Exception("No document with that name found")
-	if len(result) == 1:
-		document = result[0]
-		id = document[0]
-		if document[1] is not None:
-			content = document[1]
-			return str(id), str(content)
-		elif document[2] is not None:
-			content = document[2]
-			return str(id), bytes(content)
-	elif len(result) > 1:
-		raise Exception("Multiple documents with the same name found")
-	raise Exception("No document with that name found")
+		raise LookupError("No document with that name found")
+	if len(result) != 1:
+		raise LookupError("Multiple documents with the same name found")
+	document_id, content = result[0]
+	return str(document_id), content
 
 
 def get_document(document_id: int, user_id: int, organisation_id: int = None, base_name: str = None):
-	"""
-	Gets a document by its ID for a specific user.
- 
-	:param document_id: The ID of the document to retrieve.
-	:type document_id: int
-	:param user_id: The ID of the user requesting the document.
-	:type user_id: int
-	:return: A tuple containing the document name and its content (as str or bytes), or None if not found.
-	:rtype: Union[tuple[str, Union[str, bytes]], None]
-	"""
-	select_query = sql.SQL("""SELECT name,content,content_byte 
-							 FROM documents 
-							 JOIN membership m ON documents.organisationid = m.organisationid
-							 WHERE id = (%s) AND m.userid = (%s)
-							 AND m.authorisation IN (0, 1, 10)
-							 AND (%s IS NULL OR documents.organisationid = %s)
-							 AND (%s IS NULL OR documents.documentbaseid = (SELECT id FROM document_bases
-							 WHERE name = %s AND organisation_id = %s))
-							 """)
+	"""Get a raw text document by ID for an authorized member."""
+	query = sql.SQL("""SELECT d.name, d.content FROM documents d
+		JOIN membership m ON d.organisationid = m.organisationid
+		WHERE d.id = %s AND m.userid = %s AND m.authorisation IN (0, 1, 10)
+		AND d.content IS NOT NULL AND (%s IS NULL OR d.organisationid = %s)
+		AND (%s IS NULL OR d.documentbaseid = (SELECT id FROM document_bases
+			WHERE name = %s AND organisation_id = %s));""")
+	result = execute_query(query, (document_id, user_id, organisation_id, organisation_id, base_name, base_name, organisation_id))
+	return result[0] if isinstance(result, list) and len(result) == 1 else (None, None)
 
-	result = execute_query(select_query, (document_id, user_id, organisation_id, organisation_id, base_name, base_name, organisation_id))
-	if isinstance(result, list) and result:
+
+def get_document_by_name_and_content(doc_name: str, doc_content: str, user_id: int, organisation_id: int = None, base_name: str = None):
+	"""Find a raw text document that still has the supplied content."""
+	query = sql.SQL("""SELECT d.id, d.name, d.content FROM documents d
+		JOIN membership m ON d.organisationid = m.organisationid
+		WHERE d.name = %s AND m.userid = %s AND m.authorisation IN (0, 1, 10)
+		AND d.content IS NOT NULL AND (%s IS NULL OR d.organisationid = %s)
+		AND (%s IS NULL OR d.documentbaseid = (SELECT id FROM document_bases
+			WHERE name = %s AND organisation_id = %s));""")
+	result = execute_query(query, (doc_name, user_id, organisation_id, organisation_id, base_name, base_name, organisation_id))
+	if isinstance(result, list):
 		for document in result:
-			name = document[0]
-			if document[1] is not None:
-				content = document[1]
-				return str(name), str(content)
-			elif document[2] is not None:
-				content = document[2]
-				return str(name), bytes(content)
-	return None, None
-
-
-def get_document_by_name_and_content(doc_name: str, doc_content: Union[str, bytes], user_id: int, organisation_id: int = None, base_name: str = None):
-	"""
-	Gets a document by its name and content for a specific user.
- 
-	:param doc_name: The name of the document to retrieve.
-	:type doc_name: str
-	:param doc_content: The content of the document to retrieve.
-	:type doc_content: Union[str, bytes]
-	:param user_id: The ID of the user requesting the document.
-	:type user_id: int
-	:return: A tuple containing the document name and its content (as str or bytes), or None if not found.
-	:rtype: Union[tuple[str, Union[str, bytes]], tuple[None, None]]
-	"""
-	select_query = sql.SQL("""	SELECT id, name,content,content_byte 
-							 	FROM documents 
-							 	JOIN membership m ON documents.organisationid = m.organisationid
-							 	WHERE name = (%s) AND m.userid = (%s)
-								AND m.authorisation IN (0, 1, 10)
-								AND (%s IS NULL OR documents.organisationid = %s)
-								AND (%s IS NULL OR documents.documentbaseid = (SELECT id FROM document_bases
-								WHERE name = %s AND organisation_id = %s))
-							 """)
-        						#AND content LIKE %(%s)%
-
-	result = execute_query(select_query, (doc_name, user_id, organisation_id, organisation_id, base_name, base_name, organisation_id))
-	if isinstance(result, list) and result:
-		for document in result:
-			name = document[1]
-			if document[2] is not None:
-				content = document[2]
-				if content == doc_content:
-					return int(document[0]), str(name), str(content)
-			elif document[3] is not None:
-				content = document[3]
-				if content == doc_content:
-					return int(document[0]), str(name), bytes(content)
+			if document[2] == doc_content:
+				return document
 	return None, None, None
 
 
 def get_documents_for_organisation(organisation_id: int):
-	"""
-	Gets all documents for a specific organisation.
- 
-	:param organisation_id: The ID of the organisation to retrieve documents for.
-	:type organisation_id: int
-	:return: A list of dictionaries containing document IDs, names, and contents.
-	:rtype: list[dict[str, Union[int, str]]]
-	"""
-	select_query = sql.SQL("""SELECT id, name,content,content_byte 
-						 FROM documents 
-						 WHERE organisationid = (%s)
-						 """)
-	result = execute_query(select_query, (organisation_id,))
-
-	if result is None or len(result) == 0:
+	"""List text documents. Saved snapshots are internal artifacts."""
+	query = sql.SQL("""SELECT id, name, content FROM documents
+		WHERE organisationid = %s AND content IS NOT NULL;""")
+	result = execute_query(query, (organisation_id,))
+	if not isinstance(result, list):
 		return []
-
-	doc_array = []
-
-	for document in result:
-		id = document[0]
-		name = document[1]
-		if document[2] == None:
-			continue
-		content = document[2]
-		doc_array.append({
-			"id": id,
-			"name": name,
-			"content": content
-		})
-	return doc_array
+	return [{"id": document_id, "name": name, "content": content} for document_id, name, content in result]
 
 
 def get_document_bases_for_organisation(organisation_id: int):
@@ -496,33 +463,20 @@ def get_document_bases_for_organisation(organisation_id: int):
 	return doc_array
 
 
-def update_document_content(doc_id: int, new_content, organisation_id: int = None, base_id: int = None, user_id: int = None):
-	"""
-	Updates the content of a document by its ID.
- 
-	:param doc_id: The ID of the document to update.
-	:type doc_id: int
-	:param new_content: The new content to set for the document.
-	:type new_content: Union[str, bytes]
-	:return: True if the update was successful, False otherwise.
-	:rtype: bool
-	"""
+def update_document_content(doc_id: int, new_content: str, organisation_id: int = None, base_id: int = None, user_id: int = None):
+	"""Update a raw text document, returning success only for an affected row."""
+	if not isinstance(new_content, str):
+		return False
 	try:
-		scope = sql.SQL("""d.id = %s
+		query = sql.SQL("""UPDATE documents d SET content = %s WHERE d.id = %s AND d.content IS NOT NULL
 			AND (%s IS NULL OR d.organisationid = %s)
 			AND (%s IS NULL OR d.documentbaseid IS NOT DISTINCT FROM %s)
 			AND (%s IS NULL OR EXISTS (SELECT 1 FROM membership m WHERE m.userid = %s
-			AND m.organisationid = d.organisationid AND m.authorisation IN (0, 1, 10)))""")
-		params = (doc_id, organisation_id, organisation_id, user_id, base_id, user_id, user_id)
-		lookup = sql.SQL("SELECT content FROM documents d WHERE {scope};").format(scope=scope)
-		current = execute_query(lookup, params)
-		if not isinstance(current, list) or not current:
-			return False
-		column = sql.Identifier("content" if current[0][0] is not None else "content_byte")
-		query = sql.SQL("UPDATE documents d SET {column} = %s WHERE {scope} RETURNING d.id;").format(
-			column=column, scope=scope)
-		result = execute_transaction(query, (new_content,) + params, commit=True)
-		return isinstance(result, list) and bool(result)
+				AND m.organisationid = d.organisationid AND m.authorisation IN (0, 1, 10)))
+			RETURNING d.id;""")
+		params = (new_content, doc_id, organisation_id, organisation_id, user_id, base_id, user_id, user_id)
+		result = execute_transaction(query, params, commit=True)
+		return isinstance(result, list) and len(result) == 1
 	except Exception:
 		logger.error("Could not update document content")
 		return False
@@ -530,33 +484,33 @@ def update_document_content(doc_id: int, new_content, organisation_id: int = Non
 
 def compare_and_swap_document_content(doc_id: int, new_bytes: bytes, expected_bytes: bytes,
 		organisation_id: int, user_id: int, base_id: int = None, attributes: list[str] = None) -> bool:
-	"""Replace a standalone BSON snapshot only while its exact loaded bytes remain current."""
-	if not isinstance(new_bytes, bytes) or not isinstance(expected_bytes, bytes):
+	"""Replace the scoped snapshot if its bytes still match, updating metadata atomically."""
+	if type(base_id) is not int or base_id <= 0 or not isinstance(new_bytes, bytes) or not isinstance(expected_bytes, bytes):
 		return False
 	try:
-		base_guard = sql.SQL("""(%s IS NULL OR EXISTS (SELECT 1 FROM document_bases b
-			WHERE b.id = %s AND b.organisation_id = d.organisationid))""")
-		base_params = (base_id, base_id)
-		if attributes is not None:
-			base_guard = sql.SQL("EXISTS (SELECT 1 FROM locked_base)")
-			base_params = ()
-		query = sql.SQL("""UPDATE documents d SET content_byte = %s
-			WHERE d.id = %s AND d.organisationid = %s AND d.documentbaseid IS NULL
-			AND d.content IS NULL AND d.content_byte = %s
-			AND EXISTS (SELECT 1 FROM membership m WHERE m.userid = %s
-			AND m.organisationid = d.organisationid AND m.authorisation IN (0, 1, 10))
-			AND {base_guard} RETURNING d.id""").format(base_guard=base_guard)
-		params = (new_bytes, doc_id, organisation_id, expected_bytes, user_id) + base_params
-		if attributes is not None:
-			query = sql.SQL("""WITH locked_base AS (
-				SELECT id FROM document_bases WHERE id = %s AND organisation_id = %s FOR UPDATE
-			), replaced AS ({snapshot})
-			UPDATE document_bases SET attributes = %s FROM locked_base
-			WHERE document_bases.id = locked_base.id AND EXISTS (SELECT 1 FROM replaced)
-			RETURNING document_bases.id;""").format(snapshot=query)
-			params = (base_id, organisation_id) + params + (attributes,)
-		result = execute_transaction(query, params, commit=True)
-		return isinstance(result, list) and bool(result)
+		with closing(connectPG()) as conn, conn, conn.cursor() as cur:
+			# Match the base-first lock order used by document edits and deletion.
+			cur.execute("""SELECT b.id FROM document_bases b WHERE b.id = %s AND b.organisation_id = %s
+				AND EXISTS (SELECT 1 FROM membership m WHERE m.userid = %s
+					AND m.organisationid = b.organisation_id AND m.authorisation IN (0, 1, 10))
+				FOR UPDATE;""", (base_id, organisation_id, user_id))
+			if cur.fetchone() is None:
+				return False
+
+			replace = sql.SQL("""UPDATE documents d SET content_byte = %s FROM document_bases b
+				WHERE b.id = %s AND d.id = %s AND d.content_byte = %s AND {scope};""").format(
+				scope=document_base_snapshot_scope())
+			cur.execute(replace, (new_bytes, base_id, doc_id, expected_bytes))
+			if cur.rowcount == 0:
+				return False
+			if attributes is None:
+				cur.execute("UPDATE document_bases SET last_modified = now() WHERE id = %s;", (base_id,))
+			else:
+				cur.execute("UPDATE document_bases SET attributes = %s, last_modified = now() WHERE id = %s;",
+					(attributes, base_id))
+			if cur.rowcount != 1:
+				raise RuntimeError("The document base metadata could not be updated.")
+			return True
 	except Exception:
 		logger.error("Could not replace document-base snapshot")
 		return False
@@ -572,7 +526,7 @@ def delete_document_content(doc_id: int, organisation_id: int = None, base_id: i
 	:rtype: bool
 	"""
 	try:
-		query = sql.SQL("""DELETE FROM documents d WHERE d.id = %s
+		query = sql.SQL("""DELETE FROM documents d WHERE d.id = %s AND d.content IS NOT NULL
 			AND (%s IS NULL OR d.organisationid = %s)
 			AND (%s IS NULL OR d.documentbaseid IS NOT DISTINCT FROM %s)
 			AND (%s IS NULL OR EXISTS (SELECT 1 FROM membership m WHERE m.userid = %s

@@ -391,7 +391,7 @@ class SBERTDocumentSentenceEmbedder(BaseSBERTEmbedder):
         for doc in document_base.documents:
             # Look for DocumentSentenceEmbeddingSignal
             if not 'DocumentSentenceEmbeddingSignal' in doc.signals:
-                logger.info(f"Embedding all sentences of document {doc.name}...")
+                logger.debug("Embedding document sentences.")
                 sentences: List[str] = doc.sentences
                 embeddings: List[np.ndarray] = self._encode_unique(sentences)
                 doc[DocumentSentenceEmbeddingSignal] = DocumentSentenceEmbeddingSignal(embeddings)
@@ -507,8 +507,7 @@ class BERTContextSentenceEmbedder(BaseEmbedder):
 
             if not token_indices:
                 statistics["num_no_token_indices"] += 1
-                logger.error(f"There are no token indices for nugget '{nugget.text}' in '{context_sentence}'!")
-                logger.error("==> Using all-zero embedding vector.")
+                logger.warning("BERT span has no token indices. Using a zero vector.")
                 embedding: np.ndarray = np.zeros_like(output[0])
             else:
                 # Offsets refer to the original context. Shift token indices into the model's window.
@@ -649,8 +648,8 @@ class FastTextLabelEmbedder(BaseEmbedder):
 
         if embeddings == []:
             statistics["unable_to_embed_label"] += 1
-            logger.error(f"Unable to embed label '{label}' with FastText, no known tokens!")
-            assert False, f"Unable to embed label '{label}' with FastText, no known tokens!"
+            logger.error("Unable to embed a label with FastText: no known tokens.")
+            assert False, "Unable to embed a label with FastText: no known tokens."
         else:
             # noinspection PyTypeChecker
             return LabelEmbeddingSignal(np.mean(np.array(embeddings), axis=0))

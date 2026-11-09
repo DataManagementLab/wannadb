@@ -8,19 +8,19 @@ from uuid import uuid4
 from typing import Optional, Any, Union
 
 from celery import Task
+from celery.exceptions import TaskPredicate
 
 import wannadb.resources
 from wannadb.data.data import Document, Attribute, InformationNugget
 from wannadb.resources import ResourceManager
 from wannadb.statistics import Statistics
 from wannadb_web.Redis.RedisCache import RedisCache, TaskAccess, SessionState, set_signal_scope, get_signal_scope
-from wannadb_web.postgres.queries import get_documents, get_base_id
+from wannadb_web.postgres.queries import get_creation_documents, get_base_id
 from wannadb_web.worker.Web_API import WannaDB_WebAPI
 from wannadb_web.worker.data import DoAttributeRanking, MultiNuggetsMatchFeedback, ReloadDocumentBase, Signals, NoMatchFeedback, NuggetMatchFeedback, CustomMatchFeedback, SkipAttributeRanking, StopMatching
 from wannadb_web.worker.util import State
 
-logging.basicConfig(level=logging.DEBUG, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
-logger = logging.getLogger()
+logger = logging.getLogger(__name__)
 
 
 class InitManager(Task):
@@ -56,6 +56,16 @@ class BaseTask(Task):
 	def run(self, *args, **kwargs):
 		raise NotImplementedError("BaseTask is abstract")
 
+	def __call__(self, *args, **kwargs):
+		try:
+			return super().__call__(*args, **kwargs)
+		except TaskPredicate:
+			raise
+		except Exception as error:
+			# Celery records the raised exception and traceback. Keep library/SQL messages private.
+			logger.error("Task failed. task=%s error_type=%s", self.name, type(error).__name__)
+			raise RuntimeError("TASK_FAILED") from None
+
 	def apply_async(self, args=None, kwargs=None, task_id=None, **options):
 		parameters = inspect.signature(self.run).bind_partial(*(args or ()), **(kwargs or {})).arguments
 		user_id = parameters.get("user_id")
@@ -84,10 +94,14 @@ class BaseTask(Task):
 				raise PermissionError("A document base is required.")
 			scope = {"organisation_id": int(organisation_id), "base_name": parameters.get("base_name"),
 				"session_id": task_id, "interactive": isinstance(self, DocumentBaseInteractiveTablePopulation)}
-			scope["base_id"] = get_base_id(scope["base_name"], scope["organisation_id"])
+			if isinstance(self, CreateDocumentBase):
+				scope.update(base_id=0, creation=True)
+			else:
+				scope["base_id"] = get_base_id(scope["base_name"], scope["organisation_id"])
 			if not access.permitted(scope):
 				raise PermissionError("Document base access denied.")
 		access.register(task_id, scope)
+		options.update(argsrepr="[redacted]", kwargsrepr="[redacted]")
 		return super().apply_async(args=args, kwargs=kwargs, task_id=task_id, **options)
 
 	def before_start(self, task_id, args, kwargs):
@@ -98,6 +112,12 @@ class BaseTask(Task):
 		scope = access.task(task_id)
 		if not access.permitted(scope) or not scope.get("session_id"):
 			raise PermissionError("Document base access denied.")
+		creation = isinstance(self, CreateDocumentBase)
+		if creation != (scope.get("creation") is True) or (creation and (
+			scope["base_id"] != 0 or scope["base_name"] != parameters.get("base_name") or
+			scope["organisation_id"] != parameters.get("organisation_id")
+		)):
+			raise PermissionError("Task does not match its document base scope.")
 		if isinstance(self, FeedbackTask):
 			parent = access.task(scope["session_id"])
 			if not access.permitted(parent) or not parent.get("interactive"):
@@ -119,8 +139,13 @@ class BaseTask(Task):
 					if status != "SUCCESS":
 						session.reject(task_id, "Feedback could not be queued or was rejected.")
 				else:
-					message = Signals(str(scope["user_id"])).error.to_json()
-					session.close(error=(message or "The session failed.") if status != "SUCCESS" else None)
+					message = None
+					if status != "SUCCESS":
+						message = Signals(str(scope["user_id"])).error.to_json() or "The session failed."
+					session.close(error=message)
+		except Exception as error:
+			# A Redis error in this notification must not change the durable task result.
+			logger.warning("Task session finalization failed. task=%s error_type=%s", self.name, type(error).__name__)
 		finally:
 			set_signal_scope()
 
@@ -130,7 +155,7 @@ class BaseTask(Task):
 			wannadb.resources.ResourceManager()
 			BaseTask.load()
 			return
-		logging.info("loaded")
+		logger.debug("Worker resources ready.")
 
 	def update(self,
 			   state: State,
@@ -178,7 +203,6 @@ class TestTask(BaseTask):
 		while True:
 			_input = self.get_new_input()
 			if _input is not None:
-				print(_input)
 				self.update(state=State.SUCCESS, meta={"msg": _input})
 				time.sleep(2)
 			self.update(state=State.WAITING, meta={"msg": "waiting"})
@@ -188,58 +212,40 @@ class TestTask(BaseTask):
 class CreateDocumentBase(BaseTask):
 	name = "CreateDocumentBase"
 
-	def run(self, user_id: int, document_ids: list[int], attributes_strings: list[str], statistics_dump: bytes,
+	def run(self, user_id: int, document_ids: list[int], attributes_strings: list[str],
 			base_name: str, organisation_id: int):
-		self.load()
-		attributes: list[Attribute] = []
-		statistics: Statistics = pickle.loads(statistics_dump)
-		for attribute_string in attributes_strings:
-			if attribute_string == "":
-				logger.error("Attribute names cannot be empty!")
-				raise Exception("Attribute names cannot be empty!")
-			if attribute_string in [attribute.name for attribute in attributes]:
-				logger.error("Attribute names must be unique!")
-				raise Exception("Attribute names must be unique!")
-			attributes.append(Attribute(attribute_string))
+		signals = self._signals
+		if (not isinstance(document_ids, list) or not document_ids or
+			any(type(doc_id) is not int or not 0 < doc_id <= 9223372036854775807 for doc_id in document_ids) or
+			len(set(document_ids)) != len(document_ids) or not isinstance(attributes_strings, list) or
+			any(not isinstance(name, str) or not name.strip() or "\0" in name for name in attributes_strings) or
+			len(set(attributes_strings)) != len(attributes_strings)):
+			signals.error.emit(RuntimeError("CREATE_INVALID"))
+			raise ValueError("Invalid document or attribute selection.")
 
-		"""
-		init api
-		"""
-		api = WannaDB_WebAPI(user_id, base_name, organisation_id, timeout=len(document_ids) * 60, build_query_cache=False)
+		signals.status.emit("Reading documents.")
+		if get_base_id(base_name, organisation_id) is not None:
+			signals.error.emit(RuntimeError("CREATE_CONFLICT"))
+			raise ValueError("A document base with this name already exists.")
+		try:
+			source_documents = get_creation_documents(document_ids, user_id, organisation_id)
+		except RuntimeError:
+			signals.error.emit(RuntimeError("CREATE_FAILED"))
+			raise
+		if source_documents is None:
+			signals.error.emit(RuntimeError("CREATE_INPUT_CHANGED"))
+			raise ValueError("One or more documents are unavailable.")
 
-		"""
-		Creating document base
-		"""
-		if not isinstance(attributes[0], Attribute):
-			raise Exception("Invalid attributes")
-
-		if not isinstance(statistics, Statistics):
-			raise Exception("Invalid statistics")
-
-		docs = get_documents(document_ids, user_id, organisation_id)
-		if not docs or any(name is None or content is None for name, content in docs):
-			raise Exception(f"user with user id:{user_id} has no document with the document_ids: {document_ids}")
-
-		self.update(State.PENDING)
-		documents: list[Document] = []
-		if docs:
-			for doc in docs:
-				name = doc[0]
-				text = doc[1]
-				if name is None:
-					raise Exception("Document Name is none")
-				if text is None:
-					raise Exception("Document text is none")
-				documents.append(Document(name, text))
-
-		else:
-			raise Exception("No documents found")
-
-		api.create_document_base(documents, attributes, statistics)
-
-		self.check_api_error(api)
-		api.save_document_base_to_bson()
-		return self.finish(api)
+		try:
+			self.load()
+			api = WannaDB_WebAPI(user_id, base_name, organisation_id, build_query_cache=False)
+		except Exception:
+			signals.error.emit(RuntimeError("CREATE_FAILED"))
+			raise
+		attributes = [Attribute(name) for name in attributes_strings]
+		base_id = api.create_document_base(source_documents, attributes, Statistics(False))
+		# Celery's result is the acknowledgment. The base is already committed here.
+		return {"ok": True, "base_id": base_id}
 
 
 class DocumentBaseLoad(BaseTask):

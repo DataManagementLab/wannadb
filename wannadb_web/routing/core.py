@@ -27,20 +27,15 @@ Example:
 
 Author: Leon Wenderoth
 """
-import asyncio
-import logging.config
-import pickle
+import logging
 from uuid import UUID
 from typing import Optional
 
 from wannadb_web.postgres.queries import get_document_base_data, get_document_by_name_and_content, get_feedbacks_for_document, get_document_by_name, get_base_id, get_organisation_authorisation, documents_available_for_base, get_document_ids_for_snapshot
-from wannadb_web.postgres.transactions import add_feedback, add_document_base, delete_document_base_data
+from wannadb_web.postgres.transactions import add_feedback, delete_document_base_data
 
 from flask import Blueprint, make_response, request, g, abort
-from celery.result import AsyncResult
-from wannadb.data.data import Attribute, Document, InformationNugget, DocumentBase
-from wannadb.statistics import Statistics
-from wannadb_web.Redis.RedisCache import RedisCache, TaskAccess, SessionState
+from wannadb_web.Redis.RedisCache import TaskAccess, SessionState
 from wannadb_web.util import tokenDecode
 from wannadb_web.worker.data import Signals
 
@@ -97,14 +92,18 @@ def authorize_core_request():
 	if request.method == "OPTIONS":
 		return None
 	view = request.view_args or {}
-	token = tokenDecode(request.headers.get("Authorization") or view.get("token"))
+	token = tokenDecode(request.headers.get("Authorization"))
 	if token is None:
 		return make_response({"error": "invalid token"}, 401)
 	g.auth_token = token
 	endpoint = request.endpoint.rsplit(".", 1)[-1]
 	access = TaskAccess(token.id)
 	if endpoint == "task_status":
-		scope = access.task(view.get("task_id"))
+		try:
+			UUID(view.get("task_id"))
+		except (TypeError, ValueError, AttributeError):
+			return make_response({"error": "task not found"}, 404)
+		scope = access.task(view["task_id"])
 		if not access.permitted(scope) or not scope.get("session_id"):
 			return make_response({"error": "task not found"}, 404)
 		g.task_scope = scope
@@ -169,68 +168,41 @@ def authorize_core_request():
 
 @core_routes.route('/document_base', methods=['POST'])
 def create_document_base():
-	"""
-    Endpoint for creating a document base.
-
-	This endpoint is used to create a document base from a list of document ids and a list of attributes.
-
-	Header:
-    {
-        "Authorization": "your_authorization_token"
-    }
-
-    Example Form Payload:
-    {
-        "organisationId": "your_organisation_id",
-        "baseName": "your_document_base_name",
-        "document_ids": [1, 2, 3],
-        "attributes": "plane,car,bike"
-    }
-    """
+	"""Queue preprocessing. The worker creates the base only when all data is ready."""
 	form = request.get_json()
-	authorization = request.headers.get("Authorization")
-	organisation_id: Optional[int] = form.get("organisationId")
 	base_name = form.get("baseName")
-	document_ids: Optional[list[int]] = form.get("document_ids")
-	attributes_strings = form.get("attributes")
-	if (organisation_id is None or base_name is None or document_ids is None or attributes_strings is None
-			or authorization is None):
-		return make_response({"error": "missing parameters"}, 400)
-	_token = tokenDecode(authorization)
+	document_ids = form.get("document_ids")
+	if not isinstance(base_name, str) or not base_name.strip() or '\0' in base_name or "attributes" not in form:
+		return make_response({"error": "A document base name and attributes are required."}, 400)
 
-	if _token is None:
-		return make_response({"error": "invalid token"}, 401)
-
-	attributes = attributes_strings.split(",")
-	# A JSON array of integers is the canonical input. Strict numeric CSV remains
-	# accepted during deployment of older clients; values never enter SQL text.
+	attributes = _attribute_names(form["attributes"])
 	if isinstance(document_ids, str):
-		parts = document_ids.split(",")
-		if not all(part.strip().isascii() and part.strip().isdigit() and len(part.strip()) <= 19 for part in parts):
-			return make_response({"error": "invalid document IDs"}, 400)
-		document_ids = [int(part.strip()) for part in parts]
-	if (not isinstance(document_ids, list) or not document_ids or
-		any(type(doc_id) is not int or not 0 < doc_id <= 9223372036854775807 for doc_id in document_ids) or
-		len(document_ids) != len(set(document_ids))):
-		return make_response({"error": "invalid document IDs"}, 400)
+		document_ids = [_positive_id(part.strip()) for part in document_ids.split(",")]
+	if (not isinstance(document_ids, list) or not document_ids
+		or any(type(doc_id) is not int or _positive_id(doc_id) is None for doc_id in document_ids)
+		or len(document_ids) != len(set(document_ids))):
+		return make_response({"error": "Select one or more distinct documents."}, 400)
+
 	organisation_id = g.organisation_id
-	if not documents_available_for_base(document_ids, _token.id, organisation_id):
-		return make_response({"error": "documents are unavailable for this organization"}, 403)
+	user_id = g.auth_token.id
+	if get_base_id(base_name, organisation_id) is not None:
+		return make_response({"error": "A document base with that name already exists."}, 409)
+	try:
+		documents_available = documents_available_for_base(document_ids, user_id, organisation_id)
+	except RuntimeError:
+		return make_response({"error": "Could not check document availability. Try again."}, 503)
+	if not documents_available:
+		return make_response({"error": "The selected documents are unavailable for this organization."}, 403)
 
-	statistics = Statistics(False)
-	user_id = _token.id
+	try:
+		task = CreateDocumentBase().apply_async(args=(user_id, document_ids, attributes, base_name, organisation_id))
+	except PermissionError:
+		return make_response({"error": "Document base access denied."}, 403)
+	except Exception as error:
+		logger.warning("Could not enqueue document base creation (%s)", type(error).__name__)
+		return make_response({"error": "Could not queue creation. Check the document base list before retrying."}, 503)
+	return make_response({"task_id": task.id}, 202)
 
-
-	doc_base_id = add_document_base(base_name, attributes, organisation_id, document_ids, user_id)
-
-	if doc_base_id < 0:
-		return make_response({"error": "Duplicated Entry!" if doc_base_id == -409 else "An error occured!"}, -doc_base_id)
-
-
-	statisticsDump = pickle.dumps(statistics)
-	task = CreateDocumentBase().apply_async(args=(user_id, document_ids, attributes, statisticsDump,
-												  base_name, organisation_id))
-	return make_response({'task_id': task.id, 'id': doc_base_id}, 202)
 
 @core_routes.route('/document_base/<organisation_id>/<base_name>', methods=['GET'])
 def get_document_base(organisation_id: int, base_name: str):
@@ -411,13 +383,18 @@ def document_base_attribute_update():
 # 															task_id=task.id)}
 
 
-@core_routes.route('/status/<token>/<task_id>', methods=['GET'])
-def task_status(token: str,task_id: str):
- 
+@core_routes.route('/status/<task_id>', methods=['GET'])
+def task_status(task_id: str):
 	user_id = g.auth_token.id
 	scope = g.task_scope
 	task = BaseTask().AsyncResult(task_id=task_id)
 	status = task.status
+	created_base_id = None
+	if scope.get("creation") is True and status == "SUCCESS":
+		result = task.result
+		created_base_id = _positive_id(result.get("base_id")) if isinstance(result, dict) else None
+		if created_base_id is None or get_base_id(scope["base_name"], scope["organisation_id"]) != created_base_id:
+			return make_response({"error": "The created document base is no longer available."}, 404)
 	include_payload = request.args.get("summary") != "1"
 	include_feedback = request.args.get("feedback") != "0"
 	session = SessionState(user_id, scope["base_id"], scope["session_id"])
@@ -442,15 +419,30 @@ def task_status(token: str,task_id: str):
 		command = {key: command[key] for key in ("command_id", "state", "expected_version", "consumed_version", "published_version", "error") if key in command}
 	if signals.get("error") == "STALE_BASE":
 		signals["error"] = "This base changed in another session or access was lost. Reload before editing again; no newer changes were overwritten."
-	elif signals.get("error") == "PERSISTENCE_FAILED":
-		signals["error"] = "Changes could not be saved."
+	else:
+		error_messages = {
+			"PERSISTENCE_FAILED": "Changes could not be saved.",
+			"MATCHING_FAILED": "The feedback session could not continue. Reload the base before retrying.",
+			"BASE_LOAD_FAILED": "The saved document base could not be loaded.",
+			"CREATE_CONFLICT": "A document base with that name already exists.",
+			"CREATE_INPUT_CHANGED": "A selected document changed or is no longer available. Select the files again.",
+			"CREATE_ACCESS_DENIED": "Document base access denied.",
+			"CREATE_FAILED": "Could not prepare or save the document base. You can retry creation.",
+			"CREATE_INVALID": "Check the selected documents and attribute names.",
+		}
+		signals["error"] = error_messages.get(signals["error"], signals["error"])
 	if command and command.get("state") == "rejected":
 		signals["error"] = command.get("error") or "Feedback was rejected. Reload the current session state."
+	body = {"state": status, "meta": signals, "session": publication, "command": command}
+	if created_base_id is not None:
+		body["base_id"] = created_base_id
+	http_status = 200 if status == "SUCCESS" else 202
 	if status in ("FAILURE", "ERROR", "REVOKED"):
+		body["state"] = "REVOKED" if status == "REVOKED" else "FAILURE"
 		if not signals.get("error"):
 			signals["error"] = "The task was cancelled." if status == "REVOKED" else "The background task failed."
-		return make_response({"state": "REVOKED" if status == "REVOKED" else "FAILURE", "meta": signals, "session": publication, "command": command}, 500)
-	return make_response({"state": status, "meta": signals, "session": publication, "command": command}, 200 if status == "SUCCESS" else 202)
+		http_status = 500
+	return make_response(body, http_status, {"Cache-Control": "no-store"})
 
 
 @core_routes.route('/status/<task_id>', methods=['POST'])

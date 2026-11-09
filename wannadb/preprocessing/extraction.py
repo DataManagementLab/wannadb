@@ -256,9 +256,9 @@ class FigerNERExtractor(BaseExtractor):
 
                     document[SentenceStartCharsSignal] = SentenceStartCharsSignal(sentence_start_chars)
                 else:
-                    print(logger.warning(f"Failed to run FIGER on document '{document.name}' with error '{answer['error']}'"))
+                    logger.warning("FIGER returned an extraction error.")
             else:
-                logger.warning(f"Failed to run FIGER on document '{document.name}'")
+                logger.warning("The FIGER extraction request failed.")
 
     def to_config(self) -> Dict[str, Any]:
         return {

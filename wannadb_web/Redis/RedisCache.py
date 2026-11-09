@@ -116,6 +116,8 @@ class TaskAccess:
 			return False
 		if get_organisation_authorisation(self.user_id, scope.get("organisation_id")) is None:
 			return False
+		if scope.get("creation") is True:
+			return scope.get("base_id") == 0 and scope.get("interactive") is False
 		base_id = get_base_id(scope.get("base_name"), scope.get("organisation_id"))
 		return base_id is not None and base_id == scope.get("base_id")
 
