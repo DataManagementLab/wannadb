@@ -272,13 +272,43 @@ class RankingBasedMatcher(BaseMatcher):
         else:
             document.signals.pop(SuggestedAttributeMappingsSignal.identifier, None)
 
+    def _confirmed_mappings(self, documents, attribute):
+        return [nugget for document in documents if not self._needs_review(document, attribute)
+                for nugget in document.attribute_mappings[attribute]]
+
+    def add_automatic_matches_for_preview(self, document_base, statistics):
+        """Fill gaps in a table-only copy using the saved feedback for each attribute."""
+        for attribute in document_base.attributes:
+            name = attribute.name
+            mapped = [document for document in document_base.documents if name in document.attribute_mappings]
+            if not mapped:
+                continue
+            pending = [document for document in document_base.documents
+                       if document.nuggets and name not in document.attribute_mappings]
+            if not pending:
+                continue
+
+            examples = self._confirmed_mappings(mapped, name) or [attribute]
+            threshold = (attribute[CurrentThresholdSignal] if CurrentThresholdSignal.identifier in attribute.signals
+                         else self._default_max_distance)
+            for document in pending:
+                try:
+                    distances = self._distance.compute_distances(examples, document.nuggets, statistics["distance"])
+                except AssertionError:
+                    # Older nuggets can differ in which optional signals they contain.
+                    distances = BaseDistance.compute_distances(
+                        self._distance, examples, document.nuggets, statistics["distance"])
+                nearest = np.fmin.reduce(distances, axis=0)
+                best = int(np.nan_to_num(nearest, nan=np.inf).argmin())
+                if nearest[best] < threshold:
+                    document.attribute_mappings[name] = [document.nuggets[best]]
+                    self._set_suggestion(document, name, True)
+
     def _initialize_document_distances(self, document_base, attribute, statistics):
         """Rank by the label until a web reviewer has confirmed a match."""
         confirmed = []
         if self._suggestion_provenance:
-            confirmed = [nugget for document in document_base.documents
-                         if not self._needs_review(document, attribute.name)
-                         for nugget in document.attribute_mappings[attribute.name]]
+            confirmed = self._confirmed_mappings(document_base.documents, attribute.name)
             attribute.confirmed_matches[:] = confirmed
         if not confirmed:
             nuggets = document_base.nuggets

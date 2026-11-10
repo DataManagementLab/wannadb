@@ -298,11 +298,13 @@ class CreateDocumentBase(BaseTask):
 class DocumentBaseLoad(BaseTask):
 	name = "DocumentBaseLoad"
 
-	def run(self, user_id: int, base_name: str, organisation_id: int):
+	def run(self, user_id: int, base_name: str, organisation_id: int, include_automatic_matches=False):
 		self.load()
 		api = WannaDB_WebAPI(user_id, base_name, organisation_id, build_query_cache=False)
-		api.load_document_base_from_bson()
+		api.load_document_base_from_bson(publish_to_ui=not include_automatic_matches)
 		self.check_api_error(api)
+		if include_automatic_matches:
+			api.add_automatic_matches_for_preview()
 		return self.finish(api)
 
 

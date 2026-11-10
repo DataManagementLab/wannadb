@@ -326,6 +326,9 @@ def load_document_base():
 	authorization = request.headers.get("Authorization")
 	organisation_id: Optional[int] = form.get("organisationId")
 	base_name = form.get("baseName")
+	include_automatic_matches = form.get("includeAutomaticMatches", False)
+	if type(include_automatic_matches) is not bool:
+		return make_response({"error": "includeAutomaticMatches must be a boolean"}, 400)
 	if (organisation_id is None or base_name is None
 			or authorization is None):
 		return make_response({"error": "missing parameters"}, 400)
@@ -336,7 +339,10 @@ def load_document_base():
 
 	user_id = _token.id
 
-	task = DocumentBaseLoad().apply_async(args=(user_id, base_name, organisation_id))
+	args = (user_id, base_name, organisation_id)
+	if include_automatic_matches:
+		args += (True,)
+	task = DocumentBaseLoad().apply_async(args=args)
 
 	return make_response({'task_id': task.id}, 202)
 

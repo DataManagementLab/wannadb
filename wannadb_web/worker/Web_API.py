@@ -398,6 +398,9 @@ class WannaDB_WebAPI:
 			suggestion_provenance=True,
 		)
 
+	def add_automatic_matches_for_preview(self):
+		self._matcher().add_automatic_matches_for_preview(self.document_base, Statistics(False))
+
 	def _prepare_matching_base(self, interaction, statistics):
 		# Older add/edit tasks could save raw documents without preprocessing.
 		raw_documents = [document for document in self.document_base.documents
