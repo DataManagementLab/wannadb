@@ -41,6 +41,7 @@ from wannadb_web.postgres.transactions import add_feedback, delete_document_base
 
 from flask import Blueprint, make_response, request, g, abort
 from wannadb_web.Redis.RedisCache import TaskAccess, SessionState
+from wannadb_web.SQLite.table_query import TableQueryError, validate_table_query
 from wannadb_web.limits import MAX_BASE_DOCUMENTS, QueueFullError, WorkLimitError, validate_attribute_count
 from wannadb_web.util import tokenDecode
 from wannadb_web.worker.data import Signals
@@ -346,6 +347,21 @@ def load_document_base():
 
 	return make_response({'task_id': task.id}, 202)
 
+@core_routes.route('/document_base/query', methods=['POST'])
+def query_document_base():
+	form = request.get_json()
+	base_name = form.get("baseName")
+	if not base_name:
+		return make_response({"error": "a document base is required"}, 400)
+	try:
+		query = validate_table_query(form.get("sqlQuery"))
+	except TableQueryError as error:
+		return make_response({"error": str(error)}, 400)
+	task = DocumentBaseLoad().apply_async(
+		args=(g.auth_token.id, base_name, g.organisation_id), kwargs={"sql_query": query})
+	return make_response({"task_id": task.id}, 202)
+
+
 @core_routes.route('/document_base/interactive', methods=['POST'])
 def interactive_document_base():
 	"""
@@ -581,6 +597,8 @@ def _read_task_status(task_id, user_id, scope):
 	body = {"state": status, "meta": signals, "session": publication, "command": command}
 	if created_base_id is not None:
 		body["base_id"] = created_base_id
+	if scope.get("table_query") and status == "SUCCESS" and include_payload:
+		body["table_query"] = task.result.get("table_query") if isinstance(task.result, dict) else None
 	http_status = 200 if status == "SUCCESS" else 202
 	if status in ("FAILURE", "ERROR", "REVOKED"):
 		body["state"] = "REVOKED" if status == "REVOKED" else "FAILURE"

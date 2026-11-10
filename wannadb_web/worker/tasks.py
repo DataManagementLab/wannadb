@@ -15,6 +15,7 @@ from wannadb.data.data import Document, Attribute, InformationNugget
 from wannadb.resources import ResourceManager
 from wannadb.statistics import Statistics
 from wannadb_web.Redis.RedisCache import RedisCache, TaskAccess, TaskAdmission, SessionState, set_signal_scope, get_signal_scope
+from wannadb_web.SQLite.table_query import TableQueryError, query_document_table
 from wannadb_web.limits import (
 	COMPUTE_SECONDS, MAX_BASE_DOCUMENTS, MAX_COMPUTE_TASKS, QUEUE_SECONDS, WorkLimitError,
 	validate_attribute_count, validate_corpus,
@@ -124,6 +125,8 @@ class BaseTask(Task):
 				scope.update(base_id=0, creation=True)
 			else:
 				scope["base_id"] = get_base_id(scope["base_name"], scope["organisation_id"])
+			if isinstance(self, DocumentBaseLoad) and parameters.get("sql_query") is not None:
+				scope["table_query"] = True
 			if not access.permitted(scope):
 				raise PermissionError("Document base access denied.")
 		admission = TaskAdmission("celery", user_id, task_id)
@@ -298,13 +301,19 @@ class CreateDocumentBase(BaseTask):
 class DocumentBaseLoad(BaseTask):
 	name = "DocumentBaseLoad"
 
-	def run(self, user_id: int, base_name: str, organisation_id: int, include_automatic_matches=False):
+	def run(self, user_id: int, base_name: str, organisation_id: int, include_automatic_matches=False, sql_query=None):
 		self.load()
 		api = WannaDB_WebAPI(user_id, base_name, organisation_id, build_query_cache=False)
-		api.load_document_base_from_bson(publish_to_ui=not include_automatic_matches)
+		api.load_document_base_from_bson(publish_to_ui=not (include_automatic_matches or sql_query is not None))
 		self.check_api_error(api)
-		if include_automatic_matches:
+		if include_automatic_matches or sql_query is not None:
 			api.add_automatic_matches_for_preview()
+		if sql_query is not None:
+			try:
+				return {"table_query": query_document_table(api.document_base, sql_query)}
+			except TableQueryError as error:
+				api.signals.error.emit(error)
+				raise
 		return self.finish(api)
 
 
