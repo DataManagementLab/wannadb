@@ -675,13 +675,14 @@ class DocumentBase:
         return bson_bytes
 
     @classmethod
-    def from_bson(cls, bson_bytes: bytes) -> "DocumentBase":
+    def from_bson(cls, bson_bytes: bytes, *, deduplicate_nuggets: bool = True) -> "DocumentBase":
         """
         Deserialize a document base from a BSON byte string.
 
         https://pymongo.readthedocs.io/en/stable/api/bson/index.html
 
         :param bson_bytes: BSON byte representation of the document base
+        :param deduplicate_nuggets: whether to merge equivalent candidates while loading
         :return: document base created from the BSON byte string
         """
         tick: float = time.time()
@@ -725,7 +726,8 @@ class DocumentBase:
                     signal: BaseSignal = BaseSignal.from_serializable(serialized_signal, signal_identifier)
                     nugget.signals[signal_identifier] = signal
 
-                possible_duplicate, idx = get_possible_duplicate(nugget, document.nuggets)
+                possible_duplicate, idx = (get_possible_duplicate(nugget, document.nuggets)
+                                           if deduplicate_nuggets else (None, None))
                 if possible_duplicate is None:
                     old_to_new_index[old_index] = len(document.nuggets)
                     document.nuggets.append(nugget)

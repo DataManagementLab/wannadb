@@ -14,6 +14,7 @@ MIGRATIONS = (
     "0002_organization_ownership.sql",
     "0003_attribute_schema.sql",
     "0004_feedback_outcomes.sql",
+    "0005_feedback_sessions.sql",
 )
 ADVISORY_LOCK = (0x57414E4E, 0x414442)
 
@@ -41,6 +42,11 @@ _REQUIRED_COLUMNS = {
         "expected_version": _INTEGER, "request_fingerprint": _TEXT, "snapshot_version": _TEXT,
         "committed_at": ("timestamptz",),
     },
+    "feedback_sessions": {
+        "user_id": _INTEGER, "session_id": _TEXT, "base_id": _INTEGER, "snapshot_id": _INTEGER,
+        "attribute_schema_version": ("uuid",), "snapshot_hash": _TEXT, "version": _INTEGER,
+        "phase": _TEXT, "attribute": _TEXT, "checkpoint": ("bytea",), "expires_at": ("timestamptz",),
+    },
 }
 
 # Keys the application relies on to keep users, bases and membership unambiguous.
@@ -55,6 +61,7 @@ _REQUIRED_KEYS = {
     ("documents", "p", ("id",)),
     ("document_feedback", "p", ("id",)),
     ("feedback_outcomes", "p", ("command_id", "user_id")),
+    ("feedback_sessions", "p", ("session_id", "user_id")),
 }
 
 

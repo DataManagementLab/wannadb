@@ -16,12 +16,12 @@ from wannadb.resources import ResourceManager
 from wannadb.statistics import Statistics
 from wannadb_web.Redis.RedisCache import RedisCache, TaskAccess, TaskAdmission, SessionState, set_signal_scope, get_signal_scope
 from wannadb_web.limits import (
-	COMPUTE_SECONDS, MATCHING_SECONDS, MAX_BASE_DOCUMENTS, MAX_COMPUTE_TASKS, MAX_FEEDBACK_TASKS,
-	QUEUE_SECONDS, FEEDBACK_QUEUE_SECONDS, FEEDBACK_SECONDS, WorkLimitError,
+	COMPUTE_SECONDS, MAX_BASE_DOCUMENTS, MAX_COMPUTE_TASKS, QUEUE_SECONDS, WorkLimitError,
 	validate_attribute_count, validate_corpus,
 )
 from wannadb_web.postgres.attribute_schema import AttributeSchemaConflict, edit_attribute_schema
-from wannadb_web.postgres.queries import get_creation_documents, get_base_id
+from wannadb_web.postgres.feedback_sessions import FeedbackSessionConflict, extend_session_step, load_session
+from wannadb_web.postgres.queries import get_creation_documents, get_base_id, get_feedback_outcome
 from wannadb_web.worker.Web_API import WannaDB_WebAPI
 from wannadb_web.worker.data import DoAttributeRanking, MultiNuggetsMatchFeedback, ReloadDocumentBase, Signals, NoMatchFeedback, NuggetMatchFeedback, CustomMatchFeedback, SkipAttributeRanking, StopMatching
 from wannadb_web.worker.util import State
@@ -69,20 +69,25 @@ class BaseTask(Task):
 		raise NotImplementedError("BaseTask is abstract")
 
 	def __call__(self, *args, **kwargs):
+		started = time.monotonic()
 		try:
 			return super().__call__(*args, **kwargs)
 		except TaskPredicate:
 			raise
 		except SoftTimeLimitExceeded:
-			self._signals.error.emit(RuntimeError("TASK_LIMIT"))
+			if not isinstance(self, FeedbackTask):
+				self._signals.error.emit(RuntimeError("TASK_LIMIT"))
 			raise RuntimeError("TASK_LIMIT") from None
 		except WorkLimitError as error:
-			self._signals.error.emit(error)
+			if not isinstance(self, FeedbackTask):
+				self._signals.error.emit(error)
 			raise RuntimeError("WORK_LIMIT") from None
 		except Exception as error:
 			# Celery records the raised exception and traceback. Keep library/SQL messages private.
 			logger.error("Task failed. task=%s error_type=%s", self.name, type(error).__name__)
 			raise RuntimeError("TASK_FAILED") from None
+		finally:
+			logger.info("Worker task ended. task=%s compute_seconds=%.3f", self.name, time.monotonic() - started)
 
 	def apply_async(self, args=None, kwargs=None, task_id=None, **options):
 		parameters = inspect.signature(self.run).bind_partial(*(args or ()), **(kwargs or {})).arguments
@@ -121,20 +126,18 @@ class BaseTask(Task):
 				scope["base_id"] = get_base_id(scope["base_name"], scope["organisation_id"])
 			if not access.permitted(scope):
 				raise PermissionError("Document base access denied.")
-		feedback = isinstance(self, FeedbackTask)
-		queue = "feedback" if feedback else "celery"
-		wait_seconds = FEEDBACK_QUEUE_SECONDS if feedback else QUEUE_SECONDS
-		admission = TaskAdmission(queue, user_id, task_id)
-		reserved = admission.reserve(MAX_FEEDBACK_TASKS if feedback else MAX_COMPUTE_TASKS,
-			wait_seconds + self.time_limit + 30)
+		admission = TaskAdmission("celery", user_id, task_id)
+		reserved = admission.reserve(MAX_COMPUTE_TASKS, QUEUE_SECONDS + self.time_limit + 30)
 		try:
 			if not reserved and access.task(task_id) is None:
 				raise ValueError("The task is being submitted. Retry shortly.")
 			access.register(task_id, scope)
 			if not reserved:
 				return self.AsyncResult(task_id=task_id)
-			options.setdefault("expires", wait_seconds)
-			options.update(argsrepr="[redacted]", kwargsrepr="[redacted]")
+			options.setdefault("expires", QUEUE_SECONDS)
+			headers = dict(options.get("headers") or {})
+			headers["wannadb_queued_at"] = time.time()
+			options.update(argsrepr="[redacted]", kwargsrepr="[redacted]", headers=headers)
 			return super().apply_async(args=args, kwargs=kwargs, task_id=task_id, **options)
 		except Exception:
 			if reserved:
@@ -142,6 +145,9 @@ class BaseTask(Task):
 			raise
 
 	def before_start(self, task_id, args, kwargs):
+		queued_at = (self.request.headers or {}).get("wannadb_queued_at")
+		if isinstance(queued_at, (float, int)):
+			logger.info("Worker task started. task=%s queue_wait_seconds=%.3f", self.name, max(0, time.time() - queued_at))
 		set_signal_scope()
 		parameters = inspect.signature(self.run).bind_partial(*args, **kwargs).arguments
 		user_id = parameters.get("user_id")
@@ -170,12 +176,10 @@ class BaseTask(Task):
 	def after_return(self, status, retval, task_id, args, kwargs, einfo):
 		try:
 			scope = get_signal_scope()
-			if scope is not None:
-				session = SessionState(scope["user_id"], scope["base_id"], scope["session_id"])
-				if isinstance(self, FeedbackTask):
-					if status != "SUCCESS":
-						session.reject(task_id, "Feedback could not be queued or was rejected.")
-				else:
+			if scope is not None and not isinstance(self, FeedbackTask):
+				# A successful bootstrap returns while the interactive session waits.
+				if status != "SUCCESS" or not isinstance(self, DocumentBaseInteractiveTablePopulation):
+					session = SessionState(scope["user_id"], scope["base_id"], scope["session_id"])
 					message = None
 					if status != "SUCCESS":
 						message = Signals(str(scope["user_id"])).error.to_json() or "The session failed."
@@ -187,7 +191,7 @@ class BaseTask(Task):
 			set_signal_scope()
 			user_id = kwargs.get("user_id", args[0] if args else None)
 			if user_id is not None:
-				TaskAdmission("feedback" if isinstance(self, FeedbackTask) else "celery", user_id, task_id).release()
+				TaskAdmission("celery", user_id, task_id).release()
 
 	@staticmethod
 	def load():
@@ -389,34 +393,21 @@ class DocumentBaseForgetMatchesForAttribute(BaseTask):
 
 class DocumentBaseInteractiveTablePopulation(BaseTask):
 	name = "DocumentBaseInteractiveTablePopulation"
-	soft_time_limit = MATCHING_SECONDS
-	time_limit = MATCHING_SECONDS + 30
 	track_started = False  # STARTED below means the base is loaded, not just dequeued.
 
 	def run(self, user_id: int, base_name: str, organisation_id: int):
 		self.load()
-
 		api = WannaDB_WebAPI(user_id, base_name, organisation_id, build_query_cache=False)
-		api.load_document_base_from_bson()
+		api.load_document_base_from_bson(publish_to_ui=False)
 		self.check_api_error(api)
-		validate_corpus(document.text for document in api.document_base.documents)
-		validate_attribute_count(len(api.document_base.attributes))
-		# Preserve F08 readiness: this task's base is loaded before STARTED.
 		self.update(State.STARTED)
-		try:
-			api.interactive_table_population()
-		except TimeoutError:
-			# Preserve completed feedback on idle timeout, then report task failure.
-			api.update_document_base_to_bson()
-			raise
-		return self.finish(api, persist=True)
+		api.start_interactive_table_population()
+		return {"ok": True}
 
 
 class FeedbackTask(BaseTask):
-	# Keep feedback runnable while compute workers wait for user input.
-	queue = "feedback"
-	soft_time_limit = FEEDBACK_SECONDS - 15
-	time_limit = FEEDBACK_SECONDS
+	# Each command performs one bounded compute step, then releases the worker.
+	queue = "celery"
 
 	def _durable_replay(self, parameters, outcome, session_id, expected_version, command_id):
 		if (outcome["session_id"] != session_id or outcome["command_id"] != command_id or
@@ -441,11 +432,58 @@ class FeedbackTask(BaseTask):
 		session = SessionState(user_id, scope["base_id"], session_id)
 		return self.AsyncResult(task_id=command_id) if session.command(command_id) is not None else None
 
-	def emit_command(self, feedback):
-		record = self._signals.match_feedback.emit(feedback)
-		if record.get("state") == "rejected":
-			raise RuntimeError(record.get("error") or "Feedback was rejected.")
-		return record
+	def apply_decision(self, feedback):
+		context = get_signal_scope()
+		user_id, command_id = int(context["user_id"]), context["command_id"]
+		scope = TaskAccess(user_id).task(command_id)
+		if scope is None:
+			raise PermissionError("The feedback command scope is no longer available.")
+		conflict = None
+		try:
+			current = load_session(user_id, context["session_id"], include_checkpoint=True)
+		except FeedbackSessionConflict as error:
+			conflict, current = error, None
+		if (current is None or current["closed"] or current["version"] != context["expected_version"] or
+			current["base_id"] != context["base_id"]):
+			outcome = get_feedback_outcome(user_id, command_id)
+			if outcome is not None and all(scope[key] == outcome[key] for key in (
+				"session_id", "expected_version", "request_fingerprint",
+			)):
+				return
+			if conflict is not None:
+				raise conflict
+			raise FeedbackSessionConflict("Feedback has changed or the session expired. Reopen the attribute.")
+		session = SessionState.current(user_id)
+		payload = feedback if isinstance(feedback, dict) else feedback.to_json()
+		lease = str(uuid4())
+		lease_seconds = self.time_limit + 30
+		record = session.begin_step(command_id, current["version"], payload, lease, lease_seconds)
+		if record["state"] == "rejected":
+			raise ValueError(record["error"])
+		if record.get("lease") != lease:
+			# A duplicate delivery must not consume or finish another worker's step.
+			return
+
+		api = None
+		try:
+			if not extend_session_step(user_id, context["session_id"], current["version"], lease_seconds):
+				raise FeedbackSessionConflict("Feedback has changed or the session expired. Reopen the attribute.")
+			self.update(State.STARTED)
+			self.load()
+			api = WannaDB_WebAPI(user_id, scope["base_name"], scope["organisation_id"], build_query_cache=False)
+			api.advance_interactive_table_population(current, scope, payload, lease)
+		except Exception as error:
+			if api is None or not api.matching_step_saved:
+				message = "Feedback could not be applied. Try the action again."
+				if isinstance(error, FeedbackSessionConflict):
+					message = str(error)
+				elif isinstance(error, SoftTimeLimitExceeded):
+					message = "Feedback exceeded the processing time limit."
+				try:
+					session.fail_step(command_id, lease, message)
+				except Exception as cleanup_error:
+					logger.warning("Feedback step lease cleanup failed. error_type=%s", type(cleanup_error).__name__)
+			raise
 
 
 class DocumentBaseStartRanking(FeedbackTask):
@@ -457,7 +495,7 @@ class DocumentBaseStartRanking(FeedbackTask):
 		return dict(feedback.to_json(), attribute=attribute)
 
 	def run(self, user_id: int, do_attribute: bool, reset: bool, attribute: str):
-		self.emit_command(self.payload(do_attribute, reset, attribute))
+		self.apply_decision(self.payload(do_attribute, reset, attribute))
 		return {"ok": True}
 
 
@@ -466,7 +504,7 @@ class DocumentBaseStopMatching(FeedbackTask):
 
 	def run(self, user_id: int):
 
-		self.emit_command(StopMatching())
+		self.apply_decision(StopMatching())
 		return {"ok": True}
 
 
@@ -475,7 +513,7 @@ class ReloadDocumentBaseTask(FeedbackTask):
 
 	def run(self, user_id: int):
 
-		self.emit_command(ReloadDocumentBase())
+		self.apply_decision(ReloadDocumentBase())
 		return {"ok": True}
 
 
@@ -530,8 +568,7 @@ class DocumentBaseConfirmNugget(FeedbackTask):
 				raise ValueError("Positive and negative selections must differ")
 			not_a_match = InformationNugget(document=document, start_char=not_a_match_start_index, end_char=not_a_match_end_index)
 
-		self.emit_command(match_feedback(nugget, document, start_index, end_index, not_a_match=not_a_match))
-		# no need to update the document base the doc will be saved in the interactive call
+		self.apply_decision(match_feedback(nugget, document, start_index, end_index, not_a_match=not_a_match))
 		return {"ok": True}
 	
 
@@ -551,7 +588,7 @@ class DocumentBaseConfirmMultipleNuggets(FeedbackTask):
 			document = Document(name, text)
 			_validate_feedback_span(document, start, end)
 			nuggets.append(InformationNugget(document, start, end))
-		self.emit_command(multi_match_feedback(nuggets))
+		self.apply_decision(multi_match_feedback(nuggets))
 		return {"ok": True}
 
 
@@ -575,10 +612,10 @@ class DocumentBaseNoMatchForDocument(FeedbackTask):
 
 		document = Document(document_name, document_text)
 		if nugget == "" and start_index == end_index == 0:
-			self.emit_command(NoMatchFeedback(None, None, document))
+			self.apply_decision(NoMatchFeedback(None, None, document))
 		else:
 			nugget_exist(nugget, document, start_index, end_index)
-			self.emit_command(no_match(nugget, document, start_index, end_index))
+			self.apply_decision(no_match(nugget, document, start_index, end_index))
 		return {"ok": True}
 
 

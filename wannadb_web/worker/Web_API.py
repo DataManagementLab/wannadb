@@ -2,16 +2,19 @@ import csv
 import io
 import json
 import logging
+import pickle
 import re
 import time
 from typing import Optional, Any
+
+from bson import decode, encode
 
 import wannadb
 from wannadb import resources
 from wannadb.configuration import Pipeline
 from wannadb.data.data import Attribute, Document, DocumentBase, InformationNugget
 from wannadb.data.signals import CachedDistanceSignal, SentenceStartCharsSignal
-from wannadb.interaction import EmptyInteractionCallback, InteractionCallback
+from wannadb.interaction import EmptyInteractionCallback
 from wannadb.matching.distance import SignalsMeanDistance
 from wannadb.matching.matching import RankingBasedMatcher
 from wannadb.preprocessing.embedding import BERTContextSentenceEmbedder, RelativePositionEmbedder, \
@@ -28,25 +31,25 @@ from wannadb_web.postgres.queries import get_document_base_snapshot, get_documen
 	get_document
 from wannadb_web.postgres.transactions import DocumentBaseCreationConflict, create_document_base_with_snapshot, mutate_base_documents
 from wannadb_web.limits import validate_attribute_count, validate_corpus
-from wannadb_web.Redis.RedisCache import SessionState, TaskAccess, get_signal_scope
-from wannadb_web.worker.data import decode_feedback, MultiNuggetsMatchFeedback, DoAttributeRanking, ReloadDocumentBase, Signals, CustomMatchFeedback, NuggetMatchFeedback, NoMatchFeedback, SkipAttributeRanking, StopMatching
+from wannadb_web.Redis.RedisCache import SessionState, get_signal_scope
+from wannadb_web.postgres.feedback_sessions import save_session
+from wannadb_web.worker.data import Signals, encode_feedback_request
 
 logger = logging.getLogger(__name__)
-TIMEOUT = 600  # 10 minutes
 
 INPUT_DOCS_COLUMN_NAME = "input_document"
 
 
 class WannaDB_WebAPI:
 
-	def __init__(self, user_id: int, document_base_name: str, organisation_id: int, timeout: int = TIMEOUT, build_query_cache: bool = True):
+	def __init__(self, user_id: int, document_base_name: str, organisation_id: int, build_query_cache: bool = True):
 		self._document_id: Optional[int] = None
 		self._document_base: Optional[DocumentBase] = None
 		self.user_id = user_id
 		self._feedback: Optional[dict[str, Any]] = None
 		self._expected_bson: Optional[bytes] = None
 		self._attribute_schema_version: Optional[str] = None
-		self._pending_feedback: Optional[dict] = None
+		self.matching_step_saved = False
 		self.session = SessionState.current(user_id)
 
 		self.signals = Signals(str(self.user_id))
@@ -58,45 +61,6 @@ class WannaDB_WebAPI:
 			self.signals.status.emit(str(message) + " " + str(progress))
 
 		self.status_callback = StatusCallback(status_callback_fn)
-
-		def interaction_callback_fn(pipeline_element_identifier, feedback_request):
-			feedback_request["identifier"] = pipeline_element_identifier
-			self.publish_feedback(feedback_request)
-			start_time = time.monotonic()
-			while (time.monotonic() - start_time) < max(timeout, TIMEOUT):
-				command = self.signals.match_feedback.claim()
-				if command is not None:
-					scope = TaskAccess(self.user_id).task(command["command_id"])
-					if (not scope or scope["session_id"] != self.session.session_id or
-						scope["base_id"] != self.session.base_id or scope["expected_version"] != command["expected_version"]):
-						raise RuntimeError("The feedback command scope is missing or changed.")
-					self._pending_feedback = scope
-					msg = decode_feedback(command["payload"])
-					self.signals.status.emit("Feedback received from UI")
-					logger.debug("Feedback received. wait_seconds=%.3f", time.monotonic() - start_time)
-					start_time = time.monotonic()
-					if isinstance(msg, CustomMatchFeedback):
-						return {"message": "custom-match", "document": msg.document, "start": msg.start, "end": msg.end, "not_a_match": msg.not_a_match}
-					elif isinstance(msg, NuggetMatchFeedback):
-						return {"message": "is-match", "nugget": msg.nugget, "not_a_match": msg.not_a_match}
-					elif isinstance(msg, MultiNuggetsMatchFeedback):
-						return {"message": "multi-match", "nuggets": msg.nuggets, "not_a_match": msg.not_a_match}
-					elif isinstance(msg, NoMatchFeedback):
-						return {"message": "no-match-in-document", "nugget": msg.nugget, "not_a_match": msg.not_a_match, "document": msg.document}
-					elif isinstance(msg, DoAttributeRanking):
-						return {"message": "start-ranking", "do-attribute": True, "reset": msg.reset}
-					elif isinstance(msg, SkipAttributeRanking):
-						return {"message": "skip-ranking", "do-attribute": False}
-					elif isinstance(msg, ReloadDocumentBase):
-						self.publish_feedback(feedback_request)
-					elif isinstance(msg, StopMatching):
-						return {"message": "stop-interactive-matching"}
-					else:
-						raise ValueError("Unsupported feedback command")
-				time.sleep(0.1)
-			raise TimeoutError("no match_feedback in time provided")
-
-		self.interaction_callback = InteractionCallback(interaction_callback_fn)
 
 		if wannadb.resources.MANAGER is None:
 			self.signals.error.emit(Exception("Resource Manager not initialized!"))
@@ -230,7 +194,7 @@ class WannaDB_WebAPI:
 
 		preprocessing_phase(document_base, EmptyInteractionCallback(), self.status_callback, statistics)
 
-	def load_document_base_from_bson(self):
+	def load_document_base_from_bson(self, *, publish_to_ui=True):
 		logger.debug("Loading document base snapshot.")
 		try:
 			if self.sqLiteCacheDBWrapper is not None:
@@ -250,7 +214,9 @@ class WannaDB_WebAPI:
 					self.sqLiteCacheDBWrapper.create_attribute_table(attribute.name)
 				self.sqLiteCacheDBWrapper.cache_db.create_input_docs_table(INPUT_DOCS_COLUMN_NAME, document_base.documents)
 
-			self.document_base = document_base
+			self._document_base = document_base
+			if publish_to_ui:
+				self.signals.document_base_to_ui.emit(document_base)
 			self.document_id = document_id
 			self._expected_bson = document
 		except Exception as error:
@@ -264,8 +230,6 @@ class WannaDB_WebAPI:
 		serialized = self.document_base.to_bson()
 		scope = get_signal_scope()
 		metadata = {"attributes": [attribute.name for attribute in self.document_base.attributes]} if update_attributes else {}
-		if self._pending_feedback is not None:
-			metadata["feedback"] = self._pending_feedback
 		status = compare_and_swap_document_content(self.document_id, serialized, self._expected_bson,
 			self.organisation_id, self.user_id, scope["base_id"],
 			expected_attribute_version=self._attribute_schema_version, **metadata)
@@ -273,28 +237,11 @@ class WannaDB_WebAPI:
 			self.signals.error.emit(RuntimeError("STALE_BASE"))
 			raise RuntimeError("The base changed or access was lost; reload before editing again.")
 		self._expected_bson = serialized
-		if self._pending_feedback is None:
-			self.signals.status.emit("Changes saved.")
-
-	def publish_feedback(self, feedback_request):
-		# A consumed command is acknowledged only after its changes are durable and
-		# both the base and next candidate payload have been atomically published.
-		command_id = self._pending_feedback["command_id"] if self._pending_feedback is not None else None
-		if command_id is not None:
-			self.update_document_base_to_bson()
-		self.signals.document_base_to_ui.emit(self.document_base)
-		self.signals.feedback_request_to_ui.emit(feedback_request)
-		phase = "selection" if "do-attribute-request" in feedback_request else "ranking"
-		attribute = feedback_request.get("attribute")
-		version = self.session.publish(phase, getattr(attribute, "name", None), command_id)
-		logger.debug("Feedback published. phase=%s version=%s", phase, version)
-		self._pending_feedback = None
+		self.signals.status.emit("Changes saved.")
 
 	def complete_session(self):
 		self.signals.document_base_to_ui.emit(self.document_base)
-		command_id = self._pending_feedback["command_id"] if self._pending_feedback is not None else None
-		self.session.close(command_id=command_id)
-		self._pending_feedback = None
+		self.session.close()
 
 	# todo: below not implemented yet
 	def save_table_to_csv(self):
@@ -414,75 +361,108 @@ class WannaDB_WebAPI:
 			self._report_error("STATISTICS_EXPORT_FAILED", error)
 			raise
 
-	def interactive_table_population(self):
-		logger.debug("Called slot 'interactive_table_population'.")
+	@staticmethod
+	def _matcher():
+		def find_additional_nuggets(nugget, documents):
+			if not nugget.text:
+				return []
+			# Match against original text: lowercasing can change Unicode string length.
+			pattern = re.compile(re.escape(nugget.text), re.IGNORECASE)
+			return [(document, match.start(), match.end()) for document in documents
+				for match in pattern.finditer(document.text)]
 
+		return RankingBasedMatcher(
+			distance=SignalsMeanDistance(signal_identifiers=[
+				"LabelEmbeddingSignal", "TextEmbeddingSignal", "ContextSentenceEmbeddingSignal", "RelativePositionSignal",
+			]),
+			max_num_feedback=100,
+			len_ranked_list=10,
+			max_distance=0.2,
+			num_random_docs=1,
+			sampling_mode="AT_MAX_DISTANCE_THRESHOLD",
+			adjust_threshold=True,
+			nugget_pipeline=Pipeline([
+				ContextSentenceCacher(), CopyNormalizer(), OntoNotesLabelParaphraser(),
+				SplitAttributeNameLabelParaphraser(do_lowercase=True, splitters=[" ", "_"]),
+				SBERTLabelEmbedder("SBERTBertLargeNliMeanTokensResource"),
+				SBERTTextEmbedder("SBERTBertLargeNliMeanTokensResource"),
+				BERTContextSentenceEmbedder("BertLargeCasedResource"),
+				RelativePositionEmbedder(),
+			]),
+			find_additional_nuggets=find_additional_nuggets,
+			allow_manual_without_candidates=True,
+		)
+
+	def start_interactive_table_population(self):
+		"""Prepare one session and return as soon as it needs a reviewer."""
 		try:
-			if self.document_base is None:
-				logger.error("Document base not loaded!")
-				self.signals.error.emit(Exception("Document base not loaded!"))
-				return
-
+			validate_corpus(document.text for document in self.document_base.documents)
+			validate_attribute_count(len(self.document_base.attributes))
 			# Older add/edit tasks could save raw documents without preprocessing.
 			raw_documents = [document for document in self.document_base.documents
 				if SentenceStartCharsSignal.identifier not in document.signals]
+			statistics = Statistics(False)
 			if raw_documents:
-				self._preprocess(DocumentBase(raw_documents, []), Statistics(False))
+				self._preprocess(DocumentBase(raw_documents, []), statistics)
 
-			# load default matching phase
-			self.signals.status.emit("Loading matching phase...")
-
-			# TODO: this should not be implemented here!
-			def find_additional_nuggets(nugget, documents):
-				if not nugget.text:
-					return []
-				# Match against original text: lowercasing can change Unicode string length.
-				pattern = re.compile(re.escape(nugget.text), re.IGNORECASE)
-				return [(document, match.start(), match.end()) for document in documents
-					for match in pattern.finditer(document.text)]
-
-			matching_phase = Pipeline(
-				[
-					SplitAttributeNameLabelParaphraser(do_lowercase=True, splitters=[" ", "_"]),
-					ContextSentenceCacher(),
-					SBERTLabelEmbedder("SBERTBertLargeNliMeanTokensResource"),
-					RankingBasedMatcher(
-						distance=SignalsMeanDistance(
-							signal_identifiers=[
-								"LabelEmbeddingSignal",
-								"TextEmbeddingSignal",
-								"ContextSentenceEmbeddingSignal",
-								"RelativePositionSignal"
-							]
-						),
-						max_num_feedback=100,
-						len_ranked_list=10,
-						max_distance=0.2,
-						num_random_docs=1,
-						sampling_mode="AT_MAX_DISTANCE_THRESHOLD",
-						adjust_threshold=True,
-						nugget_pipeline=Pipeline(
-							[
-								ContextSentenceCacher(),
-								CopyNormalizer(),
-								OntoNotesLabelParaphraser(),
-								SplitAttributeNameLabelParaphraser(do_lowercase=True, splitters=[" ", "_"]),
-								SBERTLabelEmbedder("SBERTBertLargeNliMeanTokensResource"),
-								SBERTTextEmbedder("SBERTBertLargeNliMeanTokensResource"),
-								BERTContextSentenceEmbedder("BertLargeCasedResource"),
-								RelativePositionEmbedder()
-							]
-						),
-						find_additional_nuggets=find_additional_nuggets,
-						allow_manual_without_candidates=True
-					)
-				]
-			)
-
-			matching_phase(self.document_base, self.interaction_callback, self.status_callback,
-						   Statistics(False))
-			self.signals.document_base_to_ui.emit(self.document_base)
-			self.signals.finished.emit(1)
+			self.signals.status.emit("Preparing feedback session.")
+			interaction = EmptyInteractionCallback()
+			Pipeline([
+				SplitAttributeNameLabelParaphraser(do_lowercase=True, splitters=[" ", "_"]),
+				ContextSentenceCacher(),
+				SBERTLabelEmbedder("SBERTBertLargeNliMeanTokensResource"),
+			])(self.document_base, interaction, self.status_callback, statistics)
+			matcher = self._matcher()
+			checkpoint, request = matcher.advance(self.document_base, interaction, self.status_callback, statistics)
+			self._save_matching_step(checkpoint, request, matcher.identifier)
 		except Exception as error:
 			self._report_error("MATCHING_FAILED", error)
 			raise
+
+	def advance_interactive_table_population(self, current, command, payload, lease):
+		"""Restore the exact session checkpoint, execute one command and publish the result."""
+		checkpoint = decode(current["checkpoint"])
+		base = checkpoint.get("base", current["snapshot"])
+		self._document_base = DocumentBase.from_bson(base, deduplicate_nuggets=False)
+		self.document_id = current["snapshot_id"]
+		self._attribute_schema_version = current["attribute_schema_version"]
+		interaction, statistics = EmptyInteractionCallback(), Statistics(False)
+		# Context sentences are deliberately ephemeral. Rebuild them after BSON restore.
+		ContextSentenceCacher()(self.document_base, interaction, self.status_callback, statistics)
+		matcher = self._matcher()
+		decision = None if payload["message"] == "reload-document-base" else payload
+		checkpoint, request = matcher.advance(self.document_base, interaction, self.status_callback, statistics,
+			checkpoint=checkpoint["matcher"], feedback=decision)
+		self._save_matching_step(checkpoint, request, matcher.identifier, current=current, command=command, lease=lease)
+
+	def _save_matching_step(self, checkpoint, request, identifier, *, current=None, command=None, lease=None):
+		if request is None:
+			phase, attribute, feedback_payload = "finished", None, None
+		else:
+			phase = "selection" if "do-attribute-request" in request else "ranking"
+			attribute = request["attribute"].name
+			feedback_payload = encode_feedback_request(dict(request, identifier=identifier))
+		serialized = self.document_base.to_bson()
+		state = None
+		if checkpoint is not None:
+			state = {"matcher": checkpoint}
+			if current is None and serialized != self._expected_bson:
+				# Preparation changes are session-local until a decision is committed.
+				state["base"] = serialized
+			state = encode(state)
+		version = save_session(
+			self.user_id, self.session.session_id, self.session.base_id, self.document_id,
+			self._expected_bson if current is None else current["snapshot_hash"],
+			self._attribute_schema_version, state, phase, attribute,
+			expected_version=0 if current is None else current["version"],
+			expected_phase=None if current is None else current["phase"],
+			expected_attribute=None if current is None else current["attribute"],
+			command=command, new_snapshot=serialized if command is not None else None,
+		)
+		self.matching_step_saved = True
+		if not self.session.publish_step(
+			version, phase, attribute, pickle.dumps(self.document_base), feedback_payload,
+			command_id=command["command_id"] if command else None, lease=lease,
+		):
+			raise RuntimeError("Saved feedback could not be published.")
+		logger.debug("Feedback step published. phase=%s version=%s", phase, version)

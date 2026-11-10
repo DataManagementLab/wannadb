@@ -1,6 +1,8 @@
 from typing import Optional, Union
 import logging
 import json
+import time
+from hashlib import sha256
 from contextvars import ContextVar
 
 from wannadb_web.Redis import util
@@ -156,7 +158,7 @@ class TaskAccess:
 
 
 class SessionState:
-	"""Session-scoped publications and FIFO commands, committed atomically in Redis."""
+	"""Session publications and fenced command steps cached in Redis."""
 	TTL = 86400
 	SIGNALS = ("feedback", "error", "status", "finished", "document_base_to_ui", "statistics_to_ui",
 		"feedback_request_to_ui", "cache_db_to_ui", "ordert_nuggets")
@@ -181,7 +183,7 @@ class SessionState:
 	def _keys(self):
 		return [f"{self.prefix}:{name}" for name in (
 			"publication", "document_base_to_ui", "feedback_request_to_ui", "published_document", "published_feedback",
-			"commands", "command_queue", "command_processing")]
+			"commands")]
 
 	def _empty(self):
 		return {"session_id": self.session_id, "version": 0, "phase": "loading", "attribute": None,
@@ -194,144 +196,154 @@ class SessionState:
 		self.redis.set(self._keys()[0], json.dumps(self._empty()), nx=True, ex=self.TTL)
 		return self.metadata()
 
+	@staticmethod
+	def _visible_publication(publication):
+		if publication.get("phase") == "processing" and publication.get("lease_until", float("inf")) <= time.time():
+			publication["phase"] = publication["waiting_phase"]
+		for key in ("lease", "waiting_phase", "lease_until", "processing_command"):
+			publication.pop(key, None)
+		return publication
+
 	def metadata(self):
 		value = self.redis.get(self._keys()[0])
-		return json.loads(value) if value is not None else self._empty()
+		return self._visible_publication(json.loads(value)) if value is not None else self._empty()
 
 	def command(self, command_id):
 		value = self.redis.hget(self._keys()[5], command_id)
-		return json.loads(value) if value is not None else None
+		if value is None:
+			return None
+		record = json.loads(value)
+		if record["state"] == "consumed" and record.get("lease_until", float("inf")) <= time.time():
+			record.update(state="rejected", error="Feedback processing expired. Try the action again.")
+		return record
 
-	def reject(self, command_id, error):
+	def begin_step(self, command_id, expected_version, payload, lease, lease_seconds):
+		"""Admit this exact command once and fence publication to its processing lease."""
+		fingerprint = sha256(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 		script = r'''
-local raw=redis.call('HGET',KEYS[6],ARGV[1]); if not raw then return nil end
-local record=cjson.decode(raw)
-if record.state~='published' and record.state~='rejected' then
- record.state='rejected';record.error=ARGV[2]
- redis.call('HSET',KEYS[6],ARGV[1],cjson.encode(record));redis.call('EXPIRE',KEYS[6],ARGV[3])
- redis.call('LREM',KEYS[7],0,ARGV[1]);redis.call('LREM',KEYS[8],0,ARGV[1])
-end
-return cjson.encode(record)
-'''
-		value = self.redis.eval(script, 8, *self._keys(), command_id, str(error), self.TTL)
-		return json.loads(value) if value is not None else None
-
-	def enqueue(self, command_id, expected_version, payload):
-		if not isinstance(command_id, str) or not command_id or len(command_id) > 200:
-			raise ValueError("A command ID is required")
-		if type(expected_version) is not int or expected_version < 1 or not isinstance(payload, dict):
-			raise ValueError("A command requires its published version and payload")
-		canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"))
-		script = r'''
-local existing = redis.call('HGET', KEYS[6], ARGV[1])
+local command_id, expected_version, fingerprint, lease = ARGV[1], tonumber(ARGV[2]), ARGV[3], ARGV[4]
+local now = tonumber(redis.call('TIME')[1])
+local raw_command = redis.call('HGET', KEYS[6], command_id)
+local existing = raw_command and cjson.decode(raw_command) or nil
 if existing then
- local record = cjson.decode(existing)
- if record.fingerprint ~= ARGV[3] or record.expected_version ~= tonumber(ARGV[2]) then
-  return cjson.encode({command_id=ARGV[1],state='rejected',error='COMMAND_ID_REUSED',expected_version=tonumber(ARGV[2])})
+ if existing.fingerprint ~= fingerprint or existing.expected_version ~= expected_version then
+  return cjson.encode({state='rejected', error='This command ID belongs to a different request.'})
  end
- return existing
+ if existing.state~='consumed' or not existing.lease_until or existing.lease_until>now then return raw_command end
 end
-local record = {command_id=ARGV[1],expected_version=tonumber(ARGV[2]),fingerprint=ARGV[3],payload=cjson.decode(ARGV[3]),state='accepted'}
-local raw = redis.call('GET',KEYS[1])
+local raw = redis.call('GET', KEYS[1])
 local publication = raw and cjson.decode(raw) or nil
-local message = record.payload.message
+if publication and publication.phase=='processing' and publication.lease_until and publication.lease_until<=now then
+ local expired_id = publication.processing_command
+ if expired_id~=command_id then
+  local old = redis.call('HGET', KEYS[6], expired_id)
+  if old then
+   local expired = cjson.decode(old)
+   expired.state='rejected';expired.error='Feedback processing expired. Try the action again.'
+   redis.call('HSET',KEYS[6],expired_id,cjson.encode(expired))
+  end
+ end
+ publication.phase=publication.waiting_phase
+end
+local message, attribute = ARGV[7], ARGV[8]
 local controls = message=='reload-document-base' or message=='stop-interactive-matching'
-local allowed = publication and ((publication.phase=='selection' and (message=='start-ranking' or message=='skip-ranking' or controls)) or
- (publication.phase=='ranking' and (message=='custom-match' or message=='is-match' or message=='no-match-in-document' or message=='multi-match' or controls)))
-if not publication or publication.closed then record.state='rejected'; record.error='SESSION_CLOSED'
-elseif publication.version ~= record.expected_version then record.state='rejected'; record.error='STALE_VERSION'
-elseif not allowed then record.state='rejected'; record.error='INVALID_PHASE'
-elseif (message=='start-ranking' or message=='skip-ranking') and publication.attribute~=record.payload.attribute then
- record.state='rejected'; record.error='WRONG_ATTRIBUTE'
-else redis.call('RPUSH',KEYS[7],ARGV[1]); redis.call('EXPIRE',KEYS[7],ARGV[4]) end
+local select_attribute = message=='start-ranking' or message=='skip-ranking'
+local rank = message=='custom-match' or message=='is-match' or message=='no-match-in-document' or message=='multi-match'
+local error_message = nil
+if not publication or publication.closed then error_message='This feedback session has closed.'
+elseif publication.version~=expected_version then error_message='Feedback has changed. Reload the current session.'
+elseif not ((publication.phase=='selection' and (select_attribute or controls)) or
+             (publication.phase=='ranking' and (rank or controls))) then
+ error_message='The session is not waiting for this action.'
+elseif select_attribute and publication.attribute~=attribute then
+ error_message='This session is waiting for a different attribute.'
+end
+local record = {command_id=command_id, expected_version=expected_version, fingerprint=fingerprint}
+if error_message then
+ record.state='rejected';record.error=error_message
+else
+ record.state='consumed';record.consumed_version=expected_version
+ record.lease=lease;record.lease_until=now+tonumber(ARGV[5])
+ publication.waiting_phase=publication.phase;publication.phase='processing'
+ publication.lease=lease;publication.lease_until=record.lease_until;publication.processing_command=command_id
+ redis.call('SET',KEYS[1],cjson.encode(publication),'EX',ARGV[6])
+end
 local encoded = cjson.encode(record)
-redis.call('HSET',KEYS[6],ARGV[1],encoded); redis.call('EXPIRE',KEYS[6],ARGV[4])
+redis.call('HSET',KEYS[6],command_id,encoded);redis.call('EXPIRE',KEYS[6],ARGV[6])
 return encoded
 '''
-		return json.loads(self.redis.eval(script, 8, *self._keys(), command_id, expected_version, canonical, self.TTL))
+		return json.loads(self.redis.eval(script, 6, *self._keys(), command_id, expected_version,
+			fingerprint, lease, lease_seconds, self.TTL, payload["message"], payload.get("attribute", "")))
 
-	def claim(self):
+	def fail_step(self, command_id, lease, error):
+		"""Release an uncommitted step's lease without closing the waiting session."""
+		script = r'''
+local raw = redis.call('GET',KEYS[1]); if not raw then return 0 end
+local publication = cjson.decode(raw)
+if publication.phase~='processing' or publication.processing_command~=ARGV[1] or publication.lease~=ARGV[2] then
+ return 0
+end
+local raw_command=redis.call('HGET',KEYS[6],ARGV[1])
+if raw_command then
+ local record=cjson.decode(raw_command)
+ record.state='rejected';record.error=ARGV[3]
+ redis.call('HSET',KEYS[6],ARGV[1],cjson.encode(record));redis.call('EXPIRE',KEYS[6],ARGV[4])
+end
+publication.phase=publication.waiting_phase
+publication.waiting_phase=nil;publication.lease=nil;publication.lease_until=nil;publication.processing_command=nil
+redis.call('SET',KEYS[1],cjson.encode(publication),'EX',ARGV[4])
+return 1
+'''
+		return bool(self.redis.eval(script, 6, *self._keys(), command_id, lease, error, self.TTL))
+
+	def publish_step(self, version, phase, attribute, document, feedback, *, command_id=None, lease=None):
+		"""Publish the committed checkpoint's payload only from its owning step."""
+		script = r'''
+local raw = redis.call('GET', KEYS[1]); if not raw then return 0 end
+local publication = cjson.decode(raw)
+local version, phase = tonumber(ARGV[1]), ARGV[2]
+if publication.closed or publication.version~=version-1 then return 0 end
+local command_id=ARGV[4]
+if command_id~='' then
+ if publication.phase~='processing' or publication.processing_command~=command_id or publication.lease~=ARGV[5] then
+  return 0
+ end
+ local raw_command=redis.call('HGET',KEYS[6],command_id)
+ if not raw_command then return 0 end
+ local record=cjson.decode(raw_command)
+ record.state='published';record.published_version=version
+ redis.call('HSET',KEYS[6],command_id,cjson.encode(record));redis.call('EXPIRE',KEYS[6],ARGV[8])
+elseif publication.phase~='loading' then return 0 end
+redis.call('SET',KEYS[4],ARGV[6],'EX',ARGV[8])
+if ARGV[7]~='' then redis.call('SET',KEYS[5],ARGV[7],'EX',ARGV[8]) else redis.call('DEL',KEYS[5]) end
+publication={session_id=publication.session_id,version=version,phase=phase,
+ attribute=cjson.decode(ARGV[3]),closed=phase=='finished',error=cjson.null}
+redis.call('SET',KEYS[1],cjson.encode(publication),'EX',ARGV[8])
+return 1
+'''
+		return bool(self.redis.eval(script, 6, *self._keys(), version, phase, json.dumps(attribute),
+			command_id or "", lease or "", document, feedback or "", self.TTL))
+
+	def close(self, error=None):
+		"""Close a one-off task, promoting its staged payload on success."""
 		script = r'''
 local raw = redis.call('GET',KEYS[1])
-local publication = raw and cjson.decode(raw) or nil
-while true do
- local command_id = redis.call('LPOP',KEYS[7])
- if not command_id then return nil end
- local raw_command = redis.call('HGET',KEYS[6],command_id)
- if raw_command then
-  local record = cjson.decode(raw_command)
-  if record.state=='accepted' then
-   local message=record.payload.message
-   local controls=message=='reload-document-base' or message=='stop-interactive-matching'
-   local allowed=publication and ((publication.phase=='selection' and (message=='start-ranking' or message=='skip-ranking' or controls)) or
-    (publication.phase=='ranking' and (message=='custom-match' or message=='is-match' or message=='no-match-in-document' or message=='multi-match' or controls)))
-   if not publication or publication.closed then record.state='rejected'; record.error='SESSION_CLOSED'
-   elseif publication.version ~= record.expected_version then record.state='rejected'; record.error='STALE_VERSION'
-   elseif not allowed then record.state='rejected'; record.error='INVALID_PHASE'
-   elseif (message=='start-ranking' or message=='skip-ranking') and publication.attribute~=record.payload.attribute then
-    record.state='rejected'; record.error='WRONG_ATTRIBUTE'
-   else
-    record.state='consumed'; record.consumed_version=publication.version
-    publication.phase='processing';redis.call('SET',KEYS[1],cjson.encode(publication),'EX',ARGV[1])
-    redis.call('RPUSH',KEYS[8],command_id); redis.call('EXPIRE',KEYS[8],ARGV[1])
-    local encoded=cjson.encode(record)
-    redis.call('HSET',KEYS[6],command_id,encoded); redis.call('EXPIRE',KEYS[6],ARGV[1])
-    return encoded
-   end
-   redis.call('HSET',KEYS[6],command_id,cjson.encode(record)); redis.call('EXPIRE',KEYS[6],ARGV[1])
-  end
- end
-end
-'''
-		value = self.redis.eval(script, 8, *self._keys(), self.TTL)
-		return json.loads(value) if value is not None else None
-
-	def publish(self, phase, attribute=None, command_id=None):
-		return self._publish(phase, attribute, command_id, False, None)
-
-	def close(self, error=None, command_id=None):
-		return self._publish("failed" if error else "finished", None, command_id, True, error)
-
-	def _publish(self, phase, attribute, command_id, closed, error):
-		script = r'''
-local prior = redis.call('GET',KEYS[1])
-local publication = prior and cjson.decode(prior) or {version=0}
-if publication.closed then return publication.version end
-publication = {session_id=ARGV[1],version=publication.version+1,phase=ARGV[2],attribute=cjson.decode(ARGV[3]),closed=ARGV[5]=='1',error=cjson.decode(ARGV[6])}
-if publication.error == cjson.null then
+local prior = raw and cjson.decode(raw) or {version=0}
+if prior.closed then return prior.version end
+local error_message = cjson.decode(ARGV[2])
+if error_message==cjson.null then
  for i=2,3 do
   local payload=redis.call('GET',KEYS[i])
-  if payload then redis.call('SET',KEYS[i+2],payload,'EX',ARGV[7]) else redis.call('DEL',KEYS[i+2]) end
+  if payload then redis.call('SET',KEYS[i+2],payload,'EX',ARGV[3]) else redis.call('DEL',KEYS[i+2]) end
  end
 end
-if ARGV[4] ~= '' then
- local raw=redis.call('HGET',KEYS[6],ARGV[4])
- if raw then
-  local record=cjson.decode(raw)
-  if record.state=='consumed' then
-   if publication.error ~= cjson.null then record.state='rejected';record.error=publication.error
-   else record.state='published';record.published_version=publication.version end
-   redis.call('HSET',KEYS[6],ARGV[4],cjson.encode(record));redis.call('EXPIRE',KEYS[6],ARGV[7])
-   redis.call('LREM',KEYS[8],0,ARGV[4])
-  end
- end
-end
-if publication.closed then
- local commands=redis.call('HGETALL',KEYS[6])
- for i=1,#commands,2 do
-  local record=cjson.decode(commands[i+1])
-  if record.state=='accepted' or record.state=='consumed' then
-   record.state='rejected';record.error=publication.error ~= cjson.null and publication.error or 'SESSION_CLOSED'
-   redis.call('HSET',KEYS[6],commands[i],cjson.encode(record))
-  end
- end
- redis.call('DEL',KEYS[7],KEYS[8]);redis.call('EXPIRE',KEYS[6],ARGV[7])
-end
-redis.call('SET',KEYS[1],cjson.encode(publication),'EX',ARGV[7])
+local publication = {session_id=ARGV[1],version=prior.version+1,
+ phase=error_message==cjson.null and 'finished' or 'failed',
+ attribute=cjson.null,closed=true,error=error_message}
+redis.call('SET',KEYS[1],cjson.encode(publication),'EX',ARGV[3])
 return publication.version
 '''
-		return int(self.redis.eval(script, 8, *self._keys(), self.session_id, phase,
-			json.dumps(attribute), command_id or "", "1" if closed else "0", json.dumps(error), self.TTL))
+		return int(self.redis.eval(script, 6, *self._keys(), self.session_id, json.dumps(error), self.TTL))
 
 	def snapshot(self, include_payload=True, include_feedback=True):
 		keys = self._keys()
@@ -343,7 +355,7 @@ return publication.version
 		if include_feedback:
 			names.append("feedback_request_to_ui"); read_keys.append(keys[4])
 		values = self.redis.eval("return redis.call('MGET',unpack(KEYS))", len(read_keys), *read_keys)
-		publication = json.loads(values[0]) if values[0] is not None else self._empty()
+		publication = self._visible_publication(json.loads(values[0])) if values[0] is not None else self._empty()
 		result = dict(zip(names, values[1:]))
 		result["publication"] = publication
 		return result

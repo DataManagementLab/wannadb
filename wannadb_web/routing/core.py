@@ -36,6 +36,7 @@ from redis.exceptions import RedisError
 from wannadb_web.postgres.queries import get_document_base_data, get_document_by_name_and_content, get_feedbacks_for_document, get_document_by_name, get_base_id, get_organisation_authorisation, documents_available_for_base, get_document_ids_for_snapshot, get_document_base_snapshot
 from wannadb_web.postgres.attribute_schema import attribute_ids_for_snapshot, get_attribute_schema_version, parse_attribute_edit
 from wannadb_web.postgres.queries import FeedbackOutcomeUnavailable, get_feedback_outcome
+from wannadb_web.postgres.feedback_sessions import FeedbackSessionUnavailable, load_session
 from wannadb_web.postgres.transactions import add_feedback, delete_document_base_data
 
 from flask import Blueprint, make_response, request, g, abort
@@ -63,6 +64,7 @@ def feedback_access_denied(error):
 
 
 @core_routes.errorhandler(FeedbackOutcomeUnavailable)
+@core_routes.errorhandler(FeedbackSessionUnavailable)
 @core_routes.errorhandler(RedisError)
 def feedback_status_unavailable(error):
 	return make_response({"error": "Feedback status is temporarily unavailable. Check the result again shortly."},
@@ -122,10 +124,15 @@ def authorize_core_request():
 			cache_error = error
 			scope = None
 		if scope is None:
-			scope = get_feedback_outcome(token.id, view["task_id"])
-			if scope is None and cache_error is not None:
+			outcome = get_feedback_outcome(token.id, view["task_id"])
+			if outcome is None and cache_error is not None:
 				raise cache_error
-			g.feedback_outcome = scope
+			if outcome is not None:
+				scope = outcome
+				g.feedback_outcome = outcome
+			elif request.args.get("feedbackSession") == "1":
+				scope = load_session(token.id, view["task_id"])
+				g.feedback_publication_missing = scope is not None
 		elif not access.permitted(scope):
 			scope = None
 		if scope is None or not scope.get("session_id"):
@@ -164,8 +171,13 @@ def authorize_core_request():
 			scope = outcome
 		else:
 			scope = access.task(session_id)
-			if (not access.permitted(scope) or not scope.get("interactive") or scope.get("session_id") != session_id):
+			if (not scope or not scope.get("interactive") or scope.get("session_id") != session_id):
 				return make_response({"error": "interactive session not found"}, 404)
+			checkpoint = load_session(token.id, session_id)
+			if checkpoint is None or checkpoint["base_id"] != scope["base_id"]:
+				return make_response({
+					"error": "This feedback session is unavailable. Reopen the base to continue from saved matches.",
+				}, 404)
 		if (("organisationId" in data and _positive_id(data["organisationId"]) != scope["organisation_id"]) or
 			("baseName" in data and data["baseName"] != scope["base_name"])):
 			return make_response({"error": "feedback belongs to another document base"}, 403)
@@ -459,10 +471,19 @@ def _recovered_feedback_status(outcome):
 	}, 200, {"Cache-Control": "no-store"})
 
 
+def _lost_feedback_publication():
+	return make_response({
+		"state": "FAILURE",
+		"meta": {"error": "This feedback session is unavailable. Reopen the base to continue from saved matches."},
+	}, 500, {"Cache-Control": "no-store"})
+
+
 @core_routes.route('/status/<task_id>', methods=['GET'])
 def task_status(task_id: str):
 	user_id = g.auth_token.id
 	scope = g.task_scope
+	if getattr(g, "feedback_publication_missing", False):
+		return _lost_feedback_publication()
 	outcome = getattr(g, "feedback_outcome", None)
 	if outcome is not None:
 		if not outcome["settled"]:
@@ -503,10 +524,18 @@ def _read_task_status(task_id, user_id, scope):
 		for document in base["documents"]:
 			document["id"] = document_ids.get(document["name"])
 	publication = snapshot["publication"]
+	if scope.get("interactive") and not scope.get("command_id") and not publication["closed"]:
+		# A finished compute step can leave an interactive session waiting for input.
+		if publication["version"] > 0 and status in ("SUCCESS", "PENDING"):
+			if load_session(user_id, scope["session_id"]) is None:
+				return _lost_feedback_publication()
+			status = "STARTED"
+		elif publication["version"] == 0 and status == "SUCCESS":
+			return _lost_feedback_publication()
 	command = session.command(scope["command_id"]) if scope.get("command_id") else None
 	if command is not None:
 		command = {key: command[key] for key in ("command_id", "state", "expected_version", "consumed_version", "published_version", "error") if key in command}
-	live_processing = (parent_status == "STARTED" and publication["phase"] == "processing" and
+	live_processing = (status == "STARTED" and publication["phase"] == "processing" and
 		command is not None and command["state"] == "consumed")
 	if scope.get("command_id") and (parent_failed or status in ("FAILURE", "ERROR", "REVOKED") or
 		signals.get("error") or not command or command["state"] == "rejected" or

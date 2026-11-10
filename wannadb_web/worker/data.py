@@ -143,7 +143,6 @@ class Signals:
 		self.feedback_request_from_ui = _Feedback("feedback_request_from_ui", self.__cache_user_id)
 		self.cache_db_to_ui = _Dump("cache_db_to_ui", self.__cache_user_id)
 		self.ordert_nuggets = _Nuggets("ordert_nuggets", self.__cache_user_id)
-		self.match_feedback = _MatchFeedback("match_feedback", self.__cache_user_id)
 
 	def to_json(self, include_payload: bool = True, include_feedback: bool = True, snapshot=None) -> dict[str, Any]:
 		if snapshot is None and self.__session is not None:
@@ -289,24 +288,6 @@ class StopMatching:
 		return {"message": self.message}
 
 
-def decode_feedback(payload):
-	message = payload.get("message")
-	if message == "custom-match":
-		return CustomMatchFeedback(payload["document"], payload["start"], payload["end"], payload.get("not_a_match"))
-	if message == "is-match":
-		return NuggetMatchFeedback(payload["nugget"], payload.get("not_a_match"))
-	if message == "multi-match":
-		return MultiNuggetsMatchFeedback(payload["nuggets"], payload.get("not_a_match"))
-	if message == "no-match-in-document":
-		return NoMatchFeedback(payload.get("nugget"), payload.get("not_a_match"), payload.get("document"))
-	if message == "start-ranking":
-		return DoAttributeRanking(payload.get("reset") is True)
-	classes = {"stop-interactive-matching": StopMatching,
-		"skip-ranking": SkipAttributeRanking, "reload-document-base": ReloadDocumentBase}
-	if message in classes:
-		return classes[message]()
-	raise ValueError("Unsupported feedback message")
-
 
 class _SnapshotCache:
 	def __init__(self, values):
@@ -315,34 +296,6 @@ class _SnapshotCache:
 	def get(self, key):
 		return self.values.get(key)
 
-
-class _MatchFeedback(Emitable):
-	def _session(self):
-		scope = get_signal_scope()
-		if scope is None:
-			raise ValueError("A feedback session is required")
-		return SessionState(scope["user_id"], scope["base_id"], scope["session_id"])
-
-	def claim(self):
-		return self._session().claim()
-
-	@property
-	def msg(self):
-		command = self.claim()
-		return decode_feedback(command["payload"]) if command is not None else None
-
-	def to_json(self):
-		# Status reads must never consume commands.
-		return {}
-
-	def emit(self, status):
-		if status is None:
-			return None
-		payload = status if isinstance(status, dict) else status.to_json()
-		scope = get_signal_scope()
-		if scope is None:
-			raise ValueError("A feedback session is required")
-		return self._session().enqueue(scope["command_id"], scope["expected_version"], payload)
 
 
 class _State(Emitable):
@@ -452,25 +405,29 @@ class _Feedback(Emitable):
 		return json.loads(msg)
 
 	def emit(self, status: dict[str, Any]):
-		# Preserve the matcher-owned request; change annotations are desktop-only.
-		status = status.copy()
-		status.pop("nugget-updates-context", None)
-		nugget_ids = {}
+		self.redis.set(self.type, encode_feedback_request(status))
 
-		def serialize_nugget(nugget):
-			document_key = id(nugget.document)
-			if document_key not in nugget_ids:
-				nugget_ids[document_key] = {id(candidate): index
-					for index, candidate in enumerate(nugget.document.nuggets)}
-			return convert_to_nugget(nugget, nugget_ids[document_key].get(id(nugget))).to_json()
 
-		for key, value in status.items():
-			if isinstance(value, Attribute):
-				status[key] = value.toJSON()
-			if isinstance(value, Iterable) and not isinstance(value, str):
-				if all(isinstance(item, InformationNugget) for item in value):
-					status[key] = [serialize_nugget(item) for item in value]
-		self.redis.set(self.type, json.dumps(status))
+def encode_feedback_request(status: dict[str, Any]):
+	# Preserve the matcher-owned request; change annotations are desktop-only.
+	status = status.copy()
+	status.pop("nugget-updates-context", None)
+	nugget_ids = {}
+
+	def serialize_nugget(nugget):
+		document_key = id(nugget.document)
+		if document_key not in nugget_ids:
+			nugget_ids[document_key] = {id(candidate): index
+				for index, candidate in enumerate(nugget.document.nuggets)}
+		return convert_to_nugget(nugget, nugget_ids[document_key].get(id(nugget))).to_json()
+
+	for key, value in status.items():
+		if isinstance(value, Attribute):
+			status[key] = value.toJSON()
+		if isinstance(value, Iterable) and not isinstance(value, str):
+			if all(isinstance(item, InformationNugget) for item in value):
+				status[key] = [serialize_nugget(item) for item in value]
+	return json.dumps(status)
 
 
 class _Dump(Emitable):

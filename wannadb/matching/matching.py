@@ -160,72 +160,171 @@ class RankingBasedMatcher(BaseMatcher):
             status_callback: BaseStatusCallback,
             statistics: Statistics
     ) -> None:
-        statistics["num_documents"] = len(document_base.documents)
-        statistics["num_nuggets"] = len(document_base.nuggets)
+        self._run(document_base, interaction_callback, status_callback, statistics)
 
-        for attribute in document_base.attributes:
-            feedback_result: Dict[str, Any] = interaction_callback(
-                self.identifier,
-                {
-                    "do-attribute-request": None,
-                    "attribute": attribute
-                }
-            )
+    def advance(
+            self,
+            document_base: DocumentBase,
+            interaction_callback: BaseInteractionCallback,
+            status_callback: BaseStatusCallback,
+            statistics: Statistics,
+            *,
+            checkpoint: Optional[dict] = None,
+            feedback: Optional[dict] = None,
+    ) -> Tuple[Optional[dict], Optional[dict]]:
+        """Run one decision and return the next checkpoint and feedback request.
 
-            if not feedback_result.get("do-attribute", False):
-                logger.info("Attribute ranking skipped.")
-                statistics[attribute.name]["skipped"] = True
-                continue
+        The base must contain the exact ordered documents and nuggets associated
+        with the checkpoint. Without a decision, return the same pending request.
+        An empty pair means that the session finished.
+        """
+        if checkpoint is not None:
+            self._restore_checkpoint(document_base, checkpoint)
+            if feedback is None:
+                return checkpoint, self._checkpoint_request(document_base, checkpoint)
+        elif feedback is not None:
+            raise ValueError("Feedback requires a pending matcher checkpoint")
+        return self._run(document_base, interaction_callback, status_callback, statistics,
+                         checkpoint=checkpoint, feedback=feedback, pause=True)
 
-            if feedback_result.get("reset", False):
-                for document in document_base.documents:
-                    document.attribute_mappings.pop(attribute.name, None)
-                attribute.confirmed_matches.clear()
-                attribute.signals.pop(CurrentThresholdSignal.identifier, None)
+    @staticmethod
+    def _make_checkpoint(document_base, attribute_index, request, ranking=None):
+        documents = document_base.documents
+        nugget_refs = {id(nugget): [doc_index, nugget_index]
+                       for doc_index, document in enumerate(documents)
+                       for nugget_index, nugget in enumerate(document.nuggets)}
+        request_fields = {key: value for key, value in request.items() if key not in (
+            "attribute", "nuggets", "nugget-updates-context", "all-guessed-nugget-matches")}
+        if ranking is not None:
+            request_fields["max-distance"] = float(request_fields["max-distance"])
+            request_fields["max-distance-change"] = float(request_fields["max-distance-change"])
+        return {
+            "attribute_index": attribute_index,
+            "request": request_fields,
+            "candidates": [nugget_refs[id(nugget)] for nugget in request.get("nuggets", ())],
+            "distances": [[float(nugget[CachedDistanceSignal]) if CachedDistanceSignal.identifier in nugget.signals
+                           else None for nugget in document.nuggets] for document in documents],
+            "current_matches": [int(document[CurrentMatchIndexSignal])
+                                if CurrentMatchIndexSignal.identifier in document.signals else None
+                                for document in documents],
+            "confirmed_matches": [[nugget_refs[id(nugget)] for nugget in attribute.confirmed_matches]
+                                  for attribute in document_base.attributes],
+            "ranking": ranking,
+        }
 
-            remaining_documents = [document for document in document_base.documents
-                                   if attribute.name not in document.attribute_mappings]
-            if not remaining_documents:
-                logger.info("Attribute already fully populated.")
-                continue
+    @staticmethod
+    def _checkpoint_nuggets(document_base, references):
+        return tuple(document_base.documents[doc].nuggets[nugget] for doc, nugget in references)
 
-            logger.info("Starting attribute ranking.")
-            start_matching: float = time.time()
-            self._max_distance = (attribute[CurrentThresholdSignal]
-                                  if CurrentThresholdSignal.identifier in attribute.signals
-                                  else self._default_max_distance)
-            self._old_max_distance = -1  # Previous threshold
-            attribute[CurrentThresholdSignal] = CurrentThresholdSignal(self._max_distance)
-            statistics[attribute.name]["max_distances"] = [self._max_distance]
-            statistics[attribute.name]["feedback_durations"] = []
-            if self.store_best_guesses:
-                statistics[attribute.name]["best_guesses"] = []
-
-            docs_with_added_nuggets: Counter[Document] = Counter()
-
-            # compute initial distances as distances to label
-            logger.info("Compute initial distances and initialize documents.")
-            tik: float = time.time()
-
-            nuggets = document_base.nuggets
-            if nuggets:
-                distances = self._distance.compute_distances([attribute], nuggets, statistics["distance"])[0]
-                for nugget, distance in zip(nuggets, distances):
-                    nugget[CachedDistanceSignal] = CachedDistanceSignal(distance)
-            distances_based_on_label: bool = True
-
-            for document in document_base.documents:
-                if document.nuggets:
-                    index = min(range(len(document.nuggets)),
-                                key=lambda ix: document.nuggets[ix][CachedDistanceSignal])
-                    document[CurrentMatchIndexSignal] = CurrentMatchIndexSignal(index)
+    def _restore_checkpoint(self, document_base, checkpoint):
+        for document, distances, index in zip(
+                document_base.documents, checkpoint["distances"], checkpoint["current_matches"], strict=True):
+            if index is None:
+                document.signals.pop(CurrentMatchIndexSignal.identifier, None)
+            else:
+                document[CurrentMatchIndexSignal] = CurrentMatchIndexSignal(index)
+            for nugget, distance in zip(document.nuggets, distances, strict=True):
+                if distance is None:
+                    nugget.signals.pop(CachedDistanceSignal.identifier, None)
                 else:
-                    document.signals.pop(CurrentMatchIndexSignal.identifier, None)
-                    statistics[attribute.name]["num_document_with_no_nuggets"] += 1
-            logger.info(f"{len(remaining_documents)} documents to fill.")
+                    nugget[CachedDistanceSignal] = CachedDistanceSignal(distance)
+        for attribute, matches in zip(document_base.attributes, checkpoint["confirmed_matches"], strict=True):
+            attribute.confirmed_matches[:] = self._checkpoint_nuggets(document_base, matches)
 
-            tak: float = time.time()
-            logger.info(f"Computed initial distances and initialized documents in {tak - tik} seconds.")
+    def _checkpoint_request(self, document_base, checkpoint):
+        request = dict(checkpoint["request"], attribute=document_base.attributes[checkpoint["attribute_index"]])
+        if checkpoint["ranking"] is not None:
+            request["nuggets"] = self._checkpoint_nuggets(document_base, checkpoint["candidates"])
+            request["all-guessed-nugget-matches"] = tuple(
+                document.nuggets[document[CurrentMatchIndexSignal]] for document in document_base.documents
+                if CurrentMatchIndexSignal.identifier in document.signals)
+        return request
+
+    def _run(
+            self, document_base, interaction_callback, status_callback, statistics,
+            *, checkpoint=None, feedback=None, pause=False,
+    ):
+        first_attribute = checkpoint["attribute_index"] if checkpoint is not None else 0
+        if checkpoint is None:
+            statistics["num_documents"] = len(document_base.documents)
+            statistics["num_nuggets"] = len(document_base.nuggets)
+
+        for attribute_index, attribute in enumerate(document_base.attributes):
+            if attribute_index < first_attribute:
+                continue
+            ranking = checkpoint["ranking"] if checkpoint is not None else None
+            if ranking is None:
+                request = {"do-attribute-request": None, "attribute": attribute}
+                if checkpoint is not None:
+                    feedback_result = feedback
+                    checkpoint = None
+                elif pause:
+                    return self._make_checkpoint(document_base, attribute_index, request), request
+                else:
+                    feedback_result = interaction_callback(self.identifier, request)
+
+                if not feedback_result.get("do-attribute", False):
+                    logger.info("Attribute ranking skipped.")
+                    statistics[attribute.name]["skipped"] = True
+                    continue
+
+                if feedback_result.get("reset", False):
+                    for document in document_base.documents:
+                        document.attribute_mappings.pop(attribute.name, None)
+                    attribute.confirmed_matches.clear()
+                    attribute.signals.pop(CurrentThresholdSignal.identifier, None)
+
+                remaining_documents = [document for document in document_base.documents
+                                       if attribute.name not in document.attribute_mappings]
+                if not remaining_documents:
+                    logger.info("Attribute already fully populated.")
+                    continue
+
+                logger.info("Starting attribute ranking.")
+                start_matching: float = time.time()
+                self._max_distance = (attribute[CurrentThresholdSignal]
+                                      if CurrentThresholdSignal.identifier in attribute.signals
+                                      else self._default_max_distance)
+                self._old_max_distance = -1  # Previous threshold
+                attribute[CurrentThresholdSignal] = CurrentThresholdSignal(self._max_distance)
+                statistics[attribute.name]["max_distances"] = [self._max_distance]
+                statistics[attribute.name]["feedback_durations"] = []
+                if self.store_best_guesses:
+                    statistics[attribute.name]["best_guesses"] = []
+
+                docs_with_added_nuggets: Counter[Document] = Counter()
+
+                # compute initial distances as distances to label
+                logger.info("Compute initial distances and initialize documents.")
+                tik: float = time.time()
+
+                nuggets = document_base.nuggets
+                if nuggets:
+                    distances = self._distance.compute_distances([attribute], nuggets, statistics["distance"])[0]
+                    for nugget, distance in zip(nuggets, distances):
+                        nugget[CachedDistanceSignal] = CachedDistanceSignal(distance)
+                distances_based_on_label: bool = True
+
+                for document in document_base.documents:
+                    if document.nuggets:
+                        index = min(range(len(document.nuggets)),
+                                    key=lambda ix: document.nuggets[ix][CachedDistanceSignal])
+                        document[CurrentMatchIndexSignal] = CurrentMatchIndexSignal(index)
+                    else:
+                        document.signals.pop(CurrentMatchIndexSignal.identifier, None)
+                        statistics[attribute.name]["num_document_with_no_nuggets"] += 1
+                logger.info(f"{len(remaining_documents)} documents to fill.")
+
+                tak: float = time.time()
+                logger.info(f"Computed initial distances and initialized documents in {tak - tik} seconds.")
+            else:
+                remaining_documents = [document_base.documents[index] for index in ranking["remaining"]]
+                docs_with_added_nuggets = Counter({
+                    document_base.documents[index]: count for index, count in ranking["additional"]
+                })
+                distances_based_on_label = ranking["distances_based_on_label"]
+                start_matching = ranking["started_at"]
+                self._max_distance = checkpoint["request"]["max-distance"]
 
             def _sort_remaining_documents():
                 remaining_documents.sort(
@@ -239,130 +338,138 @@ class RankingBasedMatcher(BaseMatcher):
             tik: float = time.time()
             self._old_feedback_nuggets: List[InformationNugget] = []  # All nuggets displayed in the previous feedback round
             self._new_nugget_contexts: List[NewlyAddedNuggetContext] = []  # All nuggets newly displayed in the current feedback round
-            num_feedback: int = 0
+            num_feedback: int = checkpoint["request"]["num-feedback"] if ranking is not None else 0
             continue_matching: bool = True
             new_best_matches: Counter[str] = Counter[str]()  # New best matches due the user's latest feedback
             new_to_old_match: Dict[str, str] = {}  # All new best matches mapped to the corresponding previous best match of the same document
             old_distances: Dict[InformationNugget, float] = {}  # Values of CachedDistanceSignal for all nuggets in previous feedback round
-            while continue_matching and num_feedback < self._max_num_feedback and remaining_documents != []:
-                # sort remaining documents by distance
-                _sort_remaining_documents()
-                ranked_documents = [doc for doc in remaining_documents if doc.nuggets]
-                if not ranked_documents:
-                    if not self._allow_manual_without_candidates:
-                        break
-                    selected_documents: List[Document] = []
-                    num_nuggets_above = num_nuggets_below = 0
-                elif self._sampling_mode == "MOST_UNCERTAIN":
-                    selected_documents = ranked_documents[:self._len_ranked_list]
-
-                    num_nuggets_above: int = 0
-                    num_nuggets_below: int = len(ranked_documents) - self._len_ranked_list
-                elif self._sampling_mode == "MOST_UNCERTAIN_WITH_RANDOMS":
-                    # sample random documents and move them to the front of the ranked list
-                    random_documents: List[Document] = []
-                    for i in range(self._num_random_docs):
-                        if ranked_documents:
-                            random_document: Document = random.choice(ranked_documents)
-                            random_documents.append(random_document)
-                            ranked_documents.remove(random_document)
-
-                    selected_documents = (random_documents + ranked_documents)[:self._len_ranked_list]
-
-                    num_nuggets_above: int = 0
-                    num_nuggets_below: int = len(random_documents) + len(ranked_documents) - self._len_ranked_list
-                elif self._sampling_mode == "AT_MAX_DISTANCE_THRESHOLD":
-                    ix_lower: int = 0
-                    while ix_lower < len(ranked_documents) and \
-                            ranked_documents[ix_lower].nuggets[
-                                ranked_documents[ix_lower][CurrentMatchIndexSignal]][
-                                CachedDistanceSignal] > self._max_distance:
-                        ix_lower += 1
-
-                    higher_left: int = max(0, ix_lower - self._len_ranked_list // 2)
-                    higher_right: int = ix_lower
-                    higher_num: int = higher_right - higher_left
-                    lower_left: int = ix_lower
-                    lower_right: int = min(len(ranked_documents), ix_lower + self._len_ranked_list // 2)
-                    lower_num: int = lower_right - lower_left
-
-                    if lower_num < self._len_ranked_list // 2:
-                        higher_left = max(0, higher_left - (self._len_ranked_list // 2 - lower_num))
-                    elif higher_num < self._len_ranked_list // 2:
-                        lower_right = min(len(ranked_documents),
-                                          lower_right + (self._len_ranked_list // 2 - higher_num))
-
-                    selected_documents = []
-
-                    num_nuggets_above: int = higher_left
-                    num_nuggets_below: int = len(ranked_documents) - lower_right
-                    selected_docs_with_added_nuggets = set()
-
-                    # Add additional documents (most uncertain)...
-                    if self.num_bad_docs > 0 and num_nuggets_above > 0:
-                        k = min(self.num_bad_docs, num_nuggets_above)
-                        new_docs = random.sample(ranked_documents[:num_nuggets_above], k=k)
-                        selected_documents.extend(new_docs)
-                        num_nuggets_above -= k
-                        # Mark best matches of newly added docs as newly added nuggets if they weren't present in previous feedback round
-                        self._update_new_nugget_contexts(new_docs, AddedReason.MOST_UNCERTAIN, old_distances)
-                    # ...  and those that recently got interesting additional extractions to the list
-                    if self.num_recent_docs > 0 and len(docs_with_added_nuggets) > 0:
-                        # Create a list up to double the size wanted and then sample from that instead of only taking the same most promising documents potentially over and over again
-                        pending_documents = set(ranked_documents)
-                        selected_docs_with_added_nuggets = [
-                            d for d, _ in docs_with_added_nuggets.most_common() if d in pending_documents
-                        ][:self.num_recent_docs * 2]
-                        if len(selected_docs_with_added_nuggets) > self.num_recent_docs:
-                            selected_docs_with_added_nuggets = random.sample(selected_docs_with_added_nuggets, k=self.num_recent_docs)
-                        selected_documents.extend(selected_docs_with_added_nuggets)
-                        # Mark best matches of newly added docs as newly added nuggets if they weren't present in previous feedback round
-                        self._update_new_nugget_contexts(selected_docs_with_added_nuggets,
-                                                         AddedReason.INTERESTING_ADDITIONAL_EXTRACTION,
-                                                         old_distances)
-                    selected_docs_with_added_nuggets = set(selected_docs_with_added_nuggets)
-
-                    # Now fill the list with documents at threshold
-                    docs_at_threshold_to_add = [doc for doc in ranked_documents[higher_left:lower_right] if
-                                                doc not in selected_docs_with_added_nuggets]
-                    selected_documents.extend(docs_at_threshold_to_add)
-                    selected_documents = list(dict.fromkeys(selected_documents))
-                    # Mark best matches of selected docs as newly added if they weren't present in previous feedback round
-                    self._update_new_nugget_contexts(docs_at_threshold_to_add, AddedReason.AT_THRESHOLD, old_distances)
-
-                    # Sort to unify the order across the different three sources
-                    selected_documents.sort(key=lambda x: x.nuggets[x[CurrentMatchIndexSignal]][CachedDistanceSignal], reverse=True)
+            while (continue_matching and remaining_documents
+                   and (ranking is not None or num_feedback < self._max_num_feedback)):
+                if ranking is not None:
+                    # Resume the published round without reranking or sampling again.
+                    feedback_nuggets = self._checkpoint_nuggets(document_base, checkpoint["candidates"])
+                    feedback_nuggets_old_cached_distances = tuple(nugget[CachedDistanceSignal] for nugget in feedback_nuggets)
+                    t0 = ranking["requested_at"]
+                    feedback_result = feedback
+                    ranking = None
+                    checkpoint = None
                 else:
-                    logger.error(f"Unknown sampling mode '{self._sampling_mode}'!")
-                    assert False, f"Unknown sampling mode '{self._sampling_mode}'!"
+                    # sort remaining documents by distance
+                    _sort_remaining_documents()
+                    ranked_documents = [doc for doc in remaining_documents if doc.nuggets]
+                    if not ranked_documents:
+                        if not self._allow_manual_without_candidates:
+                            break
+                        selected_documents: List[Document] = []
+                        num_nuggets_above = num_nuggets_below = 0
+                    elif self._sampling_mode == "MOST_UNCERTAIN":
+                        selected_documents = ranked_documents[:self._len_ranked_list]
 
-                # present documents to the user for feedback
-                feedback_nuggets = tuple(doc.nuggets[doc[CurrentMatchIndexSignal]] for doc in selected_documents)
-                feedback_nuggets_old_cached_distances = tuple(nugget[CachedDistanceSignal] for nugget in feedback_nuggets)
-                all_guessed_nugget_matches = tuple(
-                    doc.nuggets[doc[CurrentMatchIndexSignal]] for doc in document_base.documents
-                    if CurrentMatchIndexSignal.identifier in doc.signals
-                )
-                num_feedback += 1
-                statistics[attribute.name]["num_feedback"] += 1
+                        num_nuggets_above: int = 0
+                        num_nuggets_below: int = len(ranked_documents) - self._len_ranked_list
+                    elif self._sampling_mode == "MOST_UNCERTAIN_WITH_RANDOMS":
+                        # sample random documents and move them to the front of the ranked list
+                        random_documents: List[Document] = []
+                        for i in range(self._num_random_docs):
+                            if ranked_documents:
+                                random_document: Document = random.choice(ranked_documents)
+                                random_documents.append(random_document)
+                                ranked_documents.remove(random_document)
 
-                t0 = time.time()
+                        selected_documents = (random_documents + ranked_documents)[:self._len_ranked_list]
 
-                # Build all `BestMatchUpdate` instances based on `new_best_matches` dict
-                best_match_updates = [BestMatchUpdate(new_to_old_match[new_best_match],
-                                                      new_best_match,
-                                                      new_best_matches[new_best_match])
-                                      for new_best_match in new_best_matches.keys()]
-                # Build all `ThresholdPositionUpdate` instances based on old and new distances of all nuggets and the current and previous threshold
-                threshold_position_updates = self._compute_threshold_position_updates(document_base, old_distances)
-                # Gather all update types in `NuggetUpdatesContext` instance which is passed to UI
-                nugget_updates_context = NuggetUpdatesContext(newly_added_nugget_contexts=self._new_nugget_contexts,
-                                                              best_match_updates=best_match_updates,
-                                                              threshold_position_updates=threshold_position_updates)
+                        num_nuggets_above: int = 0
+                        num_nuggets_below: int = len(random_documents) + len(ranked_documents) - self._len_ranked_list
+                    elif self._sampling_mode == "AT_MAX_DISTANCE_THRESHOLD":
+                        ix_lower: int = 0
+                        while ix_lower < len(ranked_documents) and \
+                                ranked_documents[ix_lower].nuggets[
+                                    ranked_documents[ix_lower][CurrentMatchIndexSignal]][
+                                    CachedDistanceSignal] > self._max_distance:
+                            ix_lower += 1
 
-                feedback_result: Dict[str, Any] = interaction_callback(
-                    self.identifier,
-                    {
+                        higher_left: int = max(0, ix_lower - self._len_ranked_list // 2)
+                        higher_right: int = ix_lower
+                        higher_num: int = higher_right - higher_left
+                        lower_left: int = ix_lower
+                        lower_right: int = min(len(ranked_documents), ix_lower + self._len_ranked_list // 2)
+                        lower_num: int = lower_right - lower_left
+
+                        if lower_num < self._len_ranked_list // 2:
+                            higher_left = max(0, higher_left - (self._len_ranked_list // 2 - lower_num))
+                        elif higher_num < self._len_ranked_list // 2:
+                            lower_right = min(len(ranked_documents),
+                                              lower_right + (self._len_ranked_list // 2 - higher_num))
+
+                        selected_documents = []
+
+                        num_nuggets_above: int = higher_left
+                        num_nuggets_below: int = len(ranked_documents) - lower_right
+                        selected_docs_with_added_nuggets = set()
+
+                        # Add additional documents (most uncertain)...
+                        if self.num_bad_docs > 0 and num_nuggets_above > 0:
+                            k = min(self.num_bad_docs, num_nuggets_above)
+                            new_docs = random.sample(ranked_documents[:num_nuggets_above], k=k)
+                            selected_documents.extend(new_docs)
+                            num_nuggets_above -= k
+                            # Mark best matches of newly added docs as newly added nuggets if they weren't present in previous feedback round
+                            self._update_new_nugget_contexts(new_docs, AddedReason.MOST_UNCERTAIN, old_distances)
+                        # ...  and those that recently got interesting additional extractions to the list
+                        if self.num_recent_docs > 0 and len(docs_with_added_nuggets) > 0:
+                            # Create a list up to double the size wanted and then sample from that instead of only taking the same most promising documents potentially over and over again
+                            pending_documents = set(ranked_documents)
+                            selected_docs_with_added_nuggets = [
+                                d for d, _ in docs_with_added_nuggets.most_common() if d in pending_documents
+                            ][:self.num_recent_docs * 2]
+                            if len(selected_docs_with_added_nuggets) > self.num_recent_docs:
+                                selected_docs_with_added_nuggets = random.sample(selected_docs_with_added_nuggets, k=self.num_recent_docs)
+                            selected_documents.extend(selected_docs_with_added_nuggets)
+                            # Mark best matches of newly added docs as newly added nuggets if they weren't present in previous feedback round
+                            self._update_new_nugget_contexts(selected_docs_with_added_nuggets,
+                                                             AddedReason.INTERESTING_ADDITIONAL_EXTRACTION,
+                                                             old_distances)
+                        selected_docs_with_added_nuggets = set(selected_docs_with_added_nuggets)
+
+                        # Now fill the list with documents at threshold
+                        docs_at_threshold_to_add = [doc for doc in ranked_documents[higher_left:lower_right] if
+                                                    doc not in selected_docs_with_added_nuggets]
+                        selected_documents.extend(docs_at_threshold_to_add)
+                        selected_documents = list(dict.fromkeys(selected_documents))
+                        # Mark best matches of selected docs as newly added if they weren't present in previous feedback round
+                        self._update_new_nugget_contexts(docs_at_threshold_to_add, AddedReason.AT_THRESHOLD, old_distances)
+
+                        # Sort to unify the order across the different three sources
+                        selected_documents.sort(key=lambda x: x.nuggets[x[CurrentMatchIndexSignal]][CachedDistanceSignal], reverse=True)
+                    else:
+                        logger.error(f"Unknown sampling mode '{self._sampling_mode}'!")
+                        assert False, f"Unknown sampling mode '{self._sampling_mode}'!"
+
+                    # present documents to the user for feedback
+                    feedback_nuggets = tuple(doc.nuggets[doc[CurrentMatchIndexSignal]] for doc in selected_documents)
+                    feedback_nuggets_old_cached_distances = tuple(nugget[CachedDistanceSignal] for nugget in feedback_nuggets)
+                    all_guessed_nugget_matches = tuple(
+                        doc.nuggets[doc[CurrentMatchIndexSignal]] for doc in document_base.documents
+                        if CurrentMatchIndexSignal.identifier in doc.signals
+                    )
+                    num_feedback += 1
+                    statistics[attribute.name]["num_feedback"] += 1
+
+                    t0 = time.time()
+
+                    # Build all `BestMatchUpdate` instances based on `new_best_matches` dict
+                    best_match_updates = [BestMatchUpdate(new_to_old_match[new_best_match],
+                                                          new_best_match,
+                                                          new_best_matches[new_best_match])
+                                          for new_best_match in new_best_matches.keys()]
+                    # Build all `ThresholdPositionUpdate` instances based on old and new distances of all nuggets and the current and previous threshold
+                    threshold_position_updates = self._compute_threshold_position_updates(document_base, old_distances)
+                    # Gather all update types in `NuggetUpdatesContext` instance which is passed to UI
+                    nugget_updates_context = NuggetUpdatesContext(newly_added_nugget_contexts=self._new_nugget_contexts,
+                                                                  best_match_updates=best_match_updates,
+                                                                  threshold_position_updates=threshold_position_updates)
+
+                    request = {
                         "max-distance": self._max_distance,
                         "max-distance-change": self._max_distance - self._old_max_distance if self._old_max_distance != -1 else 0,
                         "nuggets": feedback_nuggets,
@@ -375,7 +482,18 @@ class RankingBasedMatcher(BaseMatcher):
                         "num-nuggets-below": num_nuggets_below,
                         "sampling-mode": self._sampling_mode
                     }
-                )
+                    if pause:
+                        document_indices = {id(document): index for index, document in enumerate(document_base.documents)}
+                        ranking = {
+                            "remaining": [document_indices[id(document)] for document in remaining_documents],
+                            "additional": [[document_indices[id(document)], float(count)]
+                                           for document, count in docs_with_added_nuggets.items()],
+                            "distances_based_on_label": distances_based_on_label,
+                            "started_at": start_matching,
+                            "requested_at": t0,
+                        }
+                        return self._make_checkpoint(document_base, attribute_index, request, ranking), request
+                    feedback_result = interaction_callback(self.identifier, request)
                 t1 = time.time()
                 statistics[attribute.name]["feedback_durations"].append(t1 - t0)
 
@@ -712,6 +830,8 @@ class RankingBasedMatcher(BaseMatcher):
             logger.info(f"Updated remaining documents in {tak - tik} seconds.")
 
             statistics[attribute.name]["runtime"] = tak - start_matching
+
+        return None, None
 
     def _update_new_nugget_contexts(self, new_docs: List[Document], added_reason: AddedReason,
                                     old_distances: Dict[InformationNugget, float]):
