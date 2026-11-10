@@ -9,7 +9,7 @@ from wannadb.data.data import Document, DocumentBase, InformationNugget
 from wannadb.data.signals import SentenceStartCharsSignal
 from wannadb_web.util import Token, Authorisation, tokenDecode
 from wannadb_web.postgres.queries import (
-	check_password, document_base_snapshot_query, document_base_snapshot_scope, get_organisation_authorisation,
+	check_password, document_base_snapshot_query, document_base_snapshot_scope, get_organisation_authorisation, get_organisation_id,
 )
 from wannadb_web.limits import validate_corpus
 from wannadb_web.postgres.util import connectPG, execute_transaction
@@ -567,54 +567,30 @@ def add_user_to_organisation_new(organisationId: int, newUser: str, actor_user_i
 
 @deprecated
 def remove_user_from_organisation(organisationName: str, sessionToken: str, userToRemove: str):
-	"""
-	Remove a user from an organisation.
- 
-	:param organisationName: Name of the organisation
-	:type organisationName: str
-	:param sessionToken: Session token of the admin user making the change
-	:type sessionToken: str
-	:param userToRemove: Username of the user to be removed
-	:type userToRemove: str
-	:return: None
-	"""
+	"""Resolve the legacy name-based request through the owner-only removal."""
 	try:
-		token: Token = tokenDecode(sessionToken)
-		userid = token.id
-
-		delete_query = sql.SQL("""
-			DELETE FROM membership
-			USING (
-				SELECT userid, organisationid 
-				FROM membership 
-				WHERE organisationid = (SELECT id FROM organisations WHERE name = %s)
-			) AS org
-			WHERE membership.organisationid = org.organisationid 
-				AND membership.userid = (SELECT id FROM users WHERE username = %s)
-				AND membership.authorisation >= %s
-				AND %s >= %s
-		""")
-
-		execute_transaction(delete_query, (organisationName, userToRemove, userid, userid,
-										   str(Authorisation.Admin.value), userid),
-							commit=True)
-
+		token = tokenDecode(sessionToken)
+		if token is None:
+			return
+		organisations = get_organisation_id(organisationName)
+		if isinstance(organisations, list) and len(organisations) == 1:
+			remove_user_from_organisation_new(organisations[0][0], userToRemove, token.id)
 	except Exception:
 		logger.error("Could not remove organization member")
-  
-  
+
+
 def remove_user_from_organisation_new(organisationId: int, userToRemove: str, actor_user_id: int):
-	"""Remove a lower-ranked member under the same lock as leave and account deletion."""
+	"""Allow only an owner to remove a non-owner under the organization lock."""
 	with closing(connectPG()) as conn, conn, conn.cursor() as cur:
 		_lock_organisation(cur, organisationId)
 		cur.execute("""DELETE FROM membership target USING users u, membership actor
 			WHERE target.userid = u.id AND u.username = %s
 			AND target.organisationid = %s AND actor.organisationid = target.organisationid
-			AND actor.userid = %s AND actor.authorisation IN (0, 1)
-			AND target.authorisation > actor.authorisation AND target.authorisation IN (1, 10);""",
+			AND actor.userid = %s AND actor.authorisation = 0
+			AND target.authorisation IN (1, 10);""",
 			(userToRemove, organisationId, actor_user_id))
 		if cur.rowcount != 1:
-			raise PermissionError("Member not found or insufficient administrator privileges.")
+			raise PermissionError("Only an organization owner can remove a non-owner member.")
 
 
 def adjust_user_authorization(organisationName: str, sessionToken: str, userToAdjust: str, newAuthorisation: int):
