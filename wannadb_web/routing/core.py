@@ -34,7 +34,7 @@ from typing import Optional
 from bson import decode as decode_bson
 from redis.exceptions import RedisError
 from wannadb_web.postgres.queries import get_document_base_data, get_document_by_name_and_content, get_feedbacks_for_document, get_document_by_name, get_base_id, get_organisation_authorisation, documents_available_for_base, get_document_ids_for_snapshot, get_document_base_snapshot
-from wannadb_web.postgres.attribute_schema import attribute_ids_for_snapshot, get_attribute_schema_version, parse_attribute_edit
+from wannadb_web.postgres.attribute_schema import SUGGESTED_ATTRIBUTE_MAPPINGS, attribute_ids_for_snapshot, get_attribute_schema_version, parse_attribute_edit
 from wannadb_web.postgres.queries import FeedbackOutcomeUnavailable, get_feedback_outcome
 from wannadb_web.postgres.feedback_sessions import FeedbackSessionUnavailable, load_session
 from wannadb_web.postgres.transactions import add_feedback, delete_document_base_data
@@ -397,11 +397,14 @@ def feedback_overview():
 	attributes = []
 	for attribute in base["attributes"]:
 		name = attribute["name"]
-		mappings = [document["attribute_mappings"][name] for document in documents
-			if name in document["attribute_mappings"]]
+		mapped_documents = [document for document in documents if name in document["attribute_mappings"]]
+		confirmed = sum(name not in document.get("signals", {}).get(SUGGESTED_ATTRIBUTE_MAPPINGS, ())
+			for document in mapped_documents)
+		populated = bool(document_count) and confirmed == document_count
 		attributes.append({
-			"id": ids[name], "name": name, "signals": {}, "populated": bool(document_count) and len(mappings) == document_count,
-			"partial": 0 < len(mappings) < document_count, "nrOfNuggets": sum(map(len, mappings)),
+			"id": ids[name], "name": name, "signals": {}, "populated": populated,
+			"partial": bool(mapped_documents) and not populated,
+			"nrOfNuggets": sum(len(document["attribute_mappings"][name]) for document in mapped_documents),
 		})
 	return make_response({
 		"name": base_name, "attributes": attributes, "attributeVersion": version, "documentCount": document_count,
@@ -638,7 +641,11 @@ def reload_document_base():
 
 	user_id = _token.id
 
-	task = ReloadDocumentBaseTask().apply_async(args=(user_id,), **g.feedback_options)
+	resolution = request.get_json().get("conflictResolution")
+	if resolution is not None and resolution not in ("keep", "replace"):
+		return make_response({"error": "Choose whether to keep or replace the saved decision."}, 400)
+	args = (user_id,) if resolution is None else (user_id, resolution)
+	task = ReloadDocumentBaseTask().apply_async(args=args, **g.feedback_options)
 
 	return make_response({'task_id': task.id}, 202)
 

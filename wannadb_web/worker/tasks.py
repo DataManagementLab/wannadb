@@ -511,9 +511,13 @@ class DocumentBaseStopMatching(FeedbackTask):
 class ReloadDocumentBaseTask(FeedbackTask):
 	name = "ReloadDocumentBase"
 
-	def run(self, user_id: int):
-
-		self.apply_decision(ReloadDocumentBase())
+	def run(self, user_id: int, conflict_resolution=None):
+		if conflict_resolution not in (None, "keep", "replace"):
+			raise ValueError("Unsupported feedback conflict resolution.")
+		payload = ReloadDocumentBase().to_json()
+		if conflict_resolution is not None:
+			payload["conflict_resolution"] = conflict_resolution
+		self.apply_decision(payload)
 		return {"ok": True}
 
 

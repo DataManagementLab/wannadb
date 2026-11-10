@@ -2,6 +2,7 @@ import abc
 import logging
 import random
 import time
+from hashlib import sha256
 from typing import Any, Dict, List, Tuple, Counter, Optional
 
 import numpy as np
@@ -9,7 +10,8 @@ import numpy as np
 from wannadb.configuration import BasePipelineElement, register_configurable_element, Pipeline
 from wannadb.data.data import Document, DocumentBase, InformationNugget
 from wannadb.data.signals import CachedContextSentenceSignal, CachedDistanceSignal, \
-    SentenceStartCharsSignal, CurrentMatchIndexSignal, LabelSignal, ExtractorNameSignal, CurrentThresholdSignal
+    SentenceStartCharsSignal, CurrentMatchIndexSignal, LabelSignal, ExtractorNameSignal, CurrentThresholdSignal, \
+    SuggestedAttributeMappingsSignal
 from wannadb.interaction import BaseInteractionCallback
 from wannadb.matching.custom_match_extraction import BaseCustomMatchExtractor
 from wannadb.matching.distance import BaseDistance
@@ -70,6 +72,7 @@ class RankingBasedMatcher(BaseMatcher):
             num_recent_docs: int = 5,
             store_best_guesses: bool = False,
             allow_manual_without_candidates: bool = False,
+            suggestion_provenance: bool = False,
     ) -> None:
         """
         Initialize the RankingBasedMatcher.
@@ -87,6 +90,7 @@ class RankingBasedMatcher(BaseMatcher):
         :param num_recent_docs: number of documents that recently got interesting additional extractions to be shown to the user
         :param store_best_guesses: whether to store the best guesses for each feedback round
         :param allow_manual_without_candidates: whether the client can handle feedback rounds without any ranked nuggets
+        :param suggestion_provenance: keep automatic mappings provisional until explicitly reviewed
         """
         super(RankingBasedMatcher, self).__init__()
         self._distance: BaseDistance = distance
@@ -103,6 +107,7 @@ class RankingBasedMatcher(BaseMatcher):
         self.num_recent_docs = num_recent_docs
         self.store_best_guesses = store_best_guesses
         self._allow_manual_without_candidates = allow_manual_without_candidates
+        self._suggestion_provenance = suggestion_provenance
 
         # add signals required by the distance function to the signals required by the matcher
         self._add_required_signal_identifiers(self._distance.required_signal_identifiers)
@@ -187,8 +192,128 @@ class RankingBasedMatcher(BaseMatcher):
         return self._run(document_base, interaction_callback, status_callback, statistics,
                          checkpoint=checkpoint, feedback=feedback, pause=True)
 
+    def rebase(
+            self, document_base, checkpoint, interaction_callback, status_callback, statistics,
+            *, keep_candidates=False, advance_if_empty=False,
+    ):
+        """Refresh the pending view, optionally advancing when the attribute is already reviewed."""
+        attribute_index = checkpoint["attribute_index"]
+        attribute = document_base.attributes[attribute_index]
+        ranking = checkpoint["ranking"]
+        if ranking is None:
+            request = {"do-attribute-request": None, "attribute": attribute}
+            return self._make_checkpoint(document_base, attribute_index, request), request
+
+        remaining = [document for document in document_base.documents if self._needs_review(document, attribute.name)]
+        if advance_if_empty and not remaining:
+            next_index = attribute_index + 1
+            if next_index >= len(document_base.attributes):
+                return None, None
+            request = {"do-attribute-request": None, "attribute": document_base.attributes[next_index]}
+            return self._make_checkpoint(document_base, next_index, request), request
+
+        distances_based_on_label = self._initialize_document_distances(document_base, attribute, statistics)
+        self._max_distance = attribute[CurrentThresholdSignal] if CurrentThresholdSignal.identifier in attribute.signals \
+            else self._default_max_distance
+        documents_by_name = {document.name: document for document in remaining}
+        candidates = ()
+        if keep_candidates:
+            candidates = tuple(self._rebased_candidates(documents_by_name, checkpoint.get("candidate_spans", ())))
+        docs_with_added_nuggets = Counter({
+            documents_by_name[name]: count for name, count in ranking.get("additional_by_name", ())
+            if name in documents_by_name
+        })
+        request = dict(checkpoint["request"], attribute=attribute, nuggets=candidates)
+        request["max-distance"] = self._max_distance
+        request["max-distance-change"] = 0
+        request["documents-without-nuggets"] = [
+            document.name for document in remaining if not document.nuggets or
+            (keep_candidates and document.name in checkpoint["request"]["documents-without-nuggets"])
+        ]
+        if not candidates:
+            request["num-nuggets-above"] = request["num-nuggets-below"] = 0
+        state = self._ranking_state(document_base, remaining, docs_with_added_nuggets,
+                                    distances_based_on_label, ranking["started_at"], ranking["requested_at"])
+        rebased = self._make_checkpoint(document_base, attribute_index, request, state)
+        if keep_candidates or not remaining:
+            return rebased, self._checkpoint_request(document_base, rebased)
+        return self._run(document_base, interaction_callback, status_callback, statistics,
+                         checkpoint=rebased, pause=True, refresh=True)
+
     @staticmethod
-    def _make_checkpoint(document_base, attribute_index, request, ranking=None):
+    def _rebased_candidates(documents, spans):
+        for name, text_hash, start, end in spans:
+            document = documents.get(name)
+            if document is None or sha256(document.text.encode("utf-8")).hexdigest() != text_hash:
+                continue
+            nugget = next((candidate for candidate in document.nuggets
+                           if (candidate.start_char, candidate.end_char) == (start, end)), None)
+            if nugget is not None:
+                yield nugget
+
+    def _needs_review(self, document, attribute):
+        if attribute not in document.attribute_mappings:
+            return True
+        return self._suggestion_provenance and attribute in self._suggested_mappings(document)
+
+    @staticmethod
+    def _suggested_mappings(document):
+        signal = document.signals.get(SuggestedAttributeMappingsSignal.identifier)
+        return signal.value if signal is not None else ()
+
+    def _set_suggestion(self, document, attribute, suggested):
+        if not self._suggestion_provenance:
+            return
+        names = [name for name in self._suggested_mappings(document) if name != attribute]
+        if suggested:
+            names.append(attribute)
+        if names:
+            document[SuggestedAttributeMappingsSignal] = names
+        else:
+            document.signals.pop(SuggestedAttributeMappingsSignal.identifier, None)
+
+    def _initialize_document_distances(self, document_base, attribute, statistics):
+        """Rank by the label until a web reviewer has confirmed a match."""
+        confirmed = []
+        if self._suggestion_provenance:
+            confirmed = [nugget for document in document_base.documents
+                         if not self._needs_review(document, attribute.name)
+                         for nugget in document.attribute_mappings[attribute.name]]
+            attribute.confirmed_matches[:] = confirmed
+        if not confirmed:
+            nuggets = document_base.nuggets
+            if nuggets:
+                distances = self._distance.compute_distances([attribute], nuggets, statistics["distance"])[0]
+                for nugget, distance in zip(nuggets, distances):
+                    nugget[CachedDistanceSignal] = CachedDistanceSignal(distance)
+        for document in document_base.documents:
+            if not document.nuggets:
+                document.signals.pop(CurrentMatchIndexSignal.identifier, None)
+                statistics[attribute.name]["num_document_with_no_nuggets"] += 1
+                continue
+            if confirmed:
+                distances = self._distance.compute_distances(confirmed, document.nuggets, statistics["distance"]).min(axis=0)
+                for nugget, distance in zip(document.nuggets, distances):
+                    nugget[CachedDistanceSignal] = CachedDistanceSignal(distance)
+            index = min(range(len(document.nuggets)), key=lambda ix: document.nuggets[ix][CachedDistanceSignal])
+            document[CurrentMatchIndexSignal] = CurrentMatchIndexSignal(index)
+        return not confirmed
+
+    @staticmethod
+    def _ranking_state(document_base, remaining_documents, docs_with_added_nuggets,
+                       distances_based_on_label, started_at, requested_at):
+        document_indices = {id(document): index for index, document in enumerate(document_base.documents)}
+        return {
+            "remaining": [document_indices[id(document)] for document in remaining_documents],
+            "additional": [[document_indices[id(document)], float(count)]
+                           for document, count in docs_with_added_nuggets.items()],
+            "additional_by_name": [[document.name, float(count)] for document, count in docs_with_added_nuggets.items()],
+            "distances_based_on_label": distances_based_on_label,
+            "started_at": started_at,
+            "requested_at": requested_at,
+        }
+
+    def _make_checkpoint(self, document_base, attribute_index, request, ranking=None):
         documents = document_base.documents
         nugget_refs = {id(nugget): [doc_index, nugget_index]
                        for doc_index, document in enumerate(documents)
@@ -198,10 +323,14 @@ class RankingBasedMatcher(BaseMatcher):
         if ranking is not None:
             request_fields["max-distance"] = float(request_fields["max-distance"])
             request_fields["max-distance-change"] = float(request_fields["max-distance-change"])
+        candidates = request.get("nuggets", ())
         return {
             "attribute_index": attribute_index,
             "request": request_fields,
-            "candidates": [nugget_refs[id(nugget)] for nugget in request.get("nuggets", ())],
+            "candidates": [nugget_refs[id(nugget)] for nugget in candidates],
+            "candidate_spans": [[nugget.document.name, sha256(nugget.document.text.encode("utf-8")).hexdigest(),
+                                 nugget.start_char, nugget.end_char] for nugget in candidates]
+                               if self._suggestion_provenance else [],
             "distances": [[float(nugget[CachedDistanceSignal]) if CachedDistanceSignal.identifier in nugget.signals
                            else None for nugget in document.nuggets] for document in documents],
             "current_matches": [int(document[CurrentMatchIndexSignal])
@@ -242,7 +371,7 @@ class RankingBasedMatcher(BaseMatcher):
 
     def _run(
             self, document_base, interaction_callback, status_callback, statistics,
-            *, checkpoint=None, feedback=None, pause=False,
+            *, checkpoint=None, feedback=None, pause=False, refresh=False,
     ):
         first_attribute = checkpoint["attribute_index"] if checkpoint is not None else 0
         if checkpoint is None:
@@ -271,11 +400,12 @@ class RankingBasedMatcher(BaseMatcher):
                 if feedback_result.get("reset", False):
                     for document in document_base.documents:
                         document.attribute_mappings.pop(attribute.name, None)
+                        self._set_suggestion(document, attribute.name, False)
                     attribute.confirmed_matches.clear()
                     attribute.signals.pop(CurrentThresholdSignal.identifier, None)
 
                 remaining_documents = [document for document in document_base.documents
-                                       if attribute.name not in document.attribute_mappings]
+                                       if self._needs_review(document, attribute.name)]
                 if not remaining_documents:
                     logger.info("Attribute already fully populated.")
                     continue
@@ -298,21 +428,7 @@ class RankingBasedMatcher(BaseMatcher):
                 logger.info("Compute initial distances and initialize documents.")
                 tik: float = time.time()
 
-                nuggets = document_base.nuggets
-                if nuggets:
-                    distances = self._distance.compute_distances([attribute], nuggets, statistics["distance"])[0]
-                    for nugget, distance in zip(nuggets, distances):
-                        nugget[CachedDistanceSignal] = CachedDistanceSignal(distance)
-                distances_based_on_label: bool = True
-
-                for document in document_base.documents:
-                    if document.nuggets:
-                        index = min(range(len(document.nuggets)),
-                                    key=lambda ix: document.nuggets[ix][CachedDistanceSignal])
-                        document[CurrentMatchIndexSignal] = CurrentMatchIndexSignal(index)
-                    else:
-                        document.signals.pop(CurrentMatchIndexSignal.identifier, None)
-                        statistics[attribute.name]["num_document_with_no_nuggets"] += 1
+                distances_based_on_label = self._initialize_document_distances(document_base, attribute, statistics)
                 logger.info(f"{len(remaining_documents)} documents to fill.")
 
                 tak: float = time.time()
@@ -339,6 +455,16 @@ class RankingBasedMatcher(BaseMatcher):
             self._old_feedback_nuggets: List[InformationNugget] = []  # All nuggets displayed in the previous feedback round
             self._new_nugget_contexts: List[NewlyAddedNuggetContext] = []  # All nuggets newly displayed in the current feedback round
             num_feedback: int = checkpoint["request"]["num-feedback"] if ranking is not None else 0
+            if refresh:
+                # A refreshed view replaces the outstanding round without spending another decision.
+                num_feedback -= 1
+                ranking = None
+                checkpoint = None
+                self._old_max_distance = -1
+            if ranking is not None and not remaining_documents:
+                # A refresh may leave a final view with no undecided documents.
+                ranking = None
+                checkpoint = None
             continue_matching: bool = True
             new_best_matches: Counter[str] = Counter[str]()  # New best matches due the user's latest feedback
             new_to_old_match: Dict[str, str] = {}  # All new best matches mapped to the corresponding previous best match of the same document
@@ -348,6 +474,7 @@ class RankingBasedMatcher(BaseMatcher):
                 if ranking is not None:
                     # Resume the published round without reranking or sampling again.
                     feedback_nuggets = self._checkpoint_nuggets(document_base, checkpoint["candidates"])
+                    documents_without_nuggets = checkpoint["request"]["documents-without-nuggets"]
                     feedback_nuggets_old_cached_distances = tuple(nugget[CachedDistanceSignal] for nugget in feedback_nuggets)
                     t0 = ranking["requested_at"]
                     feedback_result = feedback
@@ -453,7 +580,8 @@ class RankingBasedMatcher(BaseMatcher):
                         if CurrentMatchIndexSignal.identifier in doc.signals
                     )
                     num_feedback += 1
-                    statistics[attribute.name]["num_feedback"] += 1
+                    if not refresh:
+                        statistics[attribute.name]["num_feedback"] += 1
 
                     t0 = time.time()
 
@@ -469,11 +597,12 @@ class RankingBasedMatcher(BaseMatcher):
                                                                   best_match_updates=best_match_updates,
                                                                   threshold_position_updates=threshold_position_updates)
 
+                    documents_without_nuggets = [doc.name for doc in remaining_documents if not doc.nuggets]
                     request = {
                         "max-distance": self._max_distance,
                         "max-distance-change": self._max_distance - self._old_max_distance if self._old_max_distance != -1 else 0,
                         "nuggets": feedback_nuggets,
-                        "documents-without-nuggets": [doc.name for doc in remaining_documents if not doc.nuggets],
+                        "documents-without-nuggets": documents_without_nuggets,
                         "nugget-updates-context": nugget_updates_context,
                         "all-guessed-nugget-matches": all_guessed_nugget_matches,
                         "attribute": attribute,
@@ -483,15 +612,8 @@ class RankingBasedMatcher(BaseMatcher):
                         "sampling-mode": self._sampling_mode
                     }
                     if pause:
-                        document_indices = {id(document): index for index, document in enumerate(document_base.documents)}
-                        ranking = {
-                            "remaining": [document_indices[id(document)] for document in remaining_documents],
-                            "additional": [[document_indices[id(document)], float(count)]
-                                           for document, count in docs_with_added_nuggets.items()],
-                            "distances_based_on_label": distances_based_on_label,
-                            "started_at": start_matching,
-                            "requested_at": t0,
-                        }
+                        ranking = self._ranking_state(document_base, remaining_documents, docs_with_added_nuggets,
+                                                      distances_based_on_label, start_matching, t0)
                         return self._make_checkpoint(document_base, attribute_index, request, ranking), request
                     feedback_result = interaction_callback(self.identifier, request)
                 t1 = time.time()
@@ -514,7 +636,7 @@ class RankingBasedMatcher(BaseMatcher):
                     rejected = feedback_result.get("nugget")
                     if rejected is None:
                         document = self._feedback_document(document_base, feedback_result.get("document"))
-                        if document.nuggets:
+                        if document.nuggets and document.name not in documents_without_nuggets:
                             raise ValueError("A ranked document requires a nugget for no-match feedback")
                     else:
                         rejected = self._feedback_nugget(document_base, rejected)
@@ -524,6 +646,7 @@ class RankingBasedMatcher(BaseMatcher):
                     remaining_documents.remove(document)
                     docs_with_added_nuggets.pop(document, None)
                     document.attribute_mappings[attribute.name] = []
+                    self._set_suggestion(document, attribute.name, False)
 
                     if self._adjust_threshold and rejected is not None:
                         # threshold adjustment: if the given nugget's cached distance is smaller than the threshold,
@@ -612,6 +735,7 @@ class RankingBasedMatcher(BaseMatcher):
 
                     # add this nugget to the document as a match and remove the document from remaining documents
                     feedback_result["document"].attribute_mappings[attribute.name] = [confirmed_nugget]
+                    self._set_suggestion(feedback_result["document"], attribute.name, False)
                     remaining_documents.remove(feedback_result["document"])
 
                     # add this nugget as a confirmed match to the corresponding attribute
@@ -737,6 +861,7 @@ class RankingBasedMatcher(BaseMatcher):
                     statistics[attribute.name]["num_confirmed_match"] += len(confirmed_nuggets)
                     for nugget in confirmed_nuggets:
                         nugget.document.attribute_mappings[attribute.name] = [nugget]
+                        self._set_suggestion(nugget.document, attribute.name, False)
                         nugget.document[CurrentMatchIndexSignal] = next(
                             ix for ix, candidate in enumerate(nugget.document.nuggets) if candidate is nugget
                         )
@@ -825,6 +950,7 @@ class RankingBasedMatcher(BaseMatcher):
                 else:
                     statistics[attribute.name]["num_blocked_by_max_distance"] += 1
                     document.attribute_mappings[attribute.name] = []
+                self._set_suggestion(document, attribute.name, True)
 
             tak: float = time.time()
             logger.info(f"Updated remaining documents in {tak - tik} seconds.")

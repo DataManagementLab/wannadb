@@ -410,3 +410,10 @@ class CurrentThresholdSignal(BaseFloatSignal):
     """Current threshold associated with an attribute."""
     identifier: str = "CurrentThresholdSignal"
     do_serialize: bool = True
+
+
+@register_signal
+class SuggestedAttributeMappingsSignal(BaseStringListSignal):
+    """Attributes whose document mappings came from automatic matching."""
+    identifier: str = "SuggestedAttributeMappingsSignal"
+    do_serialize: bool = True

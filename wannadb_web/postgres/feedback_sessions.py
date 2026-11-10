@@ -23,6 +23,10 @@ class FeedbackSessionConflict(RuntimeError):
     """A feedback step lost its current version or its source snapshot."""
 
 
+class FeedbackSnapshotConflict(FeedbackSessionConflict):
+    """The same base snapshot was updated while a feedback step was being computed."""
+
+
 class FeedbackSessionUnavailable(RuntimeError):
     """The saved feedback session could not be read."""
 
@@ -33,7 +37,12 @@ class FeedbackSessionLimit(QueueFullError):
 
 def load_session(user_id, session_id, *, include_checkpoint=False):
     """Read a current member's unexpired session. API callers only receive metadata."""
-    payload = sql.SQL(", s.checkpoint, d.content_byte, b.attribute_schema_version::text AS live_schema") if include_checkpoint else sql.SQL("")
+    payload = sql.SQL("")
+    if include_checkpoint:
+        payload = sql.SQL("""
+            , s.checkpoint, d.content_byte, b.attribute_schema_version::text AS live_schema,
+            ({scope}) AS live_scope
+        """).format(scope=document_base_snapshot_scope())
     statement = sql.SQL("""
         SELECT s.base_id, b.organisation_id, b.name, s.snapshot_id, s.snapshot_hash,
                s.attribute_schema_version::text, s.version, s.phase, s.attribute{payload}
@@ -61,11 +70,15 @@ def load_session(user_id, session_id, *, include_checkpoint=False):
         "attribute": attribute, "closed": phase == "finished", "error": None,
     }
     if include_checkpoint:
-        checkpoint, snapshot, live_schema = body
+        checkpoint, snapshot, live_schema, live_scope = body
         snapshot = bytes(snapshot) if snapshot is not None else None
-        if phase != "finished" and (snapshot is None or sha256(snapshot).hexdigest() != snapshot_hash or live_schema != schema):
+        if phase != "finished" and (not live_scope or snapshot is None or live_schema != schema):
             raise FeedbackSessionConflict("The document base changed. Open a fresh feedback session.")
-        session.update(checkpoint=bytes(checkpoint) if checkpoint is not None else None, snapshot=snapshot)
+        session.update(
+            checkpoint=bytes(checkpoint) if checkpoint is not None else None,
+            snapshot=snapshot,
+            live_snapshot_hash=sha256(snapshot).hexdigest() if snapshot is not None else None,
+        )
     return session
 
 
@@ -138,18 +151,28 @@ def _lock_snapshot(cursor, user_id, base_id, snapshot_id, snapshot_hash, schema)
         FROM public.document_bases b JOIN public.documents d ON {scope}
         WHERE b.id = %s LIMIT 2 FOR UPDATE OF d
     """).format(scope=document_base_snapshot_scope()), (base_id,))
-    if cursor.fetchall() != [(snapshot_id, snapshot_hash)]:
+    snapshots = cursor.fetchall()
+    if len(snapshots) != 1 or snapshots[0][0] != snapshot_id:
         raise FeedbackSessionConflict("The document base changed. Open a fresh feedback session.")
+    if snapshots[0][1] != snapshot_hash:
+        raise FeedbackSnapshotConflict("The document base changed while processing feedback.")
 
 
 def save_session(user_id, session_id, base_id, snapshot_id, expected_snapshot,
                  attribute_schema_version, checkpoint, phase, attribute, *,
                  expected_version=0, expected_phase=None, expected_attribute=None,
-                 command=None, new_snapshot=None):
-    """Create a checkpoint or atomically advance it, its BSON snapshot and its F38 receipt."""
+                 command=None, new_snapshot=None, expected_session_snapshot=None,
+                 record_receipt=True):
+    """Advance the session against both its checkpoint hash and the loaded canonical BSON."""
     expected_hash = sha256(expected_snapshot).hexdigest() if isinstance(expected_snapshot, bytes) else expected_snapshot
-    if not isinstance(expected_hash, str) or re.fullmatch(r"[a-f0-9]{64}", expected_hash) is None:
-        raise ValueError("A valid expected snapshot is required.")
+    prior_hash = expected_hash if expected_session_snapshot is None else expected_session_snapshot
+    if not all(isinstance(digest, str) and re.fullmatch(r"[a-f0-9]{64}", digest)
+               for digest in (expected_hash, prior_hash)):
+        raise ValueError("Valid expected snapshot hashes are required.")
+    if type(record_receipt) is not bool or (not record_receipt and new_snapshot is not None):
+        raise ValueError("A snapshot update requires a durable feedback receipt.")
+    if new_snapshot is not None and (not isinstance(new_snapshot, bytes) or not new_snapshot):
+        raise ValueError("A new document snapshot must be nonempty BSON.")
     if type(expected_version) is not int or expected_version < 0:
         raise ValueError("A valid expected session version is required.")
     if phase in _WAITING_PHASES:
@@ -164,9 +187,8 @@ def save_session(user_id, session_id, base_id, snapshot_id, expected_snapshot,
     elif (not isinstance(command, dict) or not command.get("command_id") or
           not command.get("request_fingerprint") or command.get("session_id") != session_id or
           command.get("expected_version") != expected_version or
-          expected_phase not in _WAITING_PHASES or not isinstance(expected_attribute, str) or
-          not isinstance(new_snapshot, bytes) or not new_snapshot):
-        raise ValueError("An advancing feedback session requires a scoped command and its saved snapshot.")
+          expected_phase not in _WAITING_PHASES or not isinstance(expected_attribute, str)):
+        raise ValueError("An advancing feedback session requires a scoped command.")
 
     version = expected_version + 1
     lifetime = _FINISHED_SECONDS if phase == "finished" else _IDLE_SECONDS
@@ -199,24 +221,26 @@ def save_session(user_id, session_id, base_id, snapshot_id, expected_snapshot,
                   AND snapshot_hash = %s AND attribute_schema_version = %s AND version = %s
                   AND phase = %s AND attribute = %s AND expires_at > clock_timestamp()
             """, (new_hash, version, phase, attribute, checkpoint, lifetime, user_id, session_id,
-                  base_id, snapshot_id, expected_hash, attribute_schema_version, expected_version,
+                  base_id, snapshot_id, prior_hash, attribute_schema_version, expected_version,
                   expected_phase, expected_attribute))
             if cursor.rowcount != 1:
                 raise FeedbackSessionConflict("This feedback session changed or expired. Reload its current state.")
 
-            cursor.execute("UPDATE public.documents SET content_byte = %s WHERE id = %s", (new_snapshot, snapshot_id))
-            if cursor.rowcount != 1:
-                raise FeedbackSessionConflict("The saved document snapshot could not be updated.")
-            cursor.execute("UPDATE public.document_bases SET last_modified = now() WHERE id = %s", (base_id,))
-            if cursor.rowcount != 1:
-                raise FeedbackSessionConflict("The document base could not be updated.")
-            cursor.execute("""
-                INSERT INTO public.feedback_outcomes
-                    (user_id, command_id, session_id, base_id, expected_version, request_fingerprint, snapshot_version)
-                VALUES (%s, %s, %s, %s, %s, %s, %s)
-                ON CONFLICT (user_id, command_id) DO NOTHING
-            """, (user_id, command["command_id"], session_id, base_id, expected_version,
-                  command["request_fingerprint"], new_hash))
-            if cursor.rowcount != 1:
-                raise FeedbackSessionConflict("This feedback command was already saved.")
+            if new_snapshot is not None:
+                cursor.execute("UPDATE public.documents SET content_byte = %s WHERE id = %s", (new_snapshot, snapshot_id))
+                if cursor.rowcount != 1:
+                    raise FeedbackSessionConflict("The saved document snapshot could not be updated.")
+                cursor.execute("UPDATE public.document_bases SET last_modified = now() WHERE id = %s", (base_id,))
+                if cursor.rowcount != 1:
+                    raise FeedbackSessionConflict("The document base could not be updated.")
+            if record_receipt:
+                cursor.execute("""
+                    INSERT INTO public.feedback_outcomes
+                        (user_id, command_id, session_id, base_id, expected_version, request_fingerprint, snapshot_version)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (user_id, command_id) DO NOTHING
+                """, (user_id, command["command_id"], session_id, base_id, expected_version,
+                      command["request_fingerprint"], new_hash))
+                if cursor.rowcount != 1:
+                    raise FeedbackSessionConflict("This feedback command was already saved.")
     return version

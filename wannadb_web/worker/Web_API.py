@@ -13,7 +13,7 @@ import wannadb
 from wannadb import resources
 from wannadb.configuration import Pipeline
 from wannadb.data.data import Attribute, Document, DocumentBase, InformationNugget
-from wannadb.data.signals import CachedDistanceSignal, SentenceStartCharsSignal
+from wannadb.data.signals import CachedDistanceSignal, LabelEmbeddingSignal, SentenceStartCharsSignal
 from wannadb.interaction import EmptyInteractionCallback
 from wannadb.matching.distance import SignalsMeanDistance
 from wannadb.matching.matching import RankingBasedMatcher
@@ -32,12 +32,16 @@ from wannadb_web.postgres.queries import get_document_base_snapshot, get_documen
 from wannadb_web.postgres.transactions import DocumentBaseCreationConflict, create_document_base_with_snapshot, mutate_base_documents
 from wannadb_web.limits import validate_attribute_count, validate_corpus
 from wannadb_web.Redis.RedisCache import SessionState, get_signal_scope
-from wannadb_web.postgres.feedback_sessions import save_session
+from wannadb_web.postgres.feedback_sessions import FeedbackSessionConflict, FeedbackSnapshotConflict, load_session, save_session
 from wannadb_web.worker.data import Signals, encode_feedback_request
+from wannadb_web.worker.feedback_reconciliation import (
+	clear_replaced_decisions, compact_proposal, compare_feedback, conflict_review, observe_documents, proposed_previews,
+)
 
 logger = logging.getLogger(__name__)
 
 INPUT_DOCS_COLUMN_NAME = "input_document"
+_MATCHING_COMMIT_ATTEMPTS = 3
 
 
 class WannaDB_WebAPI:
@@ -391,51 +395,149 @@ class WannaDB_WebAPI:
 			]),
 			find_additional_nuggets=find_additional_nuggets,
 			allow_manual_without_candidates=True,
+			suggestion_provenance=True,
 		)
+
+	def _prepare_matching_base(self, interaction, statistics):
+		# Older add/edit tasks could save raw documents without preprocessing.
+		raw_documents = [document for document in self.document_base.documents
+			if SentenceStartCharsSignal.identifier not in document.signals]
+		if raw_documents:
+			self._preprocess(DocumentBase(raw_documents, []), statistics)
+
+		Pipeline([
+			SplitAttributeNameLabelParaphraser(do_lowercase=True, splitters=[" ", "_"]),
+			ContextSentenceCacher(),
+			SBERTLabelEmbedder("SBERTBertLargeNliMeanTokensResource"),
+		])(self.document_base, interaction, self.status_callback, statistics)
 
 	def start_interactive_table_population(self):
 		"""Prepare one session and return as soon as it needs a reviewer."""
 		try:
-			validate_corpus(document.text for document in self.document_base.documents)
-			validate_attribute_count(len(self.document_base.attributes))
-			# Older add/edit tasks could save raw documents without preprocessing.
-			raw_documents = [document for document in self.document_base.documents
-				if SentenceStartCharsSignal.identifier not in document.signals]
-			statistics = Statistics(False)
-			if raw_documents:
-				self._preprocess(DocumentBase(raw_documents, []), statistics)
-
 			self.signals.status.emit("Preparing feedback session.")
-			interaction = EmptyInteractionCallback()
-			Pipeline([
-				SplitAttributeNameLabelParaphraser(do_lowercase=True, splitters=[" ", "_"]),
-				ContextSentenceCacher(),
-				SBERTLabelEmbedder("SBERTBertLargeNliMeanTokensResource"),
-			])(self.document_base, interaction, self.status_callback, statistics)
-			matcher = self._matcher()
-			checkpoint, request = matcher.advance(self.document_base, interaction, self.status_callback, statistics)
-			self._save_matching_step(checkpoint, request, matcher.identifier)
+			for attempt in range(_MATCHING_COMMIT_ATTEMPTS):
+				if attempt:
+					self.load_document_base_from_bson(publish_to_ui=False)
+					if self.signals.error.msg is not None:
+						raise FeedbackSessionConflict("The document base could not be reloaded.")
+				validate_corpus(document.text for document in self.document_base.documents)
+				validate_attribute_count(len(self.document_base.attributes))
+				interaction, statistics = EmptyInteractionCallback(), Statistics(False)
+				self._prepare_matching_base(interaction, statistics)
+				matcher = self._matcher()
+				checkpoint, request = matcher.advance(self.document_base, interaction, self.status_callback, statistics)
+				try:
+					self._save_matching_step(checkpoint, request, matcher.identifier)
+					return
+				except FeedbackSnapshotConflict:
+					continue
+			raise FeedbackSessionConflict("Other feedback is being saved. Open the attribute again.")
 		except Exception as error:
 			self._report_error("MATCHING_FAILED", error)
 			raise
 
 	def advance_interactive_table_population(self, current, command, payload, lease):
-		"""Restore the exact session checkpoint, execute one command and publish the result."""
-		checkpoint = decode(current["checkpoint"])
-		base = checkpoint.get("base", current["snapshot"])
+		"""Run one decision, retrying only a concurrent canonical snapshot commit."""
+		for attempt in range(_MATCHING_COMMIT_ATTEMPTS):
+			try:
+				self._advance_matching_step(current, command, payload, lease)
+				return
+			except FeedbackSnapshotConflict:
+				if attempt == _MATCHING_COMMIT_ATTEMPTS - 1:
+					break
+				latest = load_session(self.user_id, self.session.session_id, include_checkpoint=True)
+				if (latest is None or latest["closed"] or latest["version"] != command["expected_version"] or
+					latest["base_id"] != self.session.base_id):
+					raise FeedbackSessionConflict("Feedback has changed or the session expired. Reopen the attribute.")
+				current = latest
+		raise FeedbackSessionConflict("Other feedback is being saved. Try your action again.")
+
+	def _advance_matching_step(self, current, command, payload, lease):
+		state = decode(current["checkpoint"])
+		moved = current["snapshot_hash"] != current["live_snapshot_hash"]
+		base = current["snapshot"] if moved else state.get("base", current["snapshot"])
 		self._document_base = DocumentBase.from_bson(base, deduplicate_nuggets=False)
 		self.document_id = current["snapshot_id"]
 		self._attribute_schema_version = current["attribute_schema_version"]
 		interaction, statistics = EmptyInteractionCallback(), Statistics(False)
-		# Context sentences are deliberately ephemeral. Rebuild them after BSON restore.
-		ContextSentenceCacher()(self.document_base, interaction, self.status_callback, statistics)
-		matcher = self._matcher()
-		decision = None if payload["message"] == "reload-document-base" else payload
-		checkpoint, request = matcher.advance(self.document_base, interaction, self.status_callback, statistics,
-			checkpoint=checkpoint["matcher"], feedback=decision)
-		self._save_matching_step(checkpoint, request, matcher.identifier, current=current, command=command, lease=lease)
+		if moved:
+			validate_corpus(document.text for document in self.document_base.documents)
+			validate_attribute_count(len(self.document_base.attributes))
+		needs_preparation = moved and (
+			any(SentenceStartCharsSignal.identifier not in document.signals for document in self.document_base.documents)
+			or any(LabelEmbeddingSignal.identifier not in item.signals
+				for item in [*self.document_base.attributes, *self.document_base.nuggets])
+		)
+		if needs_preparation:
+			self._prepare_matching_base(interaction, statistics)
+		else:
+			# Context sentences are deliberately ephemeral. Rebuild them after BSON restore.
+			ContextSentenceCacher()(self.document_base, interaction, self.status_callback, statistics)
 
-	def _save_matching_step(self, checkpoint, request, identifier, *, current=None, command=None, lease=None):
+		decision, conflict, replacing = self._reconcile_matching_step(state, current, payload, moved)
+		matcher = self._matcher()
+		checkpoint = state["matcher"]
+		if replacing and decision is not None:
+			clear_replaced_decisions(self.document_base, current["attribute"], decision)
+		ranking = checkpoint["ranking"]
+		empty_rank = ranking is not None and not ranking["remaining"]
+		rebased = moved or state.get("conflict") is not None or conflict is not None or empty_rank
+		if rebased:
+			checkpoint, request = matcher.rebase(self.document_base, checkpoint, interaction, self.status_callback,
+				statistics, keep_candidates=decision is not None, advance_if_empty=decision is None and conflict is None)
+		if decision is not None or not rebased:
+			checkpoint, request = matcher.advance(self.document_base, interaction, self.status_callback, statistics,
+				checkpoint=checkpoint, feedback=decision)
+		if conflict is not None:
+			# Keep the original displayed span references for an explicit replacement.
+			checkpoint = state["matcher"]
+			request = dict(request)
+			request.pop("do-attribute-request", None)
+			request["review-conflict"] = conflict["review"]
+		acknowledge = conflict is None and (payload["message"] != "reload-document-base" or replacing)
+		self._save_matching_step(checkpoint, request, matcher.identifier, current=current, command=command, lease=lease,
+			conflict=conflict, write_snapshot=decision is not None, record_receipt=acknowledge)
+
+	def _reconcile_matching_step(self, state, current, payload, moved):
+		attribute = current["attribute"]
+		latest = observe_documents(self.document_base, attribute)
+		baseline = state.get("observed")
+		if baseline is None:
+			if moved:
+				raise FeedbackSessionConflict("The document base changed. Open a fresh feedback session.")
+			baseline = latest
+		pending = state.get("conflict")
+		if pending is not None:
+			if payload["message"] != "reload-document-base":
+				raise FeedbackSessionConflict("Resolve the conflicting feedback before submitting another decision.")
+			resolution = payload.get("conflict_resolution")
+			if resolution == "keep":
+				return None, None, False
+			if resolution == "replace" and not pending["review"]["canReplace"]:
+				raise FeedbackSessionConflict("This decision cannot replace the saved feedback. Keep the saved result.")
+			proposal, previews = pending["proposal"], pending["previews"]
+			names, decision, can_replace = compare_feedback(proposal, baseline, latest)
+			if resolution == "replace" and not names:
+				return decision, None, True
+			names = list(dict.fromkeys([item["document"] for item in pending["review"]["items"]] + names))
+			can_replace = can_replace and pending["review"]["canReplace"]
+		elif payload["message"] == "reload-document-base":
+			if payload.get("conflict_resolution") is not None:
+				raise FeedbackSessionConflict("The feedback conflict has already been resolved.")
+			return None, None, False
+		else:
+			names, decision, can_replace = compare_feedback(payload, baseline, latest)
+			if not names:
+				return decision, None, False
+			proposal = compact_proposal(payload)
+			previews = proposed_previews(payload, self.document_base)
+
+		reset = proposal["message"] == "start-ranking" and proposal.get("reset") is True
+		review = conflict_review(self.document_base, attribute, names, previews, can_replace=can_replace, reset=reset)
+		return None, {"proposal": proposal, "previews": previews, "review": review}, False
+
+	def _save_matching_step(self, checkpoint, request, identifier, *, current=None, command=None, lease=None,
+			conflict=None, write_snapshot=False, record_receipt=True):
 		if request is None:
 			phase, attribute, feedback_payload = "finished", None, None
 		else:
@@ -443,21 +545,26 @@ class WannaDB_WebAPI:
 			attribute = request["attribute"].name
 			feedback_payload = encode_feedback_request(dict(request, identifier=identifier))
 		serialized = self.document_base.to_bson()
+		canonical = self._expected_bson if current is None else current["snapshot"]
+		new_snapshot = serialized if write_snapshot and serialized != canonical else None
 		state = None
 		if checkpoint is not None:
-			state = {"matcher": checkpoint}
-			if current is None and serialized != self._expected_bson:
-				# Preparation changes are session-local until a decision is committed.
+			state = {"matcher": checkpoint, "observed": observe_documents(self.document_base, attribute)}
+			if conflict is not None:
+				state["conflict"] = conflict
+			if new_snapshot is None and serialized != canonical:
+				# Keep newly prepared inputs session-local while no decision is committed.
 				state["base"] = serialized
 			state = encode(state)
 		version = save_session(
 			self.user_id, self.session.session_id, self.session.base_id, self.document_id,
-			self._expected_bson if current is None else current["snapshot_hash"],
+			self._expected_bson if current is None else current["live_snapshot_hash"],
 			self._attribute_schema_version, state, phase, attribute,
 			expected_version=0 if current is None else current["version"],
 			expected_phase=None if current is None else current["phase"],
 			expected_attribute=None if current is None else current["attribute"],
-			command=command, new_snapshot=serialized if command is not None else None,
+			expected_session_snapshot=None if current is None else current["snapshot_hash"],
+			command=command, new_snapshot=new_snapshot, record_receipt=record_receipt,
 		)
 		self.matching_step_saved = True
 		if not self.session.publish_step(

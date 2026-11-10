@@ -10,6 +10,10 @@ from wannadb_web.postgres.queries import document_base_snapshot_query
 from wannadb_web.postgres.util import connectPG, execute_query
 
 
+# Persisted BSON field name for automatic, provisional mappings.
+SUGGESTED_ATTRIBUTE_MAPPINGS = "SuggestedAttributeMappingsSignal"
+
+
 class AttributeSchemaConflict(RuntimeError):
     """The editor's schema is stale."""
 
@@ -112,6 +116,14 @@ def _apply_edits(base, ids, operations):
                 for name, matches in document["attribute_mappings"].items()
                 if name not in removed_names
             }
+            signals = document.get("signals", {})
+            if SUGGESTED_ATTRIBUTE_MAPPINGS in signals:
+                suggestions = [renames.get(name, name) for name in signals[SUGGESTED_ATTRIBUTE_MAPPINGS]
+                               if name not in removed_names]
+                if suggestions:
+                    signals[SUGGESTED_ATTRIBUTE_MAPPINGS] = suggestions
+                else:
+                    del signals[SUGGESTED_ATTRIBUTE_MAPPINGS]
 
     return new_ids, renames, removed
 
