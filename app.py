@@ -1,7 +1,8 @@
 import logging
 import os
+from contextlib import closing
 
-from flask import Flask, make_response, render_template_string
+from flask import Flask, make_response
 from flask_cors import CORS
 from kombu.exceptions import OperationalError
 from redis.exceptions import RedisError
@@ -9,6 +10,9 @@ from werkzeug.exceptions import RequestEntityTooLarge
 #from flask_debugtoolbar import DebugToolbarExtension
 from wannadb_web.limits import MAX_REQUEST_BYTES, MAX_UPLOAD_FILES, QueueFullError, WorkLimitError
 from wannadb_web.log_filters import _RedactLegacyTaskStatus
+from wannadb_web.postgres.migrate import MIGRATIONS
+from wannadb_web.postgres.util import connectPG
+from wannadb_web.Redis.util import connectRedis
 from wannadb_web.routing.core import core_routes
 from wannadb_web.routing.user import user_management
 from wannadb_web.routing.files import main_routes
@@ -42,12 +46,13 @@ app.register_blueprint(main_routes)
 app.register_blueprint(user_management)
 app.register_blueprint(core_routes)
 
-CORS(
-    app,
-    supports_credentials=True,
-    origins=["http://localhost:3000"],
-    resources={r"/*": {"origins": "http://localhost:3000"}}
-)
+if os.environ.get('WANNADB_PRODUCTION') != '1':
+	CORS(
+	    app,
+	    supports_credentials=True,
+	    origins=["http://localhost:3000"],
+	    resources={r"/*": {"origins": "http://localhost:3000"}}
+	)
 
 
 @app.errorhandler(RequestEntityTooLarge)
@@ -78,25 +83,22 @@ def not_found_error(error):
 
 
 
-@app.route('/')
-@app.route('/DEBUG')
-def index():
-	routes = [
-		rule.rule for rule in app.url_map.iter_rules()
-		if "dev" not in str(rule.rule)
-	]
-	html_code = f"""
-	<html lang="ts">
-		<title>WannaDB Backend</title>
-		<body>
-			<form>
-				<h1>Backend for WannaDB</h1>
-				<p>
-				The following routes can be accessed:<br>
-				{'<br>'.join(routes)}
-				</p
-			</form>
-		</body>
-	</html>
-	"""
-	return render_template_string(html_code)
+@app.get('/')
+@app.get('/health/live')
+def liveness():
+	return make_response({'status': 'live'}, 200, {'Cache-Control': 'no-store'})
+
+
+@app.get('/health/ready')
+def readiness():
+	try:
+		with closing(connectPG(connect_timeout=2)) as conn, conn.cursor() as cursor:
+			cursor.execute("SET LOCAL statement_timeout = '2s'")
+			cursor.execute("SELECT count(*), max(version) FROM public.wannadb_schema_migrations")
+			migrated = cursor.fetchone() == (len(MIGRATIONS), len(MIGRATIONS))
+		with closing(connectRedis()) as redis:
+			ready = migrated and redis.ping()
+	except Exception:
+		ready = False
+	return make_response({'status': 'ready' if ready else 'unavailable'},
+		200 if ready else 503, {'Cache-Control': 'no-store'})

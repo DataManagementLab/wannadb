@@ -14,14 +14,15 @@ DB_HOST = os.environ.get("DATABASE_HOST")
 DB_PORT = os.environ.get("DATABASE_PORT")
 
 
-def connectPG():
+def connectPG(*, connect_timeout=None):
 	"""Connect to PostgreSQL using the configured credentials."""
 	return psycopg2.connect(
 		dbname=DB_NAME,
 		user=DB_USER,
 		password=DB_PASSWORD,
 		host=DB_HOST,
-		port=DB_PORT)
+		port=DB_PORT,
+		connect_timeout=connect_timeout)
 
 
 def _log_failure(operation, error):

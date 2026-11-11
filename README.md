@@ -208,26 +208,29 @@ The diagram below illustrates the backend application’s Entity-Relationship Di
 
 ### Fresh installation
 
-Configure the existing backend environment file with the PostgreSQL connection settings
-`DATABASE_HOST`, `DATABASE_PORT`, `DATABASE_NAME`, `DATABASE_USER`, and `DATABASE_PASSWORD`.
-The database role must be able to create objects in `public` and own the existing
-WannaDB schema objects during an upgrade.
-
-Start the production stack with:
+Copy `deployment/production.env.example` to `wannadb_web/.env/.prod`, restrict the
+file to the deployment account, and fill in the credentials. Keep the existing database
+name, role, and backend signing secret when upgrading. The database role must own the
+existing WannaDB schema and be able to create objects in `public`.
 
 ```shell
-docker compose -f docker-compose-prod.yaml up -d --build
+docker compose --env-file wannadb_web/.env/.prod -f docker-compose-prod.yaml up -d --build
 ```
 
-For development, run:
+The frontend is the entry point for browsers. Run it on the same host, set its
+`BACKEND_API_ORIGIN` to `http://127.0.0.1:8000`, and set `NEXTAUTH_URL` to the
+origin users actually open. For an SSH port forward that can be `http://localhost:3000`.
+For a public deployment, point the HTTPS reverse proxy at the frontend on port 3000.
+Production publishes the backend on loopback and keeps PostgreSQL and Redis on the
+Compose network. Use Docker Engine 28 or newer for loopback port isolation and expose
+only the HTTPS reverse proxy through the host firewall. The optional Flower profile
+stays on loopback and requires authentication.
 
-```shell
-docker compose up -d --build
-```
+The `migrate` job applies the PostgreSQL schema before the application services start.
+`/health/live` checks the web process. `/health/ready` checks the schema version and
+authenticated Redis access. Both return a short status without deployment details.
 
-The private `migrate` service waits for PostgreSQL, then applies the versioned application
-schema. The web service and both workers wait for the migration to succeed. Check
-`docker compose -f docker-compose-prod.yaml logs migrate` if the services stay stopped.
+For development, run `docker compose up -d --build` with the development environment.
 
 ### Upgrading and restoring a database
 
@@ -237,7 +240,16 @@ schema. The web service and both workers wait for the migration to succeed. Chec
    database before starting the application services.
 3. Remove the previous completed migration container with `docker compose rm -f migrate`,
    then start with `up -d --build`. Use the same Compose file and project name for both
-   commands. Keep the existing `pgdata` volume. Check the migration log before resuming work.
+   commands, including `--env-file wannadb_web/.env/.prod` for production. Keep the
+   existing `pgdata` volume. Check the migration log before resuming work.
+
+When switching an existing production database to a new password, first change the
+database role's password through PostgreSQL administration. Changing the Compose
+environment updates the client configuration and fresh database initialization.
+Redis uses the separate `CACHE_PASSWORD` and stores its append-only log in the
+`redisdata` volume. Drain work before the initial cutover, which starts with a new
+cache volume. Subsequent restarts use that volume. Committed matches and durable
+feedback receipts live in PostgreSQL.
 
 Migration `0001` creates the public WannaDB tables on a fresh volume. It also adopts
 the unversioned schema created by the previous setup, including installs that lack
@@ -253,12 +265,13 @@ Migration `0004` adds durable acknowledgements for feedback decisions saved to P
 Migration `0005` adds expiring feedback checkpoints. The compute worker runs one step
 at a time and releases its slot whenever a session waits for input. Worker logs report
 queue wait and compute time separately.
+Migration `0006` keeps one public vote per user, document, and attribute.
 
 Run the same migration as a one-off operation with the application services stopped:
 
 ```shell
-docker compose -f docker-compose-prod.yaml build migrate
-docker compose -f docker-compose-prod.yaml run --rm migrate
+docker compose --env-file wannadb_web/.env/.prod -f docker-compose-prod.yaml build migrate
+docker compose --env-file wannadb_web/.env/.prod -f docker-compose-prod.yaml run --rm migrate
 ```
 
 The job runs `python -m wannadb_web.postgres.migrate`. It serializes concurrent migration

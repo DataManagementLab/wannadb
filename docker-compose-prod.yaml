@@ -1,4 +1,18 @@
-version: "3.6"
+x-backend-env: &backend-env
+  WANNADB_PRODUCTION: "1"
+  DATABASE_HOST: postgres
+  DATABASE_PORT: "5432"
+  DATABASE_USER: ${DATABASE_USER:?Set DATABASE_USER in the production environment file}
+  DATABASE_NAME: ${DATABASE_NAME:?Set DATABASE_NAME in the production environment file}
+  DATABASE_PASSWORD: ${DATABASE_PASSWORD:?Set DATABASE_PASSWORD in the production environment file}
+  WANNA_DB_JWT_SECRET: ${WANNA_DB_JWT_SECRET:?Set WANNA_DB_JWT_SECRET in the production environment file}
+  CACHE_HOST: redis
+  CACHE_PORT: "6379"
+  CACHE_DB: "0"
+  CACHE_PASSWORD: ${CACHE_PASSWORD:?Set CACHE_PASSWORD in the production environment file}
+  CELERY_BROKER_URL: redis://:${CACHE_PASSWORD:?Set CACHE_PASSWORD in the production environment file}@redis:6379/0
+  CELERY_RESULT_BACKEND: redis://:${CACHE_PASSWORD:?Set CACHE_PASSWORD in the production environment file}@redis:6379/0
+
 services:
   wannadb:
     build: &web-build
@@ -8,9 +22,10 @@ services:
     restart: always
     tty: true
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
+    environment: *backend-env
     env_file:
-      - wannadb_web/.env/.dev
+      - ${WANNA_PROD_ENV_FILE:-wannadb_web/.env/.prod}
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -18,14 +33,21 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/ready', timeout=9).close()"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
     networks:
       - mynetwork
 
   migrate:
     build: *web-build
     command: ["python", "-m", "wannadb_web.postgres.migrate"]
+    environment: *backend-env
     env_file:
-      - wannadb_web/.env/.dev
+      - ${WANNA_PROD_ENV_FILE:-wannadb_web/.env/.prod}
     depends_on:
       postgres:
         condition: service_healthy
@@ -39,8 +61,9 @@ services:
       target: worker-prod
     tty: true
     command: ["celery", "-A", "celery_app", "worker", "-l", "info", "--concurrency=1", "-Q", "celery"]
+    environment: *backend-env
     env_file:
-      - wannadb_web/.env/.dev
+      - ${WANNA_PROD_ENV_FILE:-wannadb_web/.env/.prod}
     networks:
       - mynetwork
     depends_on:
@@ -58,8 +81,9 @@ services:
       target: worker-prod
     tty: true
     command: ["celery", "-A", "celery_app", "worker", "-l", "info", "--concurrency=1", "--prefetch-multiplier=1", "-Q", "feedback"]
+    environment: *backend-env
     env_file:
-      - wannadb_web/.env/.dev
+      - ${WANNA_PROD_ENV_FILE:-wannadb_web/.env/.prod}
     networks:
       - mynetwork
     depends_on:
@@ -84,9 +108,10 @@ services:
         : "$${FLOWER_BASIC_AUTH:?Set FLOWER_BASIC_AUTH to username:password}"
         exec celery -A celery_app flower
     environment:
+      <<: *backend-env
       FLOWER_MAX_TASKS: "1000"
     env_file:
-      - wannadb_web/.env/.dev
+      - ${WANNA_PROD_ENV_FILE:-wannadb_web/.env/.prod}
     networks:
       - mynetwork
     ports:
@@ -99,12 +124,11 @@ services:
     image: postgres:16
     container_name: postgres-container
     environment:
-      POSTGRES_PASSWORD: 0
-      POSTGRES_DB: userManagement
+      POSTGRES_PASSWORD: ${DATABASE_PASSWORD:?Set DATABASE_PASSWORD in the production environment file}
+      POSTGRES_USER: ${DATABASE_USER:?Set DATABASE_USER in the production environment file}
+      POSTGRES_DB: ${DATABASE_NAME:?Set DATABASE_NAME in the production environment file}
     networks:
       - mynetwork
-    ports:
-      - "127.0.0.1:5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -114,15 +138,31 @@ services:
       retries: 12
 
   redis:
-    image: redis:alpine
+    image: redis:8.10-alpine
     container_name: redis-container
+    user: redis
+    restart: unless-stopped
+    environment:
+      CACHE_PASSWORD: ${CACHE_PASSWORD:?Set CACHE_PASSWORD in the production environment file}
+    command:
+      - sh
+      - -ec
+      - |
+        case "$$CACHE_PASSWORD" in
+          ''|*[!0123456789abcdefABCDEF]*) echo 'CACHE_PASSWORD must be hexadecimal.' >&2; exit 1 ;;
+        esac
+        test "$${#CACHE_PASSWORD}" -ge 32 || { echo 'CACHE_PASSWORD must be at least 32 characters.' >&2; exit 1; }
+        umask 077
+        digest=$$(printf '%s' "$$CACHE_PASSWORD" | sha256sum)
+        printf 'user default on #%s ~* &* +@read +@write +@connection +@pubsub -@dangerous +eval +evalsha +script|load +multi +exec +discard +watch +unwatch +info +client|setinfo\n' "$${digest%% *}" > /tmp/wannadb-redis.acl
+        exec redis-server --aclfile /tmp/wannadb-redis.acl --appendonly yes --appendfsync everysec
     healthcheck:
-      test: ["CMD-SHELL", "redis-cli ping | grep -qx PONG"]
+      test: ["CMD-SHELL", 'REDISCLI_AUTH="$$CACHE_PASSWORD" redis-cli ping | grep -qx PONG']
       interval: 5s
       timeout: 5s
       retries: 12
-    ports:
-      - "127.0.0.1:6379:6379"
+    volumes:
+      - redisdata:/data
     networks:
       - mynetwork
 
@@ -132,3 +172,4 @@ networks:
 
 volumes:
   pgdata:
+  redisdata:
