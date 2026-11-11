@@ -846,49 +846,50 @@ def delete_document_base_data(base_name: str, organisation_id: int, user_id: int
 
 
 def add_feedback(document_id: int, user_id: int, positive: bool, attribute: str, feedback_start: int = None, feedback_end: int = None, organisation_id: int = None, *, expected_content: str = None, base_name: str = None):
-	"""
-	Add a public feedback for a certain attribute to a document.
- 
-	:param document_id: ID of the document to which the feedback belongs
-	:type document_id: int
-	:param user_id: ID of the user providing the feedback
-	:type user_id: int
-	:param positive: Boolean indicating if the feedback is positive or negative
-	:param positive: bool
-	:param attribute: The attribute the feedback is about
-	:type attribute: str
-	:param feedback_start: Optional start index of the feedback in the document
-	:type feedback_start: int
-	:param feedback_end: Optional end index of the feedback in the document
-	:type feedback_end: int
-	:return: ID of the newly created feedback entry or error code (-409 for IntegrityError, -500 for other exceptions)
-	:rtype: int
-	"""
+	"""Toggle a public vote, or save a negative correction, and return the current counts."""
 	try:
-		# Share-lock the source row through the insert. Editing a document then
-		# either invalidates this feedback or makes the old text fail the check.
-		insert_data_query = sql.SQL("""INSERT INTO document_feedback
-			(documentid, userid, positive, attribute, feedback_start, feedback_end)
-			SELECT %s, %s, %s, %s, %s, %s FROM documents d
-			WHERE d.id = %s AND d.content IS NOT NULL
-			AND (%s IS NULL OR d.organisationid = %s)
-			AND (%s IS NULL OR d.content = %s)
-			AND (%s IS NULL OR d.documentbaseid = (
-				SELECT b.id FROM document_bases b WHERE b.name = %s AND b.organisation_id = d.organisationid
-			))
-			AND EXISTS (SELECT 1 FROM membership m WHERE m.organisationid = d.organisationid
-				AND m.userid = %s AND m.authorisation IN (0, 1, 10))
-			FOR SHARE OF d RETURNING id;""")
-		data = (document_id, user_id, positive, attribute, feedback_start, feedback_end,
-			document_id, organisation_id, organisation_id, expected_content, expected_content, base_name, base_name, user_id)
-		response = execute_transaction(insert_data_query, data, commit=True)
-		if response is False:
-			return -500
-		if not isinstance(response, list) or len(response) != 1:
-			return -409 if expected_content is not None else -403
-		feedback_id = int(response[0][0])
-		return feedback_id
+		with closing(connectPG()) as conn, conn, conn.cursor() as cur:
+			# Serialize votes with each other and with source-document edits. The next
+			# statement sees any vote committed while this source lock was waiting.
+			cur.execute("""SELECT d.id FROM public.documents d
+				WHERE d.id = %s AND d.content IS NOT NULL
+				AND (%s::bigint IS NULL OR d.organisationid = %s)
+				AND (%s::text IS NULL OR d.content = %s)
+				AND (%s::text IS NULL OR d.documentbaseid = (
+					SELECT b.id FROM public.document_bases b WHERE b.name = %s AND b.organisation_id = d.organisationid
+				))
+				AND EXISTS (SELECT 1 FROM public.membership m WHERE m.organisationid = d.organisationid
+					AND m.userid = %s AND m.authorisation IN (0, 1, 10))
+				FOR UPDATE OF d""",
+				(document_id, organisation_id, organisation_id, expected_content, expected_content, base_name, base_name, user_id))
+			if cur.fetchone() is None:
+				return -409 if expected_content is not None else -403
 
+			cur.execute("""SELECT id, positive FROM public.document_feedback
+				WHERE documentid = %s AND userid = %s AND attribute = %s""", (document_id, user_id, attribute))
+			existing = cur.fetchone()
+			mine = positive
+			feedback_id = None
+			if existing is not None and existing[1] == positive and feedback_start is None:
+				cur.execute("DELETE FROM public.document_feedback WHERE id = %s", (existing[0],))
+				mine = None
+			elif existing is not None:
+				cur.execute("""UPDATE public.document_feedback SET positive = %s, feedback_start = %s, feedback_end = %s
+					WHERE id = %s""", (positive, feedback_start, feedback_end, existing[0]))
+				feedback_id = existing[0]
+			else:
+				cur.execute("""INSERT INTO public.document_feedback
+					(documentid, userid, positive, attribute, feedback_start, feedback_end)
+					VALUES (%s, %s, %s, %s, %s, %s) RETURNING id""",
+					(document_id, user_id, positive, attribute, feedback_start, feedback_end))
+				feedback_id = cur.fetchone()[0]
+
+			cur.execute("""SELECT count(*) FILTER (WHERE positive) AS positive_count,
+				count(*) FILTER (WHERE NOT positive) AS negative_count
+				FROM public.document_feedback WHERE documentid = %s AND attribute = %s""", (document_id, attribute))
+			approvals, rejections = cur.fetchone()
+			return {"feedback_id": feedback_id,
+				"feedback": {"positive": approvals, "negative": rejections, "mine": mine}}
 	except IntegrityError:
 		logger.error("Feedback write conflicted")
 		return -409

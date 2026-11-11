@@ -931,15 +931,15 @@ def add_public_feedback():
 	if document_id is None:
 		return make_response({"error": "document not found"}, 404)
 
-	feedback_id = add_feedback(
+	outcome = add_feedback(
 		document_id=document_id, user_id=user_id, positive=positive, attribute=attribute,
 		feedback_start=start, feedback_end=end, organisation_id=g.organisation_id,
 		expected_content=content, base_name=base_name)
-	if feedback_id == -409:
+	if outcome == -409:
 		return make_response({"error": "The document changed or feedback conflicted. Reload before retrying."}, 409)
-	if feedback_id < 0:
-		return make_response({"error": "Could not save document feedback."}, -feedback_id)
-	return make_response({'feedback_id': feedback_id}, 200)
+	if isinstance(outcome, int):
+		return make_response({"error": "Could not save document feedback."}, -outcome)
+	return make_response(outcome, 200)
 
 @core_routes.route('/document_base/feedback/public/get', methods=['POST'])
 def get_public_feedback():
@@ -980,6 +980,6 @@ def get_public_feedback():
 	if document_id is None:
 		return make_response({"error": "document not found"}, 404)
 
-	feedback = get_feedbacks_for_document(int(document_id))
+	feedback = get_feedbacks_for_document(int(document_id), user_id)
 
 	return make_response({'feedback': feedback}, 200)

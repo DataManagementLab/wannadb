@@ -15,6 +15,7 @@ MIGRATIONS = (
     "0003_attribute_schema.sql",
     "0004_feedback_outcomes.sql",
     "0005_feedback_sessions.sql",
+    "0006_public_feedback_votes.sql",
 )
 ADVISORY_LOCK = (0x57414E4E, 0x414442)
 
@@ -60,6 +61,7 @@ _REQUIRED_KEYS = {
     ("document_bases", "u", ("name", "organisation_id")),
     ("documents", "p", ("id",)),
     ("document_feedback", "p", ("id",)),
+    ("document_feedback", "u", ("attribute", "documentid", "userid")),
     ("feedback_outcomes", "p", ("command_id", "user_id")),
     ("feedback_sessions", "p", ("session_id", "user_id")),
 }
@@ -109,7 +111,13 @@ def _validate_schema(cursor):
         WHERE relation.relnamespace = 'public'::regnamespace
           AND relation.relname = ANY(%s)
           AND constraint_info.contype IN ('p', 'u')
-          AND NOT constraint_info.condeferrable
+          AND (
+              NOT constraint_info.condeferrable OR (
+                  relation.relname = 'document_feedback'
+                  AND constraint_info.conname = 'document_feedback_one_vote'
+                  AND NOT constraint_info.condeferred
+              )
+          )
         GROUP BY relation.relname, constraint_info.oid, constraint_info.contype
         """,
         (list(_REQUIRED_COLUMNS),),

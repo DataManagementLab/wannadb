@@ -658,29 +658,17 @@ def get_document_ids(organisation_id: int, user_id: int):
 	return []
 
 
-def get_feedbacks_for_document(document_id: int):
-	"""
-    Retrieves feedback summary for a given document.
-    
-    :param document_id: ID of the document to retrieve feedback for.
-    :type document_id: int
-	:return: A dictionary summarizing feedback counts by attribute and positivity.
-    :rtype: dict[str, dict[str, int]]
-	"""
-	select_query = sql.SQL("""SELECT attribute, positive, count(*)
-								FROM document_feedback 
-								WHERE documentid = (%s)
-								GROUP BY positive, attribute
-							 """)
-	result = execute_query(select_query, (document_id,))
+def get_feedbacks_for_document(document_id: int, user_id: int = None):
+	"""Return vote counts and this user's current vote for each document attribute."""
+	select_query = sql.SQL("""SELECT attribute,
+			count(*) FILTER (WHERE positive) AS positive_count,
+			count(*) FILTER (WHERE NOT positive) AS negative_count,
+			bool_or(positive) FILTER (WHERE userid = %s) AS mine
+		FROM public.document_feedback WHERE documentid = %s GROUP BY attribute""")
+	result = execute_query(select_query, (user_id, document_id))
 	feedback_summary = {}
 	if result is None:
 		return feedback_summary
-	for attribute, positive, count in result:
-		if attribute not in feedback_summary:
-			feedback_summary[attribute] = {"positive": 0, "negative": 0}
-		if positive:
-			feedback_summary[attribute]["positive"] += count
-		else:
-			feedback_summary[attribute]["negative"] += count
+	for attribute, positive, negative, mine in result:
+		feedback_summary[attribute] = {"positive": positive, "negative": negative, "mine": mine}
 	return feedback_summary
