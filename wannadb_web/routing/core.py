@@ -40,7 +40,7 @@ from wannadb_web.postgres.feedback_sessions import FeedbackSessionUnavailable, l
 from wannadb_web.postgres.transactions import add_feedback, delete_document_base_data
 
 from flask import Blueprint, make_response, request, g, abort
-from wannadb_web.Redis.RedisCache import TaskAccess, SessionState
+from wannadb_web.Redis.RedisCache import TaskAccess, TaskAdmission, SessionState
 from wannadb_web.SQLite.table_query import TableQueryError, validate_table_query
 from wannadb_web.limits import MAX_BASE_DOCUMENTS, QueueFullError, WorkLimitError, validate_attribute_count
 from wannadb_web.util import tokenDecode
@@ -52,6 +52,7 @@ from wannadb_web.worker.tasks import CreateDocumentBase, BaseTask, DocumentBaseC
 core_routes = Blueprint('core_routes', __name__, url_prefix='/core')
 
 logger = logging.getLogger(__name__)
+_TASK_FAILURE_STATES = ("FAILURE", "ERROR", "REVOKED", "EXPIRED")
 
 
 @core_routes.errorhandler(ValueError)
@@ -526,7 +527,7 @@ def task_status(task_id: str):
 
 def _read_task_status(task_id, user_id, scope):
 	task = BaseTask().AsyncResult(task_id=task_id)
-	status = task.status
+	status = TaskAdmission("celery", user_id, task_id).status(task.status)
 	created_base_id = None
 	if scope.get("creation") is True and status == "SUCCESS":
 		result = task.result
@@ -537,7 +538,7 @@ def _read_task_status(task_id, user_id, scope):
 	include_feedback = request.args.get("feedback") != "0"
 	session = SessionState(user_id, scope["base_id"], scope["session_id"])
 	parent_status = BaseTask().AsyncResult(task_id=scope["session_id"]).status if scope.get("command_id") else None
-	parent_failed = parent_status in ("FAILURE", "ERROR", "REVOKED")
+	parent_failed = parent_status in _TASK_FAILURE_STATES
 	snapshot = session.snapshot(include_payload=include_payload, include_feedback=include_feedback)
 	signals = Signals(user_id, base_id=scope["base_id"], session_id=scope["session_id"]).to_json(
 		include_payload=include_payload, include_feedback=include_feedback, snapshot=snapshot)
@@ -562,14 +563,14 @@ def _read_task_status(task_id, user_id, scope):
 		command = {key: command[key] for key in ("command_id", "state", "expected_version", "consumed_version", "published_version", "error") if key in command}
 	live_processing = (status == "STARTED" and publication["phase"] == "processing" and
 		command is not None and command["state"] == "consumed")
-	if scope.get("command_id") and (parent_failed or status in ("FAILURE", "ERROR", "REVOKED") or
+	if scope.get("command_id") and (parent_failed or status in _TASK_FAILURE_STATES or
 		signals.get("error") or not command or command["state"] == "rejected" or
 		(command["state"] == "consumed" and not live_processing)):
 		outcome = get_feedback_outcome(user_id, task_id)
 		if outcome is not None:
 			if parent_failed or publication["closed"] or (outcome["settled"] and not live_processing):
 				return _recovered_feedback_status(outcome)
-			if status in ("FAILURE", "ERROR", "REVOKED") or signals.get("error") or (command and command["state"] == "rejected"):
+			if status in _TASK_FAILURE_STATES or signals.get("error") or (command and command["state"] == "rejected"):
 				raise FeedbackOutcomeUnavailable("Waiting for feedback publication.")
 	if parent_failed and not publication["closed"] and (not command or command["state"] in ("accepted", "consumed")):
 		# Worker loss may prevent cleanup. Report the failed outcome without writing on GET.
@@ -600,9 +601,11 @@ def _read_task_status(task_id, user_id, scope):
 	if scope.get("table_query") and status == "SUCCESS" and include_payload:
 		body["table_query"] = task.result.get("table_query") if isinstance(task.result, dict) else None
 	http_status = 200 if status == "SUCCESS" else 202
-	if status in ("FAILURE", "ERROR", "REVOKED"):
-		body["state"] = "REVOKED" if status == "REVOKED" else "FAILURE"
-		if not signals.get("error"):
+	if status in _TASK_FAILURE_STATES:
+		body["state"] = "FAILURE" if status == "ERROR" else status
+		if status == "EXPIRED":
+			signals["error"] = "The task expired in the queue before a worker could start it. Try again."
+		elif not signals.get("error"):
 			signals["error"] = "The task was cancelled." if status == "REVOKED" else "The background task failed."
 		http_status = 500
 	return make_response(body, http_status, {"Cache-Control": "no-store"})

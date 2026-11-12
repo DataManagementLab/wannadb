@@ -267,6 +267,12 @@ at a time and releases its slot whenever a session waits for input. Worker logs 
 queue wait and compute time separately.
 Migration `0006` keeps one public vote per user, document, and attribute.
 
+Jobs have up to `QUEUE_SECONDS` (900 seconds by default) to reach a worker. Starting
+a job replaces its queue deadline with a lease based on the worker's hard time limit.
+The compute queue accepts up to `MAX_COMPUTE_TASKS` waiting or running jobs across
+all users (32 by default) and up to `MAX_COMPUTE_TASKS_PER_USER` per user (8 by
+default). Waiting feedback sessions do not use a slot between steps.
+
 Run the same migration as a one-off operation with the application services stopped:
 
 ```shell

@@ -81,33 +81,119 @@ class RedisCache:
 
 
 class TaskAdmission:
-	"""Bound the number of waiting and running tasks in each worker queue."""
-	def __init__(self, queue: str, user_id: int, task_id: str):
-		self.redis = util.connectRedis()
-		self.key = f"wannadb:task-admission:{queue}"
-		self.member = f"{user_id}:{task_id}"
+	"""Track queue and running deadlines independently of the Celery result."""
+	_SCRIPT = """
+local queue, user, job, access = unpack(KEYS)
+local operation, member = ARGV[1], ARGV[2]
+local state = redis.call('GET', job)
+local clock = redis.call('TIME')
+local now = tonumber(clock[1]) + tonumber(clock[2]) / 1000000
 
-	def reserve(self, maximum: int, seconds: int) -> bool:
-		script = """
-local now = tonumber(redis.call('TIME')[1])
-redis.call('ZREMRANGEBYSCORE', KEYS[1], '-inf', tostring(now))
-if redis.call('ZSCORE', KEYS[1], ARGV[1]) then return 0 end
-if redis.call('ZCARD', KEYS[1]) >= tonumber(ARGV[2]) then return -1 end
-local seconds = tonumber(ARGV[3])
-redis.call('ZADD', KEYS[1], tostring(now + seconds), ARGV[1])
-if redis.call('TTL', KEYS[1]) < seconds then
-  redis.call('EXPIRE', KEYS[1], ARGV[3])
+local function admit(next_state, seconds)
+  local deadline_ms = math.floor(now * 1000) + seconds * 1000
+  for _, key in ipairs({queue, user}) do
+    redis.call('ZADD', key, deadline_ms / 1000, member)
+    if redis.call('TTL', key) < seconds + 60 then
+      redis.call('EXPIRE', key, seconds + 60)
+    end
+  end
+  redis.call('SET', job, next_state, 'EX', 86400)
+  return deadline_ms
 end
-return 1
-"""
-		result = self.redis.eval(script, 1, self.key, self.member, maximum, seconds)
-		if result == -1:
-			raise QueueFullError("The worker queue is full.")
-		return result == 1
 
-	def release(self):
+local function finish(next_state)
+  redis.call('ZREM', queue, member)
+  redis.call('ZREM', user, member)
+  redis.call('SET', job, next_state, 'EX', 86400)
+  return next_state
+end
+
+if operation == 'reserve' then
+  local scope = redis.call('GET', access)
+  if scope then
+    if scope ~= ARGV[3] then return -3 end
+    return 0
+  end
+  if state then return -3 end
+  redis.call('ZREMRANGEBYSCORE', queue, '-inf', now)
+  redis.call('ZREMRANGEBYSCORE', user, '-inf', now)
+  if redis.call('ZCARD', user) >= tonumber(ARGV[5]) then return -2 end
+  if redis.call('ZCARD', queue) >= tonumber(ARGV[4]) then return -1 end
+  local deadline = admit('QUEUED', tonumber(ARGV[6]))
+  redis.call('SET', access, ARGV[3], 'EX', 86400)
+  return deadline
+end
+
+if operation == 'legacy_release' then
+  if not state then redis.call('ZREM', queue, member) end
+  return
+end
+
+local active = state == 'QUEUED' or state == 'STARTED'
+if operation == 'finish' then
+  if active and (ARGV[4] == '' or state == ARGV[4]) then return finish(ARGV[3]) end
+  return
+end
+
+local broker = ARGV[3]
+if active and operation == 'status' and broker == 'SUCCESS' then return finish(broker) end
+if active then
+  local deadline = redis.call('ZSCORE', queue, member)
+  if not deadline or tonumber(deadline) <= now then
+    state = finish(state == 'QUEUED' and 'EXPIRED' or 'FAILURE')
+  end
+end
+if operation == 'start' then
+  if state ~= 'QUEUED' then return 0 end
+  return admit('STARTED', tonumber(ARGV[3]))
+end
+
+if state == 'QUEUED' or state == 'STARTED' then
+  if broker == 'FAILURE' or (state == 'QUEUED' and broker == 'REVOKED') then
+    return finish(broker)
+  end
+  if broker == 'PENDING' or broker == 'REVOKED' then return state end
+elseif state and state ~= 'SUCCESS' then
+  if broker ~= 'SUCCESS' then return state end
+end
+return broker
+"""
+
+	def __init__(self, queue: str, user_id: int, task_id: str):
+		self.key = f"wannadb:task-admission:{queue}"
+		self.user_key = f"{self.key}:user:{user_id}"
+		self.member = f"{user_id}:{task_id}"
+		self.job_key = f"{self.key}:job:{self.member}"
+		self.access_key = TaskAccess.task_key(user_id, task_id)
+
+	def _execute(self, operation, *args):
+		with util.connectRedis() as redis:
+			return redis.eval(self._SCRIPT, 4, self.key, self.user_key, self.job_key, self.access_key,
+				operation, self.member, *args)
+
+	def reserve(self, scope, maximum: int, per_user: int, queue_seconds: int) -> int:
+		encoded = json.dumps(scope, sort_keys=True, separators=(",", ":"))
+		result = self._execute("reserve", encoded, maximum, per_user, queue_seconds)
+		if result == -1:
+			raise QueueFullError("The worker queue is full. Try again shortly.")
+		if result == -2:
+			raise QueueFullError("You have too many queued or running tasks. Wait for one to finish and try again.")
+		if result == -3:
+			raise ValueError("Task ID belongs to different request parameters")
+		return result
+
+	def start(self, running_seconds: int) -> bool:
+		return bool(self._execute("start", running_seconds))
+
+	def status(self, broker_status: str) -> str:
+		return self._execute("status", broker_status).decode()
+
+	def finish(self, status: str, *, expected_state: str = "", legacy: bool = False):
 		try:
-			self.redis.zrem(self.key, self.member)
+			if legacy:
+				self._execute("legacy_release")
+			else:
+				self._execute("finish", status, expected_state)
 		except Exception as error:
 			logger.warning("Task admission release failed. error_type=%s", type(error).__name__)
 
@@ -129,8 +215,12 @@ class TaskAccess:
 		self.cache.redis_client.set(
 			name=f"{self.cache.user_space_key}:{key}", value=json.dumps(scope), ex=86400)
 
+	@staticmethod
+	def task_key(user_id, task_id):
+		return f"user:access:{user_id}:task:{task_id}"
+
 	def register(self, task_id, scope):
-		key = f"{self.cache.user_space_key}:task:{task_id}"
+		key = self.task_key(self.user_id, task_id)
 		encoded = json.dumps(scope, sort_keys=True, separators=(",", ":"))
 		result = self.cache.redis_client.eval("local old=redis.call('GET',KEYS[1]); if old then if old~=ARGV[1] then return -1 end; return 0 end; redis.call('SET',KEYS[1],ARGV[1],'EX',86400); return 1", 1, key, encoded)
 		if result == -1:

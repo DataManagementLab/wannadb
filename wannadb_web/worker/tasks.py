@@ -4,11 +4,13 @@ import hashlib
 import json
 import pickle
 import time
+from datetime import datetime, timezone
 from uuid import uuid4
 from typing import Optional, Any, Union
 
 from celery import Task
-from celery.exceptions import SoftTimeLimitExceeded, TaskPredicate
+from celery.exceptions import Ignore, SoftTimeLimitExceeded, TaskPredicate, TimeLimitExceeded, WorkerLostError
+from celery.signals import task_failure, task_revoked
 
 import wannadb.resources
 from wannadb.data.data import Document, Attribute, InformationNugget
@@ -17,7 +19,7 @@ from wannadb.statistics import Statistics
 from wannadb_web.Redis.RedisCache import RedisCache, TaskAccess, TaskAdmission, SessionState, set_signal_scope, get_signal_scope
 from wannadb_web.SQLite.table_query import TableQueryError, query_document_table
 from wannadb_web.limits import (
-	COMPUTE_SECONDS, MAX_BASE_DOCUMENTS, MAX_COMPUTE_TASKS, QUEUE_SECONDS, WorkLimitError,
+	COMPUTE_SECONDS, MAX_BASE_DOCUMENTS, MAX_COMPUTE_TASKS, MAX_COMPUTE_TASKS_PER_USER, QUEUE_SECONDS, WorkLimitError,
 	validate_attribute_count, validate_corpus,
 )
 from wannadb_web.postgres.attribute_schema import AttributeSchemaConflict, edit_attribute_schema
@@ -28,6 +30,12 @@ from wannadb_web.worker.data import DoAttributeRanking, MultiNuggetsMatchFeedbac
 from wannadb_web.worker.util import State
 
 logger = logging.getLogger(__name__)
+
+_ADMISSION_HEADER = "wannadb_admission"
+
+
+def _task_user_id(args, kwargs):
+	return (kwargs or {}).get("user_id", args[0] if args else None)
 
 
 def _request_fingerprint(task_name, parameters):
@@ -130,21 +138,19 @@ class BaseTask(Task):
 			if not access.permitted(scope):
 				raise PermissionError("Document base access denied.")
 		admission = TaskAdmission("celery", user_id, task_id)
-		reserved = admission.reserve(MAX_COMPUTE_TASKS, QUEUE_SECONDS + self.time_limit + 30)
+		deadline_ms = admission.reserve(scope, MAX_COMPUTE_TASKS, MAX_COMPUTE_TASKS_PER_USER, QUEUE_SECONDS)
+		if not deadline_ms:
+			return self.AsyncResult(task_id=task_id)
 		try:
-			if not reserved and access.task(task_id) is None:
-				raise ValueError("The task is being submitted. Retry shortly.")
-			access.register(task_id, scope)
-			if not reserved:
-				return self.AsyncResult(task_id=task_id)
-			options.setdefault("expires", QUEUE_SECONDS)
 			headers = dict(options.get("headers") or {})
-			headers["wannadb_queued_at"] = time.time()
-			options.update(argsrepr="[redacted]", kwargsrepr="[redacted]", headers=headers)
+			headers.update({_ADMISSION_HEADER: True, "wannadb_queued_at": time.time()})
+			options.update(argsrepr="[redacted]", kwargsrepr="[redacted]", headers=headers,
+				expires=datetime.fromtimestamp(deadline_ms / 1000, tz=timezone.utc))
 			return super().apply_async(args=args, kwargs=kwargs, task_id=task_id, **options)
 		except Exception:
-			if reserved:
-				admission.release()
+			# A broker write can succeed even if the producer loses the reply.
+			# Cancel only if a worker has not claimed this job.
+			admission.finish("FAILURE", expected_state="QUEUED")
 			raise
 
 	def before_start(self, task_id, args, kwargs):
@@ -154,6 +160,12 @@ class BaseTask(Task):
 		set_signal_scope()
 		parameters = inspect.signature(self.run).bind_partial(*args, **kwargs).arguments
 		user_id = parameters.get("user_id")
+		if (self.request.headers or {}).get(_ADMISSION_HEADER):
+			admission = TaskAdmission("celery", user_id, task_id)
+			if not admission.start(self.time_limit + 30):
+				# Ignore redelivery or late delivery without overwriting an existing result.
+				raise Ignore()
+			self.request.wannadb_admission_started = True
 		access = TaskAccess(user_id)
 		scope = access.task(task_id)
 		if not access.permitted(scope) or not scope.get("session_id"):
@@ -192,9 +204,13 @@ class BaseTask(Task):
 			logger.warning("Task session finalization failed. task=%s error_type=%s", self.name, type(error).__name__)
 		finally:
 			set_signal_scope()
-			user_id = kwargs.get("user_id", args[0] if args else None)
+			user_id = _task_user_id(args, kwargs)
 			if user_id is not None:
-				TaskAdmission("celery", user_id, task_id).release()
+				admission = TaskAdmission("celery", user_id, task_id)
+				if not (self.request.headers or {}).get(_ADMISSION_HEADER):
+					admission.finish(status, legacy=True)
+				elif getattr(self.request, "wannadb_admission_started", False):
+					admission.finish(status, expected_state="STARTED")
 
 	@staticmethod
 	def load():
@@ -239,6 +255,25 @@ class BaseTask(Task):
 			pass
 
 		return _input
+
+
+@task_revoked.connect
+def _release_revoked_task(sender, request, terminated, expired, **kwargs):
+	if isinstance(sender, BaseTask):
+		user_id = _task_user_id(request.args, request.kwargs)
+		if user_id is not None:
+			admission = TaskAdmission("celery", user_id, request.id)
+			admission.finish("EXPIRED" if expired else "REVOKED",
+				expected_state="" if terminated else "QUEUED",
+				legacy=not (request.headers or {}).get(_ADMISSION_HEADER))
+
+
+@task_failure.connect
+def _release_lost_task(sender, task_id, exception, args, kwargs, **extra):
+	if isinstance(sender, BaseTask) and isinstance(exception, (WorkerLostError, TimeLimitExceeded)):
+		user_id = _task_user_id(args, kwargs)
+		if user_id is not None:
+			TaskAdmission("celery", user_id, task_id).finish("FAILURE")
 
 
 class TestTask(BaseTask):

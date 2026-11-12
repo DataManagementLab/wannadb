@@ -67,7 +67,7 @@ def work_limit_reached(error):
 
 @app.errorhandler(QueueFullError)
 def queue_full(error):
-	return make_response({"error": "The worker queue is full. Try again shortly."}, 429)
+	return make_response({"error": str(error)}, 429)
 
 
 @app.errorhandler(RedisError)

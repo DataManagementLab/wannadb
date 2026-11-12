@@ -154,7 +154,7 @@ services:
         test "$${#CACHE_PASSWORD}" -ge 32 || { echo 'CACHE_PASSWORD must be at least 32 characters.' >&2; exit 1; }
         umask 077
         digest=$$(printf '%s' "$$CACHE_PASSWORD" | sha256sum)
-        printf 'user default on #%s ~* &* +@read +@write +@connection +@pubsub -@dangerous +eval +evalsha +script|load +multi +exec +discard +watch +unwatch +info +client|setinfo\n' "$${digest%% *}" > /tmp/wannadb-redis.acl
+        printf 'user default on #%s ~* &* +@read +@write +@connection +@pubsub -@dangerous +eval +evalsha +script|load +time +multi +exec +discard +watch +unwatch +info +client|setinfo\n' "$${digest%% *}" > /tmp/wannadb-redis.acl
         exec redis-server --aclfile /tmp/wannadb-redis.acl --appendonly yes --appendfsync everysec
     healthcheck:
       test: ["CMD-SHELL", 'REDISCLI_AUTH="$$CACHE_PASSWORD" redis-cli ping | grep -qx PONG']
