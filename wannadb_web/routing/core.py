@@ -560,7 +560,8 @@ def _read_task_status(task_id, user_id, scope):
 			return _lost_feedback_publication()
 	command = session.command(scope["command_id"]) if scope.get("command_id") else None
 	if command is not None:
-		command = {key: command[key] for key in ("command_id", "state", "expected_version", "consumed_version", "published_version", "error") if key in command}
+		command = {key: command[key] for key in ("command_id", "state", "expected_version", "consumed_version",
+			"published_version", "propagation_limited", "error") if key in command}
 	live_processing = (status == "STARTED" and publication["phase"] == "processing" and
 		command is not None and command["state"] == "consumed")
 	if scope.get("command_id") and (parent_failed or status in _TASK_FAILURE_STATES or

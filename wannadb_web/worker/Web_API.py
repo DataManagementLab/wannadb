@@ -3,7 +3,6 @@ import io
 import json
 import logging
 import pickle
-import re
 import time
 from typing import Optional, Any
 
@@ -33,6 +32,7 @@ from wannadb_web.postgres.transactions import DocumentBaseCreationConflict, crea
 from wannadb_web.limits import validate_attribute_count, validate_corpus
 from wannadb_web.Redis.RedisCache import SessionState, get_signal_scope
 from wannadb_web.postgres.feedback_sessions import FeedbackSessionConflict, FeedbackSnapshotConflict, load_session, save_session
+from wannadb_web.worker.custom_match_extraction import WebMatchPropagation
 from wannadb_web.worker.data import Signals, encode_feedback_request
 from wannadb_web.worker.feedback_reconciliation import (
 	clear_replaced_decisions, compact_proposal, compare_feedback, conflict_review, observe_documents, proposed_previews,
@@ -366,15 +366,7 @@ class WannaDB_WebAPI:
 			raise
 
 	@staticmethod
-	def _matcher():
-		def find_additional_nuggets(nugget, documents):
-			if not nugget.text:
-				return []
-			# Match against original text: lowercasing can change Unicode string length.
-			pattern = re.compile(re.escape(nugget.text), re.IGNORECASE)
-			return [(document, match.start(), match.end()) for document in documents
-				for match in pattern.finditer(document.text)]
-
+	def _matcher(propagation=None):
 		return RankingBasedMatcher(
 			distance=SignalsMeanDistance(signal_identifiers=[
 				"LabelEmbeddingSignal", "TextEmbeddingSignal", "ContextSentenceEmbeddingSignal", "RelativePositionSignal",
@@ -393,7 +385,7 @@ class WannaDB_WebAPI:
 				BERTContextSentenceEmbedder("BertLargeCasedResource"),
 				RelativePositionEmbedder(),
 			]),
-			find_additional_nuggets=find_additional_nuggets,
+			find_additional_nuggets=propagation if propagation is not None else WebMatchPropagation(),
 			allow_manual_without_candidates=True,
 			suggestion_provenance=True,
 		)
@@ -441,9 +433,10 @@ class WannaDB_WebAPI:
 
 	def advance_interactive_table_population(self, current, command, payload, lease):
 		"""Run one decision, retrying only a concurrent canonical snapshot commit."""
+		propagation = WebMatchPropagation()
 		for attempt in range(_MATCHING_COMMIT_ATTEMPTS):
 			try:
-				self._advance_matching_step(current, command, payload, lease)
+				self._advance_matching_step(current, command, payload, lease, propagation)
 				return
 			except FeedbackSnapshotConflict:
 				if attempt == _MATCHING_COMMIT_ATTEMPTS - 1:
@@ -455,7 +448,7 @@ class WannaDB_WebAPI:
 				current = latest
 		raise FeedbackSessionConflict("Other feedback is being saved. Try your action again.")
 
-	def _advance_matching_step(self, current, command, payload, lease):
+	def _advance_matching_step(self, current, command, payload, lease, propagation):
 		state = decode(current["checkpoint"])
 		moved = current["snapshot_hash"] != current["live_snapshot_hash"]
 		base = current["snapshot"] if moved else state.get("base", current["snapshot"])
@@ -478,7 +471,8 @@ class WannaDB_WebAPI:
 			ContextSentenceCacher()(self.document_base, interaction, self.status_callback, statistics)
 
 		decision, conflict, replacing = self._reconcile_matching_step(state, current, payload, moved)
-		matcher = self._matcher()
+		propagation.bind(self.document_base.documents, current["attribute"])
+		matcher = self._matcher(propagation)
 		checkpoint = state["matcher"]
 		if replacing and decision is not None:
 			clear_replaced_decisions(self.document_base, current["attribute"], decision)
@@ -499,7 +493,8 @@ class WannaDB_WebAPI:
 			request["review-conflict"] = conflict["review"]
 		acknowledge = conflict is None and (payload["message"] != "reload-document-base" or replacing)
 		self._save_matching_step(checkpoint, request, matcher.identifier, current=current, command=command, lease=lease,
-			conflict=conflict, write_snapshot=decision is not None, record_receipt=acknowledge)
+			conflict=conflict, write_snapshot=decision is not None, record_receipt=acknowledge,
+			propagation_limited=propagation.limited)
 
 	def _reconcile_matching_step(self, state, current, payload, moved):
 		attribute = current["attribute"]
@@ -540,7 +535,7 @@ class WannaDB_WebAPI:
 		return None, {"proposal": proposal, "previews": previews, "review": review}, False
 
 	def _save_matching_step(self, checkpoint, request, identifier, *, current=None, command=None, lease=None,
-			conflict=None, write_snapshot=False, record_receipt=True):
+			conflict=None, write_snapshot=False, record_receipt=True, propagation_limited=False):
 		if request is None:
 			phase, attribute, feedback_payload = "finished", None, None
 		else:
@@ -573,6 +568,7 @@ class WannaDB_WebAPI:
 		if not self.session.publish_step(
 			version, phase, attribute, pickle.dumps(self.document_base), feedback_payload,
 			command_id=command["command_id"] if command else None, lease=lease,
+			propagation_limited=propagation_limited,
 		):
 			raise RuntimeError("Saved feedback could not be published.")
 		logger.debug("Feedback step published. phase=%s version=%s", phase, version)

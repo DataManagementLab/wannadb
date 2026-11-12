@@ -386,7 +386,8 @@ return 1
 '''
 		return bool(self.redis.eval(script, 6, *self._keys(), command_id, lease, error, self.TTL))
 
-	def publish_step(self, version, phase, attribute, document, feedback, *, command_id=None, lease=None):
+	def publish_step(self, version, phase, attribute, document, feedback, *, command_id=None, lease=None,
+			propagation_limited=False):
 		"""Publish the committed checkpoint's payload only from its owning step."""
 		script = r'''
 local raw = redis.call('GET', KEYS[1]); if not raw then return 0 end
@@ -402,6 +403,7 @@ if command_id~='' then
  if not raw_command then return 0 end
  local record=cjson.decode(raw_command)
  record.state='published';record.published_version=version
+ if ARGV[9]=='1' then record.propagation_limited=true end
  redis.call('HSET',KEYS[6],command_id,cjson.encode(record));redis.call('EXPIRE',KEYS[6],ARGV[8])
 elseif publication.phase~='loading' then return 0 end
 redis.call('SET',KEYS[4],ARGV[6],'EX',ARGV[8])
@@ -412,7 +414,7 @@ redis.call('SET',KEYS[1],cjson.encode(publication),'EX',ARGV[8])
 return 1
 '''
 		return bool(self.redis.eval(script, 6, *self._keys(), version, phase, json.dumps(attribute),
-			command_id or "", lease or "", document, feedback or "", self.TTL))
+			command_id or "", lease or "", document, feedback or "", self.TTL, int(propagation_limited)))
 
 	def close(self, error=None):
 		"""Close a one-off task, promoting its staged payload on success."""
