@@ -13,10 +13,12 @@ from wannadb_web.postgres.util import connectPG, execute_query, execute_transact
 logger = logging.getLogger(__name__)
 
 
-def get_organisation_authorisation(user_id: int, organisation_id: int):
+def get_organisation_authorisation(user_id: int, organisation_id: int, *, raise_on_error=False):
 	"""Return a recognized membership role, or None when access is not established."""
 	query = sql.SQL("SELECT authorisation FROM membership WHERE userid = %s AND organisationid = %s;")
 	result = execute_query(query, (user_id, organisation_id))
+	if result is False and raise_on_error:
+		raise RuntimeError("Could not check organization membership.")
 	if isinstance(result, list) and len(result) == 1:
 		role = result[0][0]
 		if type(role) is int and role in (0, 1, 10):
@@ -123,6 +125,8 @@ def get_organisation_name(organisation_id: int):
 	"""
 	select_query = sql.SQL("SELECT name FROM organisations WHERE id = %s;")
 	response = execute_query(select_query, (organisation_id,))
+	if response is False:
+		raise RuntimeError("Could not read the organization name.")
 	if response is None:
 		return -1
 	return str(response[0])
@@ -152,17 +156,18 @@ def get_member_ids_from_organisation_id(organisationID: int):
 	return execute_query(select_query, (organisationID,))
 
 
-def get_username_suggestion(prefix: str):
-	"""
-    Gets a list of usernames that start with the given prefix.
-    
-    :param prefix: The prefix to search for.
-	:type prefix: str
-	:return: A list of usernames that start with the prefix.
-	:rtype: list[str]
-	"""
-	select_query = sql.SQL("SELECT username FROM users WHERE username LIKE %s;")
-	return execute_query(select_query, (prefix + "%",))
+def get_username_suggestion(prefix: str, organisation_id: int, actor_id: int):
+	"""Find up to 20 users an administrator can invite to this organization."""
+	# Use ! as the explicit escape character to avoid PostgreSQL backslash modes.
+	pattern = prefix.replace("!", "!!").replace("%", "!%").replace("_", "!_") + "%"
+	query = sql.SQL("""SELECT u.username FROM users u
+		WHERE u.username LIKE %s ESCAPE '!'
+		AND EXISTS (SELECT 1 FROM membership actor WHERE actor.userid = %s
+			AND actor.organisationid = %s AND actor.authorisation IN (0, 1))
+		AND NOT EXISTS (SELECT 1 FROM membership member
+			WHERE member.userid = u.id AND member.organisationid = %s)
+		ORDER BY u.username LIMIT 20""")
+	return execute_query(query, (pattern, actor_id, organisation_id, organisation_id))
 
 
 def get_organisation_ids_from_user_id(userID: int):
@@ -271,7 +276,7 @@ def check_organisation_authorisation(organisationName: str, userName: str):
 		return None
 
 
-def get_base_id(base_name: str, org_id: int):
+def get_base_id(base_name: str, org_id: int, *, raise_on_error=False):
 	"""
 	Gets the document base ID for a given base name and organisation ID.
  
@@ -284,9 +289,23 @@ def get_base_id(base_name: str, org_id: int):
 	"""
 	select_query = sql.SQL("SELECT id FROM document_bases WHERE name = %s AND organisation_id = %s;")
 	result = execute_query(select_query, (base_name, org_id))
+	if result is False and raise_on_error:
+		raise RuntimeError("Could not read the document base.")
 	if isinstance(result, list) and result and type(result[0][0]) is int:
 		return result[0][0]
 	return None
+
+
+def get_base_reference(organisation_id: int, *, base_id=None, name=None):
+	"""Resolve an ID or exact legacy name within an already authorized organization."""
+	query = sql.SQL("""SELECT id, name, attribute_schema_version::text, attribute_ids,
+		(CASE WHEN attributes::text = '[]' THEN '{}' ELSE attributes::text END)::text[]
+		FROM document_bases WHERE organisation_id = %s
+		AND (%s::bigint IS NULL OR id = %s) AND (%s::text IS NULL OR name = %s)""")
+	rows = execute_query(query, (organisation_id, base_id, base_id, name, name))
+	if rows is False:
+		raise RuntimeError("Could not read the document base.")
+	return rows[0] if rows else None
 
 
 def get_document_base_data(base_name: str, organisation_id: int):
@@ -465,7 +484,9 @@ def get_document_bases_for_organisation(organisation_id: int):
 						 """)
 	result = execute_query(select_query, (organisation_id,))
 
-	if result is None or not result:
+	if result is False:
+		raise RuntimeError("Could not read the document bases.")
+	if not result:
 		return []
 
 	doc_array = [{"id": id, "name": name, "attributes": attributes, "lastModified": last_modified} for id, name, attributes, last_modified in result]
@@ -667,6 +688,8 @@ def get_feedbacks_for_document(document_id: int, user_id: int = None):
 		FROM public.document_feedback WHERE documentid = %s GROUP BY attribute""")
 	result = execute_query(select_query, (user_id, document_id))
 	feedback_summary = {}
+	if result is False:
+		raise RuntimeError("Could not read document feedback.")
 	if result is None:
 		return feedback_summary
 	for attribute, positive, negative, mine in result:

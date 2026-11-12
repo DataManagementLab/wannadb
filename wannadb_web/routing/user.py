@@ -59,7 +59,10 @@ def _require_organisation(value, admin=False):
 		abort(make_response({'error': 'invalid organization ID'}, 400))
 	if organisation_id <= 0 or organisation_id > 9223372036854775807:
 		abort(make_response({'error': 'invalid organization ID'}, 400))
-	role = get_organisation_authorisation(g.auth_token.id, organisation_id)
+	try:
+		role = get_organisation_authorisation(g.auth_token.id, organisation_id, raise_on_error=True)
+	except RuntimeError:
+		abort(make_response({"error": "Organization access checks are temporarily unavailable."}, 503))
 	if role is None or (admin and role not in (0, 1)):
 		abort(make_response({'error': 'organization access denied'}, 403))
 	return organisation_id
@@ -219,7 +222,10 @@ def get_organisation_name_route(_id):
 		return make_response({}, 401)
 
 	organisation_id = _require_organisation(_id)
-	organisation_name = get_organisation_name(organisation_id)
+	try:
+		organisation_name = get_organisation_name(organisation_id)
+	except RuntimeError:
+		return make_response({'error': 'Organization metadata is temporarily unavailable.'}, 503)
 
 	if organisation_name == -1:
 		return make_response({'organisation not found': organisation_name}, 404)
@@ -281,7 +287,7 @@ def get_organisation_members(_id):
 	organisation_id = _require_organisation(_id)
 	members = get_members_of_organisation(organisation_id, include_roles=True)
 	if not isinstance(members, list):
-		return make_response({'error': 'Organization members could not be loaded.'}, 404)
+		return make_response({'error': 'Organization members could not be loaded.'}, 503)
 	actor_role = next((role for _, user_id, role in members if user_id == g.auth_token.id), None)
 	if actor_role not in (0, 1, 10):
 		return make_response({'error': 'Organization access denied.'}, 403)
@@ -290,18 +296,18 @@ def get_organisation_members(_id):
 		"members": [name for name, _, _ in members],
 		"canManageOwnership": can_manage_organisation_ownership(actor_role, has_owner),
 		"isOwner": actor_role == 0,
+		"canInvite": actor_role in (0, 1),
 	}, 200)
 
 
+@user_management.route('/get/user/suggestion', methods=['GET'])
 @user_management.route('/get/user/suggestion/<_prefix>', methods=['GET'])
-def get_user_suggestion(_prefix):
-	authorization = request.headers.get("Authorization")
-	token = tokenDecode(authorization)
-	if token is None:
-		return make_response({'error': 'no authorization'}, 401)
-
-	members_raw = get_username_suggestion(_prefix)
-	result = []
-	for member in members_raw:
-		result.append(member[0])
-	return make_response({"usernames": result}, 200)
+def get_user_suggestion(_prefix=None):
+	organisation_id = _require_organisation(request.args.get("organisationId"), admin=True)
+	prefix = request.args.get("prefix", _prefix)
+	if not isinstance(prefix, str) or not 1 <= len(prefix) <= 128 or "\0" in prefix or not prefix.strip():
+		return make_response({"error": "Enter a valid username prefix."}, 400)
+	members = get_username_suggestion(prefix, organisation_id, g.auth_token.id)
+	if members is False:
+		return make_response({"error": "User search is temporarily unavailable."}, 503)
+	return make_response({"usernames": [member[0] for member in members or []]}, 200, {"Cache-Control": "no-store"})

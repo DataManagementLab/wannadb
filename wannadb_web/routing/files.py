@@ -34,7 +34,11 @@ def _positive_id(value):
 
 def _require_organisation(value):
 	organisation_id = _positive_id(value)
-	if get_organisation_authorisation(g.auth_token.id, organisation_id) is None:
+	try:
+		role = get_organisation_authorisation(g.auth_token.id, organisation_id, raise_on_error=True)
+	except RuntimeError:
+		abort(make_response({'error': 'Organization access checks are temporarily unavailable.'}, 503))
+	if role is None:
 		abort(make_response({'error': 'organization access denied'}, 403))
 	return organisation_id
 
@@ -49,10 +53,17 @@ def upload_files():
 	form = request.form
 	organisation_id = _require_organisation(form.get("organisationId"))
 	base_name = form.get("baseName")
+	expected_base_id = _positive_id(form["baseId"]) if "baseId" in form else None
+	if expected_base_id is not None and base_name is None:
+		return make_response({'error': 'a document base name is required'}, 400)
 	if base_name is not None:
 		if not base_name.strip():
 			return make_response({'error': 'invalid document base'}, 400)
-		if get_base_id(base_name, organisation_id) is None:
+		try:
+			base_id = get_base_id(base_name, organisation_id, raise_on_error=True)
+		except RuntimeError:
+			return make_response({'error': 'Document base metadata is temporarily unavailable.'}, 503)
+		if base_id is None or (expected_base_id is not None and base_id != expected_base_id):
 			return make_response({'error': 'document base not found'}, 404)
 
 	user_id = g.auth_token.id
@@ -97,7 +108,11 @@ def upload_files():
 	if base_name is not None:
 		if not documents:
 			return make_response(errors or ["Select at least one text file."], 400)
-		task = DocumentBaseAddDocument().apply_async(args=(user_id, documents, base_name, organisation_id))
+		try:
+			task = DocumentBaseAddDocument().apply_async(args=(user_id, documents, base_name, organisation_id),
+				expected_base_id=base_id)
+		except ValueError as error:
+			return make_response({'error': str(error)}, 409)
 		return make_response({'taskId': task.id, 'errors': errors}, 202)
 
 	if not document_ids or all(isinstance(doc_id, str) for doc_id in document_ids):
@@ -131,7 +146,10 @@ def get_documentbase_for_organization(_id):
 		return make_response({'error': 'no authorization'}, 401)
 
 
-	document_base = get_document_bases_for_organisation(org_id)
+	try:
+		document_base = get_document_bases_for_organisation(org_id)
+	except RuntimeError:
+		return make_response({'error': 'Document base list is temporarily unavailable.'}, 503)
 
 	return make_response(document_base, 200)
 
@@ -144,16 +162,17 @@ def update_file_content():
 		return make_response({'error': 'no authorization'}, 401)
 
  
-	data = request.get_json(silent=True) or {}
+	data = request.get_json(silent=True)
+	if not isinstance(data, dict):
+		return make_response({'error': 'invalid request'}, 400)
 	doc_name = data.get('documentName')
 	newContent = data.get('newContent')
 	base_name = data.get('baseName')
 	organisation_id = data.get('organisationId')
-	if doc_name is None or newContent is None or organisation_id is None or base_name is None:
+	if newContent is None or organisation_id is None:
 		return make_response({'error': 'missing parameters'}, 400)
 	organisation_id = _require_organisation(organisation_id)
-	if not isinstance(doc_name, str) or not isinstance(base_name, str) or not base_name:
-		return make_response({'error': 'invalid document or base name'}, 400)
+	base_id = _positive_id(data["baseId"]) if "baseId" in data else None
 
 	if not isinstance(newContent, str) or '\0' in newContent:
 		return make_response({'error': 'content must be valid text'}, 400)
@@ -161,17 +180,31 @@ def update_file_content():
 		validate_document_text(newContent)
 	except ValueError:
 		return make_response({'error': 'content must be valid UTF-8 text'}, 400)
-	try:
-		doc_id, old_content = get_document_by_name(doc_name, organisation_id, token.id, base_name)
-	except Exception:
-		return make_response({'error': 'document not found'}, 404)
+	if "documentId" in data:
+		doc_id = _positive_id(data["documentId"])
+		doc_name, old_content = get_document(doc_id, token.id, organisation_id)
+	else:
+		if not isinstance(doc_name, str) or not isinstance(base_name, str) or not base_name:
+			return make_response({'error': 'invalid document or base name'}, 400)
+		try:
+			doc_id, old_content = get_document_by_name(doc_name, organisation_id, token.id, base_name)
+		except LookupError:
+			return make_response({'error': 'document not found'}, 404)
 	scope = get_document_scope(doc_id, token.id)
-	if scope is None or scope[0] != organisation_id or scope[2] != base_name:
+	if (scope is None or scope[0] != organisation_id or scope[2] is None or
+		(base_id is not None and scope[1] != base_id) or (base_name is not None and scope[2] != base_name)):
 		return make_response({'error': 'document not found'}, 404)
+	base_name = scope[2]
+	if "expectedContent" in data and data["expectedContent"] != old_content:
+		return make_response({'error': 'The document changed. Reload before editing.'}, 409)
 	if not isinstance(old_content, str):
 		return make_response({'error': 'document is not a text file'}, 400)
-	task = DocumentBaseUpdateDocument().apply_async(args=(
-		token.id, doc_name, newContent, base_name, organisation_id, int(doc_id), old_content))
+	try:
+		task = DocumentBaseUpdateDocument().apply_async(args=(
+			token.id, doc_name, newContent, base_name, organisation_id, int(doc_id), old_content),
+			expected_base_id=scope[1])
+	except ValueError as error:
+		return make_response({'error': str(error)}, 409)
 	return make_response({'taskId': task.id}, 202)
 
 
@@ -214,8 +247,11 @@ def delete_file():
 		return make_response({'error': 'document not found'}, 404)
 	organisation_id, base_id, base_name = scope
 	if base_name is not None:
-		task = DocumentBaseRemoveDocument().apply_async(args=(
-			token.id, document_name, base_name, organisation_id, int(docId)))
+		try:
+			task = DocumentBaseRemoveDocument().apply_async(args=(
+				token.id, document_name, base_name, organisation_id, int(docId)), expected_base_id=base_id)
+		except ValueError as error:
+			return make_response({'error': str(error)}, 409)
 		return make_response({'taskId': task.id}, 202)
 
 	status = delete_document_content(docId, organisation_id, base_id, token.id)

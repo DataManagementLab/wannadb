@@ -2,7 +2,8 @@ import logging
 import os
 from contextlib import closing
 
-from flask import Flask, make_response
+from flask import Flask, g, make_response
+from uuid import uuid4
 from flask_cors import CORS
 from kombu.exceptions import OperationalError
 from redis.exceptions import RedisError
@@ -53,6 +54,25 @@ if os.environ.get('WANNADB_PRODUCTION') != '1':
 	    origins=["http://localhost:3000"],
 	    resources={r"/*": {"origins": "http://localhost:3000"}}
 	)
+
+
+@app.before_request
+def assign_request_id():
+	g.request_id = uuid4().hex
+
+
+@app.after_request
+def add_request_id(response):
+	request_id = getattr(g, "request_id", None)
+	if request_id:
+		response.headers["X-Request-ID"] = request_id
+	return response
+
+
+@app.errorhandler(500)
+def unexpected_error(error):
+	app.logger.error("Unexpected request failure. request_id=%s", getattr(g, "request_id", "-"))
+	return make_response({"error": "The request failed."}, 500)
 
 
 @app.errorhandler(RequestEntityTooLarge)

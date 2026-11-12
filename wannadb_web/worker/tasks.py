@@ -104,6 +104,7 @@ class BaseTask(Task):
 		if user_id is None:
 			raise ValueError("A task requires an authenticated user.")
 		access = TaskAccess(user_id)
+		expected_base_id = options.pop("expected_base_id", None)
 		if isinstance(self, FeedbackTask):
 			session_id = options.pop("session_id", None)
 			expected_version = options.pop("expected_version", None)
@@ -133,6 +134,8 @@ class BaseTask(Task):
 				scope.update(base_id=0, creation=True)
 			else:
 				scope["base_id"] = get_base_id(scope["base_name"], scope["organisation_id"])
+				if expected_base_id is not None and scope["base_id"] != expected_base_id:
+					raise ValueError("The document base changed. Reload before retrying.")
 			if isinstance(self, DocumentBaseLoad) and parameters.get("sql_query") is not None:
 				scope["table_query"] = True
 			if not access.permitted(scope):

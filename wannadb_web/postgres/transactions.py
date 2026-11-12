@@ -2,6 +2,7 @@ import logging
 from contextlib import closing
 from typing import Union
 from deprecated import deprecated
+from flask import g, has_request_context
 
 import bcrypt
 from psycopg2 import sql, IntegrityError
@@ -12,9 +13,16 @@ from wannadb_web.postgres.queries import (
 	check_password, document_base_snapshot_query, document_base_snapshot_scope, get_organisation_authorisation, get_organisation_id,
 )
 from wannadb_web.limits import validate_corpus
+from wannadb_web.postgres.attribute_schema import attribute_ids_for_snapshot
 from wannadb_web.postgres.util import connectPG, execute_transaction
 
 logger: logging.Logger = logging.getLogger(__name__)
+
+
+def _log_transaction_error(operation, error):
+	request_id = getattr(g, "request_id", "-") if has_request_context() else "-"
+	logger.error("Database operation failed. operation=%s error_type=%s sqlstate=%s request_id=%s",
+		operation, type(error).__name__, getattr(error, "pgcode", None) or "-", request_id)
 
 
 # Schema tooling is offline administration only, with an explicit schema allowlist.
@@ -417,9 +425,9 @@ def add_organisation(organisationName: str, sessionToken: str):
 	except IntegrityError:
 		return None, "name already exists."
 
-	except Exception:
-		logger.error("Could not create organization")
-		return None, f"addOrganisation failed because: \n{e}"
+	except Exception as error:
+		_log_transaction_error("create organization", error)
+		return None, "Could not create organization."
 
 
 def leave_organisation_transaction(organisation_id: int, user_id: int):
@@ -518,8 +526,9 @@ INSERT INTO membership (userid, organisationid)
 	except IntegrityError:
 		return None, "name already exists."
 
-	except Exception:
-		logger.error("Could not add organization member")
+	except Exception as error:
+		_log_transaction_error("add organization member", error)
+		return None, "Could not add organization member."
 
 
 def add_user_to_organisation_new(organisationId: int, newUser: str, actor_user_id: int):
@@ -620,56 +629,51 @@ def adjust_user_authorization(organisationName: str, sessionToken: str, userToAd
 		logger.error("Could not change organization authorization")
 
 
+def _available_document_name(original_name, used_names):
+	name = original_name
+	counter = 0
+	while name in used_names:
+		counter += 1
+		name = f"{original_name}({counter})"
+	used_names.add(name)
+	return name
+
+
 def add_document(name: str, content: Union[str, bytes], organisationId: int, userid: int, base_id: int = None):
-	"""
-	Add a new document to the database.
- 
-	:param name: Name of the document
-	:type name: str
-	:param content: Content of the document (either as a string or bytes)
-	:type content: Union[str, bytes]
-	:param organisationId: ID of the organisation the document belongs to
-	:type organisationId: int
-	:param userid: ID of the user adding the document
-	:type userid: int
-	:param base_id: Optional ID of the document base to associate with the document
-	:type base_id: int
-	:return: ID of the newly created document and its name, or None if an error occurred
-	:rtype: Union[Tuple[int, str], Tuple[None, None]]
-	"""
+	"""Allocate and insert a display name under the organization lock."""
+	if not isinstance(content, (str, bytes)):
+		return None, None
 	try:
-		if get_organisation_authorisation(userid, organisationId) is None:
-			return None, None
-		check_query = sql.SQL("SELECT id FROM documents WHERE name = %s AND organisationid = %s;")
-		check_result = execute_transaction(check_query, (name, organisationId), commit=True)
-		counter = 0
-		original_name = name
-		while check_result:
-			counter += 1
-			name = f"{original_name}({counter})"
-			check_result = execute_transaction(check_query, (name, organisationId), commit=True)
-		if not isinstance(content, (str, bytes)):
-			return None, None
-		content_column = sql.Identifier("content" if isinstance(content, str) else "content_byte")
-		query = sql.SQL("""INSERT INTO documents (name, {content}, organisationid, userid, documentbaseid)
-			SELECT %s, %s, %s, %s, %s
-			WHERE EXISTS (SELECT 1 FROM membership WHERE userid = %s AND organisationid = %s
-			AND authorisation IN (0, 1, 10))
-			AND (%s IS NULL OR EXISTS (SELECT 1 FROM document_bases WHERE id = %s AND organisation_id = %s))
-			RETURNING id;""").format(content=content_column)
-		result = execute_transaction(query, (name, content, organisationId, userid, base_id,
-			userid, organisationId, base_id, base_id, organisationId), commit=True)
-		if isinstance(result, list) and result:
-			return int(result[0][0]), name
-	except Exception:
-		logger.error("Could not add document")
-	return None, None
+		with closing(connectPG()) as conn, conn, conn.cursor() as cur:
+			_lock_organisation(cur, organisationId)
+			cur.execute("""SELECT 1 FROM membership WHERE userid = %s AND organisationid = %s
+				AND authorisation IN (0, 1, 10) FOR SHARE""", (userid, organisationId))
+			if cur.fetchone() is None:
+				return None, None
+			cur.execute("SELECT name FROM documents WHERE organisationid = %s AND content IS NOT NULL",
+				(organisationId,))
+			name = _available_document_name(name, {row[0] for row in cur.fetchall()})
+			column = sql.Identifier("content" if isinstance(content, str) else "content_byte")
+			query = sql.SQL("""INSERT INTO documents (name, {content}, organisationid, userid, documentbaseid)
+				SELECT %s, %s, %s, %s, %s
+				WHERE (%s IS NULL OR EXISTS (SELECT 1 FROM document_bases WHERE id = %s AND organisation_id = %s))
+				RETURNING id""").format(content=column)
+			cur.execute(query, (name, content, organisationId, userid, base_id, base_id, base_id, organisationId))
+			row = cur.fetchone()
+			return (row[0], name) if row else (None, None)
+	except PermissionError:
+		return None, None
+	except Exception as error:
+		_log_transaction_error("add document", error)
+		return None, None
 
 
 def mutate_base_documents(base_name, base_id, organisation_id, user_id, *,
 		additions=(), replacement=None, removal=None):
 	"""Commit preprocessed documents and their raw rows together against the latest base."""
 	with closing(connectPG()) as conn, conn, conn.cursor() as cur:
+		if additions:
+			_lock_organisation(cur, organisation_id)
 		# Lock the base before its snapshot. Parallel batches wait only for this short
 		# transaction, and each reads the snapshot left by its predecessor.
 		cur.execute("""SELECT b.id FROM document_bases b WHERE b.id = %s
@@ -688,15 +692,10 @@ def mutate_base_documents(base_name, base_id, organisation_id, user_id, *,
 		base = DocumentBase.from_bson(bytes(content_byte))
 
 		if additions:
-			cur.execute("SELECT name FROM documents WHERE organisationid = %s;", (organisation_id,))
+			cur.execute("SELECT name FROM documents WHERE organisationid = %s AND content IS NOT NULL;", (organisation_id,))
 			used_names = {row[0] for row in cur.fetchall()} | {doc.name for doc in base.documents}
 			for document in additions:
-				name = document.name
-				counter = 0
-				while name in used_names:
-					counter += 1
-					name = f"{document.name}({counter})"
-				used_names.add(name)
+				name = _available_document_name(document.name, used_names)
 
 				cur.execute("""INSERT INTO documents (name, content, organisationid, userid, documentbaseid)
 					VALUES (%s, %s, %s, %s, %s);""", (name, document.text, organisation_id, user_id, base_id))
@@ -799,14 +798,15 @@ def create_document_base_with_snapshot(name: str, attributes: list[str], organis
 		return base_id, artifact[0]
 
 
-def delete_document_base_data(base_name: str, organisation_id: int, user_id: int):
+def delete_document_base_data(base_name: str, organisation_id: int, user_id: int, *, base_id=None):
 	"""Delete the authorized base and its linked artifacts, including a unique legacy snapshot."""
 	try:
 		with closing(connectPG()) as conn, conn, conn.cursor() as cur:
 			cur.execute("""SELECT b.id FROM document_bases b WHERE b.name = %s AND b.organisation_id = %s
+				AND (%s::bigint IS NULL OR b.id = %s)
 				AND EXISTS (SELECT 1 FROM membership m WHERE m.userid = %s
 					AND m.organisationid = b.organisation_id AND m.authorisation IN (0, 1))
-				FOR UPDATE;""", (base_name, organisation_id, user_id))
+				FOR UPDATE;""", (base_name, organisation_id, base_id, base_id, user_id))
 			base = cur.fetchone()
 			if base is None:
 				return False
@@ -825,28 +825,45 @@ def delete_document_base_data(base_name: str, organisation_id: int, user_id: int
 			if cur.rowcount != 1:
 				raise RuntimeError("The document base could not be removed.")
 			return True
-	except Exception:
-		logger.error("Could not delete document base")
-		return False
+	except Exception as error:
+		_log_transaction_error("delete document base", error)
+		raise RuntimeError("Could not delete document base.") from None
 
 
-def add_feedback(document_id: int, user_id: int, positive: bool, attribute: str, feedback_start: int = None, feedback_end: int = None, organisation_id: int = None, *, expected_content: str = None, base_name: str = None):
+def add_feedback(document_id: int, user_id: int, positive: bool, attribute: str, feedback_start: int = None, feedback_end: int = None, organisation_id: int = None, *, expected_content: str = None, base_name: str = None, base_id=None, attribute_id=None):
 	"""Toggle a public vote, or save a negative correction, and return the current counts."""
 	try:
 		with closing(connectPG()) as conn, conn, conn.cursor() as cur:
+			# Attribute edits lock the base before touching its feedback rows.
+			cur.execute("""SELECT b.id, b.attribute_schema_version::text, b.attribute_ids,
+				(CASE WHEN b.attributes::text = '[]' THEN '{}' ELSE b.attributes::text END)::text[]
+				FROM document_bases b JOIN documents d ON d.documentbaseid = b.id
+					AND d.organisationid = b.organisation_id
+				WHERE d.id = %s AND b.organisation_id = %s
+				AND (%s::bigint IS NULL OR b.id = %s) AND (%s::text IS NULL OR b.name = %s)
+				AND EXISTS (SELECT 1 FROM membership m WHERE m.userid = %s
+					AND m.organisationid = b.organisation_id AND m.authorisation IN (0, 1, 10))
+				FOR SHARE OF b""", (document_id, organisation_id, base_id, base_id, base_name, base_name, user_id))
+			schema = cur.fetchone()
+			if schema is None:
+				return -404
+			resolved_base_id, version, stored_ids, names = schema
+			ids = attribute_ids_for_snapshot({"attributes": [{"name": name} for name in names]}, version, stored_ids)
+			if attribute_id is not None:
+				attribute = next((name for name, current_id in ids.items() if current_id == attribute_id), None)
+			if attribute not in ids:
+				return -422
 			# Serialize votes with each other and with source-document edits. The next
 			# statement sees any vote committed while this source lock was waiting.
 			cur.execute("""SELECT d.id FROM public.documents d
 				WHERE d.id = %s AND d.content IS NOT NULL
 				AND (%s::bigint IS NULL OR d.organisationid = %s)
 				AND (%s::text IS NULL OR d.content = %s)
-				AND (%s::text IS NULL OR d.documentbaseid = (
-					SELECT b.id FROM public.document_bases b WHERE b.name = %s AND b.organisation_id = d.organisationid
-				))
+				AND d.documentbaseid = %s
 				AND EXISTS (SELECT 1 FROM public.membership m WHERE m.organisationid = d.organisationid
 					AND m.userid = %s AND m.authorisation IN (0, 1, 10))
 				FOR UPDATE OF d""",
-				(document_id, organisation_id, organisation_id, expected_content, expected_content, base_name, base_name, user_id))
+				(document_id, organisation_id, organisation_id, expected_content, expected_content, resolved_base_id, user_id))
 			if cur.fetchone() is None:
 				return -409 if expected_content is not None else -403
 

@@ -33,7 +33,7 @@ from typing import Optional
 
 from bson import decode as decode_bson
 from redis.exceptions import RedisError
-from wannadb_web.postgres.queries import get_document_base_data, get_document_by_name_and_content, get_feedbacks_for_document, get_document_by_name, get_base_id, get_organisation_authorisation, documents_available_for_base, get_document_ids_for_snapshot, get_document_base_snapshot
+from wannadb_web.postgres.queries import get_base_reference, get_document, get_document_base_data, get_document_by_name_and_content, get_feedbacks_for_document, get_document_by_name, get_base_id, get_organisation_authorisation, documents_available_for_base, get_document_ids_for_snapshot, get_document_base_snapshot
 from wannadb_web.postgres.attribute_schema import SUGGESTED_ATTRIBUTE_MAPPINGS, attribute_ids_for_snapshot, get_attribute_schema_version, parse_attribute_edit
 from wannadb_web.postgres.queries import FeedbackOutcomeUnavailable, get_feedback_outcome
 from wannadb_web.postgres.feedback_sessions import FeedbackSessionUnavailable, load_session
@@ -198,16 +198,25 @@ def authorize_core_request():
 	organisation_id = _positive_id(view.get("organisation_id", base_scope.get("organisationId")))
 	if organisation_id is None:
 		return make_response({"error": "invalid organization ID"}, 400)
-	role = get_organisation_authorisation(token.id, organisation_id)
-	if role is None or (endpoint == "delete_document_base" and role not in (0, 1)):
+	try:
+		role = get_organisation_authorisation(token.id, organisation_id, raise_on_error=True)
+	except RuntimeError:
+		return make_response({"error": "Organization access checks are temporarily unavailable."}, 503)
+	if role is None or (endpoint in ("delete_document_base", "delete_document_base_by_id") and role not in (0, 1)):
 		return make_response({"error": "organization access denied"}, 403)
 	g.organisation_id = organisation_id
+	g.requested_base_id = _positive_id(base_scope.get("baseId"))
+	if "baseId" in base_scope and g.requested_base_id is None:
+		return make_response({"error": "invalid document base ID"}, 400)
 	base_name = view.get("base_name", base_scope.get("baseName"))
 	if base_name is not None and (not isinstance(base_name, str) or not base_name.strip()):
 		return make_response({"error": "invalid document base name"}, 400)
 	if endpoint != "create_document_base" and base_name is not None:
-		base_id = get_base_id(base_name, organisation_id)
-		if base_id is None:
+		try:
+			base_id = get_base_id(base_name, organisation_id, raise_on_error=True)
+		except RuntimeError:
+			return make_response({"error": "Document base metadata is temporarily unavailable."}, 503)
+		if base_id is None or (g.requested_base_id is not None and base_id != g.requested_base_id):
 			return make_response({"error": "document base not found"}, 404)
 		if endpoint == "feedback_overview":
 			g.feedback_overview_scope = (base_name, base_id)
@@ -266,45 +275,69 @@ def create_document_base():
 	return make_response({"task_id": task.id}, 202)
 
 
-@core_routes.route('/document_base/<organisation_id>/<base_name>', methods=['GET'])
-def get_document_base(organisation_id: int, base_name: str):
-	"""
-	Endpoint for retrieving a document base using it's name und organisation id
-	"""
-	authorization = request.headers.get("Authorization")
-	if (authorization is None or organisation_id is None or base_name is None):
-		return make_response({'error': 'missing parameters'}, 400)
-	
-	_token = tokenDecode(authorization)
+def _base_reference(*, base_id=None, name=None):
+	try:
+		base = get_base_reference(g.organisation_id, base_id=base_id, name=name)
+	except RuntimeError:
+		abort(make_response({"error": "Document base metadata is temporarily unavailable."}, 503))
+	if base is None:
+		abort(make_response({"error": "document base not found"}, 404))
+	return base
 
-	if _token is None:
-		return make_response({'error': 'invalid token'}, 401)
-	
-	document_base = get_document_base_data(base_name, organisation_id)
+
+def _base_reference_response(base):
+	base_id, name, version, stored_ids, names = base
+	attribute_ids = attribute_ids_for_snapshot({"attributes": [{"name": name} for name in names]}, version, stored_ids)
+	return make_response({"id": base_id, "name": name, "attributeIds": attribute_ids}, 200)
+
+
+@core_routes.route('/document_base/by-id/<organisation_id>/<base_id>', methods=['GET'])
+def get_document_base_by_id(organisation_id, base_id):
+	base_id = _positive_id(base_id)
+	if base_id is None:
+		return make_response({"error": "invalid document base ID"}, 400)
+	return _base_reference_response(_base_reference(base_id=base_id))
+
+
+@core_routes.route('/document_base/resolve/<organisation_id>', methods=['GET'])
+def resolve_document_base(organisation_id):
+	name = request.args.get("name")
+	if not name or not name.strip() or "\0" in name:
+		return make_response({"error": "invalid document base name"}, 400)
+	return _base_reference_response(_base_reference(name=name))
+
+
+@core_routes.route('/document_base/<organisation_id>/<path:base_name>', methods=['GET'])
+def get_document_base(organisation_id, base_name):
+	document_base = get_document_base_data(base_name, g.organisation_id)
 	if document_base is None:
-		return make_response({'error': 'document base not found'}, 404)
-	
+		return make_response({"error": "document base not found"}, 404)
 	return make_response({"data": document_base}, 200)
 
-@core_routes.route('/document_base/<organisation_id>/<base_name>', methods=['DELETE'])
-def delete_document_base(organisation_id: int, base_name: str):
-	"""
-	Endpoint for deleting a document base using it's name and organisation id
-	"""
-	authorization = request.headers.get("Authorization")
-	if (authorization is None or organisation_id is None or base_name is None):
-		return make_response({'error': 'missing parameters'}, 400)
 
-	_token = tokenDecode(authorization)
+def _delete_base(name, base_id=None):
+	try:
+		deleted = delete_document_base_data(name, g.organisation_id, g.auth_token.id, base_id=base_id)
+	except RuntimeError:
+		return make_response({"error": "Could not delete the document base. Try again."}, 503)
+	if not deleted:
+		return make_response({"error": "document base not found"}, 404)
+	return make_response({"message": "document base deleted"}, 200)
 
-	if _token is None:
-		return make_response({'error': 'invalid token'}, 401)
 
-	success = delete_document_base_data(base_name, organisation_id, _token.id)
-	if not success:
-		return make_response({'error': 'document base not found'}, 404)
+@core_routes.route('/document_base/by-id/<organisation_id>/<base_id>', methods=['DELETE'])
+def delete_document_base_by_id(organisation_id, base_id):
+	base_id = _positive_id(base_id)
+	if base_id is None:
+		return make_response({"error": "invalid document base ID"}, 400)
+	base = _base_reference(base_id=base_id)
+	return _delete_base(base[1], base_id=base_id)
 
-	return make_response({'message': 'document base deleted'}, 200)
+
+@core_routes.route('/document_base/<organisation_id>/<path:base_name>', methods=['DELETE'])
+def delete_document_base(organisation_id, base_name):
+	return _delete_base(base_name)
+
 
 @core_routes.route('/document_base/load', methods=['POST'])
 def load_document_base():
@@ -344,7 +377,7 @@ def load_document_base():
 	args = (user_id, base_name, organisation_id)
 	if include_automatic_matches:
 		args += (True,)
-	task = DocumentBaseLoad().apply_async(args=args)
+	task = DocumentBaseLoad().apply_async(args=args, expected_base_id=g.requested_base_id)
 
 	return make_response({'task_id': task.id}, 202)
 
@@ -359,7 +392,7 @@ def query_document_base():
 	except TableQueryError as error:
 		return make_response({"error": str(error)}, 400)
 	task = DocumentBaseLoad().apply_async(
-		args=(g.auth_token.id, base_name, g.organisation_id), kwargs={"sql_query": query})
+		args=(g.auth_token.id, base_name, g.organisation_id), kwargs={"sql_query": query}, expected_base_id=g.requested_base_id)
 	return make_response({"task_id": task.id}, 202)
 
 
@@ -396,7 +429,8 @@ def interactive_document_base():
 
 	user_id = _token.id
 
-	task = DocumentBaseInteractiveTablePopulation().apply_async(args=(user_id, base_name, organisation_id))
+	task = DocumentBaseInteractiveTablePopulation().apply_async(args=(user_id, base_name, organisation_id),
+		expected_base_id=g.requested_base_id)
 
 	return make_response({'task_id': task.id}, 202)
 
@@ -430,7 +464,7 @@ def feedback_overview():
 			"nrOfNuggets": sum(len(document["attribute_mappings"][name]) for document in mapped_documents),
 		})
 	return make_response({
-		"name": base_name, "attributes": attributes, "attributeVersion": version, "documentCount": document_count,
+		"id": base_id, "name": base_name, "attributes": attributes, "attributeVersion": version, "documentCount": document_count,
 		"nuggetCount": sum(len(document["nuggets"]) for document in documents),
 	}, 200, {"Cache-Control": "no-store"})
 
@@ -474,7 +508,7 @@ def _queue_attribute_edit(form, operations):
 	if current_version != version:
 		return make_response({"error": "Attributes changed. Reload them before editing again."}, 409)
 	task = DocumentBaseUpdateAttributes().apply_async(args=(
-		g.auth_token.id, operations, base_name, g.organisation_id, version))
+		g.auth_token.id, operations, base_name, g.organisation_id, version), expected_base_id=g.requested_base_id)
 	return make_response({'task_id': task.id}, 202)
 
 
@@ -913,77 +947,67 @@ def stop_feedback():
 
 	return make_response({'task_id': task.id}, 202)
 
+def _public_feedback_document(form):
+	base_id = _positive_id(form.get("baseId"))
+	if "baseId" in form and base_id is None:
+		abort(make_response({"error": "invalid document base ID"}, 400))
+	base_name = _base_reference(base_id=base_id)[1] if base_id is not None else form.get("baseName")
+	user_id = g.auth_token.id
+	if "documentId" in form:
+		document_id = _positive_id(form.get("documentId"))
+		if document_id is None:
+			abort(make_response({"error": "invalid document ID"}, 400))
+		_, content = get_document(document_id, user_id, g.organisation_id, base_name)
+	else:
+		document_id, _, content = get_document_by_name_and_content(
+			form.get("documentName"), form.get("documentContent"), user_id,
+			organisation_id=g.organisation_id, base_name=base_name)
+	if document_id is None or content is None:
+		abort(make_response({"error": "document not found"}, 404))
+	return document_id, content, base_name, base_id
+
+
 @core_routes.route('/document_base/feedback/public', methods=['POST'])
 def add_public_feedback():
-	"""Save document feedback, using half-open Unicode code-point offsets for a span."""
+	"""Save a vote against the attribute ID and the current source text."""
 	form = request.get_json()
-	name, content = form.get("documentName"), form.get("documentContent")
 	attribute, positive = form.get("attribute"), form.get("isPositive")
-	if (not isinstance(name, str) or not name or not isinstance(content, str)
-		or not isinstance(attribute, str) or not attribute.strip() or '\0' in attribute
-		or type(positive) is not bool):
+	attribute_id = form.get("attributeId")
+	if "attributeId" in form:
+		try:
+			attribute_id = str(UUID(attribute_id))
+		except (ValueError, TypeError, AttributeError):
+			return make_response({"error": "invalid attribute ID"}, 400)
+	elif not isinstance(attribute, str) or not attribute.strip() or "\0" in attribute:
+		return make_response({"error": "an attribute is required"}, 400)
+	if type(positive) is not bool or not isinstance(form.get("documentContent"), str):
 		return make_response({"error": "invalid document feedback"}, 400)
 
+	document_id, content, base_name, base_id = _public_feedback_document(form)
+	if form["documentContent"] != content:
+		return make_response({"error": "The document changed. Reload before retrying."}, 409)
 	start, end, text = form.get("startIndex"), form.get("endIndex"), form.get("nuggetText")
 	if start is not None or end is not None or text is not None:
 		start, end = _selection_span(content, start, end, text)
 
-	user_id = g.auth_token.id
-	base_name = form.get("baseName")
-	document_id, _, _ = get_document_by_name_and_content(
-		name, content, user_id, organisation_id=g.organisation_id, base_name=base_name)
-	if document_id is None:
-		return make_response({"error": "document not found"}, 404)
-
 	outcome = add_feedback(
-		document_id=document_id, user_id=user_id, positive=positive, attribute=attribute,
+		document_id=document_id, user_id=g.auth_token.id, positive=positive, attribute=attribute,
 		feedback_start=start, feedback_end=end, organisation_id=g.organisation_id,
-		expected_content=content, base_name=base_name)
+		expected_content=content, base_name=base_name, base_id=base_id, attribute_id=attribute_id)
 	if outcome == -409:
 		return make_response({"error": "The document changed or feedback conflicted. Reload before retrying."}, 409)
+	if outcome == -422:
+		return make_response({"error": "The attribute is no longer available. Reload before retrying."}, 422)
 	if isinstance(outcome, int):
 		return make_response({"error": "Could not save document feedback."}, -outcome)
 	return make_response(outcome, 200)
 
+
 @core_routes.route('/document_base/feedback/public/get', methods=['POST'])
 def get_public_feedback():
-	"""
-	Endpoint to get public feedback for a document.
-
-	header: {
-		"Authorization": "your_authorization_token"
-	}
-	Example Query Parameters:
-	{
-		"organisationId": "your_organisation_id",
-		"documentName": "your_document_name",
-		"documentContent": "your_document_content"
-	}
-	"""
-	form = request.get_json()
-	authorization = request.headers.get("Authorization")
-	organisation_id: Optional[int] = form.get("organisationId")
-
-	if (organisation_id is None
-		or authorization is None):
-
-		return make_response({"error": "missing parameters"}, 400)
-
-	_token = tokenDecode(authorization)
-
-	if _token is None:
-		return make_response({"error": "invalid token"}, 401)
-
-	user_id = _token.id
- 
-	document_id, _, _ = get_document_by_name_and_content(
-		form.get("documentName"),
-		form.get("documentContent"),
-		user_id, organisation_id=organisation_id, base_name=form.get("baseName")
-	)
-	if document_id is None:
-		return make_response({"error": "document not found"}, 404)
-
-	feedback = get_feedbacks_for_document(int(document_id), user_id)
-
-	return make_response({'feedback': feedback}, 200)
+	document_id, _, _, _ = _public_feedback_document(request.get_json())
+	try:
+		feedback = get_feedbacks_for_document(document_id, g.auth_token.id)
+	except RuntimeError:
+		return make_response({"error": "Document feedback is temporarily unavailable."}, 503)
+	return make_response({"feedback": feedback}, 200)

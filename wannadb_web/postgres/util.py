@@ -2,6 +2,7 @@ import logging
 import os
 
 import psycopg2
+from flask import g, has_request_context
 from psycopg2 import extensions, IntegrityError
 from psycopg2.sql import SQL
 
@@ -27,8 +28,9 @@ def connectPG(*, connect_timeout=None):
 
 def _log_failure(operation, error):
 	# PostgreSQL error details may contain values as well as the statement.
-	logger.error("PostgreSQL %s failed (%s, SQLSTATE=%s).",
-		operation, type(error).__name__, getattr(error, "pgcode", None) or "unavailable")
+	request_id = getattr(g, "request_id", "-") if has_request_context() else "-"
+	logger.error("PostgreSQL %s failed (%s, SQLSTATE=%s, request_id=%s).",
+		operation, type(error).__name__, getattr(error, "pgcode", None) or "unavailable", request_id)
 
 
 def execute_transaction(query, params=None, commit=False, fetch=True):
