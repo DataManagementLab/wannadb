@@ -2,6 +2,12 @@ import logging
 
 from flask import Blueprint, request, make_response, abort, g
 from psycopg2 import Error as PostgresError
+from redis.exceptions import RedisError
+from werkzeug.exceptions import RequestEntityTooLarge
+
+from wannadb_web.auth_limits import (
+	LOGINS_PER_PEER, LOGINS_PER_USERNAME, REGISTRATIONS_PER_PEER, auth_retry_after,
+)
 
 from wannadb_web.util import Token, tokenEncode, tokenDecode
 from wannadb_web.postgres.queries import check_password, get_members_of_organisation, get_organisation_from_user_id, \
@@ -59,44 +65,72 @@ def _require_organisation(value, admin=False):
 	return organisation_id
 
 
+def _auth_error(code, message, status):
+	return make_response({"code": code, "error": message}, status, {"Cache-Control": "no-store"})
+
+
+def _check_auth_limit(scope, identity, maximum):
+	try:
+		retry_after = auth_retry_after(scope, identity, maximum)
+	except RedisError:
+		abort(_auth_error("AUTH_UNAVAILABLE", "Sign-in and registration are temporarily unavailable.", 503))
+	if retry_after:
+		response = _auth_error("AUTH_RATE_LIMITED", "Too many attempts. Wait a minute and try again.", 429)
+		response.headers["Retry-After"] = str(retry_after)
+		abort(response)
+
+
+def _auth_credentials():
+	# Auth requests contain only short JSON credentials, separate from upload limits.
+	limit = 16 * 1024
+	request.max_content_length = min(request.max_content_length or limit, limit)
+	try:
+		data = request.get_json(silent=True)
+	except RequestEntityTooLarge:
+		abort(_auth_error("INVALID_CREDENTIALS", "The credentials request is too large.", 413))
+	if not isinstance(data, dict):
+		abort(_auth_error("INVALID_CREDENTIALS", "Enter a username and password.", 400))
+	username, password = data.get("username"), data.get("password")
+	if not isinstance(username, str) or not username.strip() or "\0" in username or not isinstance(password, str):
+		abort(_auth_error("INVALID_CREDENTIALS", "Enter a valid username and password.", 400))
+	try:
+		username.encode("utf-8")
+		password_bytes = password.encode("utf-8")
+	except UnicodeEncodeError:
+		abort(_auth_error("INVALID_CREDENTIALS", "The credentials contain invalid Unicode.", 400))
+	return username, password, password_bytes
+
+
 @user_management.route('/register', methods=['POST'])
 def register():
-	data = request.get_json()
-	username = data.get('username')
-	password = data.get('password')
-
-	_id = add_user(username, password)
-
-	if _id > 0:
-		user = Token(username, _id)
-		token = tokenEncode(user.json())
-
-		return make_response({'message': 'User registered successfully',
-							  'token': token}, 201)
-	elif _id < 0:
-		return make_response({'message': 'Conflicting username'}, 409)
-	else:
-		return make_response({'message': 'User register failed'}, 422)
+	# Use the connection peer. The frontend proxy may share a bucket across users.
+	_check_auth_limit("register-peer", request.remote_addr or "unknown", REGISTRATIONS_PER_PEER)
+	username, password, password_bytes = _auth_credentials()
+	if len(username) > 128:
+		return _auth_error("INVALID_CREDENTIALS", "Use a username of at most 128 characters.", 400)
+	if not 1 <= len(password_bytes) <= 72 or b"\0" in password_bytes:
+		return _auth_error("INVALID_PASSWORD", "Use a password between 1 and 72 UTF-8 bytes with no null characters.", 400)
+	try:
+		user_id = add_user(username, password)
+	except (PostgresError, RuntimeError):
+		return _auth_error("AUTH_UNAVAILABLE", "Account creation is temporarily unavailable. Try again.", 503)
+	if user_id is None:
+		return _auth_error("USERNAME_TAKEN", "That username is already taken.", 409)
+	return make_response({"message": "User registered successfully"}, 201, {"Cache-Control": "no-store"})
 
 
 @user_management.route('/login', methods=['POST'])
 def login():
-	data = request.get_json()
-	username = data.get('username')
-	password = data.get('password')
-
-	pwcheck = check_password(username, password)
-	if isinstance(pwcheck, Exception):
-		raise pwcheck
-	if isinstance(pwcheck, bool):
-		return make_response({'message': 'Wrong Password'}, 401)
-	if isinstance(pwcheck, int):
-		_id = pwcheck
-		user = Token(username, _id)
-		token = tokenEncode(user.json())
-
-		return make_response({'message': 'Log in successfully',
-							  'token': token}, 200)
+	_check_auth_limit("login-peer", request.remote_addr or "unknown", LOGINS_PER_PEER)
+	username, password, _ = _auth_credentials()
+	_check_auth_limit("login-username", username, LOGINS_PER_USERNAME)
+	# Continue verifying existing hashes with the bcrypt behavior they were created with.
+	user_id = check_password(username, password)
+	if type(user_id) is not int:
+		return _auth_error("INVALID_CREDENTIALS", "Invalid username or password.", 401)
+	token = tokenEncode(Token(username, user_id).json())
+	return make_response({"message": "Log in successfully", "token": token}, 200,
+		{"Cache-Control": "no-store"})
 
 
 @user_management.route('/deleteUser', methods=['DELETE'])

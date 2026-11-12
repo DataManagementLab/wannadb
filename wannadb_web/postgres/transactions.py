@@ -303,32 +303,17 @@ TABLESPACE pg_default;
 	execute_transaction(create_table_query, commit=True, fetch=False)
 
 
-def add_user(user: str, password: str):
-	"""
-	Adds a new user to the database.
- 
-	:param user: the username of the new user
-	:type user: str
-	:param password: the password of the new user
-	:type password: str
-	:return: int (user id)
-	:raises: Exception if the user could not be added
-	"""
-
-	pwBytes = password.encode('utf-8')
-	salt = bcrypt.gensalt()
-	pwHash = bcrypt.hashpw(pwBytes, salt)
-	# Needed this for the correct password check don't know why...
-	pwHashcode = pwHash.decode('utf-8')
-
-	insert_data_query = sql.SQL("INSERT INTO users (username, password) VALUES (%s, %s) returning id;")
-	data_to_insert = (user, pwHashcode)
-	response = execute_transaction(insert_data_query, data_to_insert, commit=True)
-	if response is IntegrityError:
-		raise IntegrityError("User already exists")
-	if isinstance(response[0][0], int):
-		return int(response[0][0])
-	raise Exception("addUser failed because: \n", response)
+def add_user(user: str, password: str) -> int | None:
+	"""Return the new ID, or None if the username was already taken."""
+	pw_hash = bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("ascii")
+	insert = sql.SQL("""
+		INSERT INTO users (username, password) VALUES (%s, %s)
+		ON CONFLICT (username) DO NOTHING RETURNING id
+	""")
+	rows = execute_transaction(insert, (user, pw_hash), commit=True)
+	if rows is False:
+		raise RuntimeError("User registration transaction failed.")
+	return rows[0][0] if rows else None
 
 
 def change_password(user: str, old_password: str, new_password: str):
