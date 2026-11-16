@@ -11,7 +11,7 @@ import wannadb
 from wannadb import resources
 from wannadb.configuration import Pipeline
 from wannadb.data.data import Attribute, Document, DocumentBase, InformationNugget
-from wannadb.data.signals import CachedDistanceSignal, LabelEmbeddingSignal, SentenceStartCharsSignal
+from wannadb.data.signals import LabelEmbeddingSignal, SentenceStartCharsSignal
 from wannadb.interaction import EmptyInteractionCallback
 from wannadb.matching.distance import SignalsMeanDistance
 from wannadb.matching.matching import RankingBasedMatcher
@@ -25,8 +25,9 @@ from wannadb.preprocessing.other_processing import ContextSentenceCacher
 from wannadb.statistics import Statistics
 from wannadb.status import StatusCallback
 from wannadb_web.SQLite.Cache_DB import SQLiteCacheDBWrapper
-from wannadb_web.postgres.queries import get_document_base_snapshot, get_document_by_name_and_content, compare_and_swap_document_content, \
-	get_document, get_document_ids_for_snapshot
+from wannadb_web.postgres.queries import (
+	compare_and_swap_document_content, get_document_base_snapshot, get_document_ids_for_snapshot,
+)
 from wannadb_web.postgres.transactions import DocumentBaseCreationConflict, create_document_base_with_snapshot, mutate_base_documents
 from wannadb_web.limits import validate_attribute_count, validate_corpus
 from wannadb_web.Redis.RedisCache import SessionState, get_signal_scope
@@ -107,35 +108,6 @@ class WannaDB_WebAPI:
 		self._document_base = value
 		self._stage_document_base(value)
 		return
-
-	def get_ordert_nuggets(self, document_id: int):
-		logger.warning("get_ordert_nuggets is deprecated, use get_ordered_nuggets_by_doc_name instead!")
-		document = get_document(document_id, self.user_id, self.organisation_id, self.document_base_name)
-		if document[0] is None:
-			self.signals.error.emit(RuntimeError("Document not found."))
-			return
-		document_name = document[0]
-		logger.debug("get_ordert_nuggets")
-		self.signals.status.emit("get_ordert_nuggets")
-		for document in self.document_base.documents:
-			if document.name == document_name:
-				self.signals.ordert_nuggets.emit(list(sorted(document.nuggets, key=lambda x: x[CachedDistanceSignal])))
-				return
-		self.signals.error.emit(RuntimeError("Document not found in the base."))
-
-	def get_ordered_nuggets_by_doc_name(self, document_name: str, document_content: str):
-		logger.warning("It is recommended to not use get_ordered_nuggets_by_doc_name!")
-		document = get_document_by_name_and_content(document_name, document_content, self.user_id,
-			organisation_id=self.organisation_id, base_name=self.document_base_name)
-		if document[0] is None:
-			self.signals.error.emit(RuntimeError("Document not found."))
-			return
-		logger.debug("get_ordered_nuggets_by_doc_name")
-		self.signals.status.emit("get_ordered_nuggets_by_doc_name")
-		for document in self.document_base.documents:
-			if document.name == document_name:
-				return
-		self.signals.error.emit(RuntimeError("Document not found in the base."))
 
 	def _report_error(self, code: str, error: Exception) -> None:
 		logger.warning("Worker operation failed. code=%s error_type=%s", code, type(error).__name__)

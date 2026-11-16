@@ -48,7 +48,7 @@ from wannadb_web.worker.data import Signals
 from wannadb_web.worker.payload import TABLE_PAGE_SIZE, legacy_payload, project_base
 
 from wannadb_web.worker.tasks import CreateDocumentBase, BaseTask, DocumentBaseConfirmMultipleNuggets, DocumentBaseConfirmNugget, DocumentBaseInteractiveTablePopulation, DocumentBaseLoad, DocumentBaseNoMatchForDocument, DocumentBaseStartRanking, DocumentBaseStopMatching, \
-	DocumentBaseUpdateAttributes, DocumentBaseGetOrderedNuggets, ReloadDocumentBaseTask
+	DocumentBaseUpdateAttributes, ReloadDocumentBaseTask
 
 core_routes = Blueprint('core_routes', __name__, url_prefix='/core')
 
@@ -752,51 +752,6 @@ def reload_document_base():
 
 	return make_response({'task_id': task.id}, 202)
 
-
-@core_routes.route('/document_base/order/nugget', methods=['POST'])
-def sort_nuggets():
-	"""
-    Endpoint for creating a document base.
-
-	This endpoint is used to create a document base from a list of document ids and a list of attributes.
-
-	Header:
-	{
-		"Authorization": "your_authorization_token"
-	}
-    Example Form Payload:
-    {
-        "organisationId": "your_organisation_id",
-        "baseName": "your_document_base_name",
-        "documentName": "your_document_name",
-        "documentContent": "your_document_content",
-    }
-    """
-	form = request.get_json()
-	authorization = request.headers.get("Authorization")
-	organisation_id: Optional[int] = form.get("organisationId")
-	base_name = form.get("baseName")
-	document_name = form.get("documentName")
-	document_content = form.get("documentContent")
-	if organisation_id is None or base_name is None or document_name is None or document_content is None or authorization is None:
-		return make_response({"error": "missing parameters"}, 400)
-
-	_token = tokenDecode(authorization)
-	
-	if _token is None:
-		return make_response({"error": "invalid token"}, 401)
-	
-	user_id = _token.id
-	
-	task = DocumentBaseGetOrderedNuggets().apply_async(args=(
-     														user_id, 
-                   											base_name, 
-                              								organisation_id, 
-                                      						document_name, 
-                                            				document_content
-                              							))
-	
-	return make_response({'task_id': task.id}, 202)
 
 @core_routes.route('/document_base/confirm/nugget/custom', methods=['POST'])
 def confirm_nugget_custom():

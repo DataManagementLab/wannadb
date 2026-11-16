@@ -253,7 +253,7 @@ class SessionState:
 	COMMAND_TTL = 3600
 	TABLE_TTL = 3600
 	SIGNALS = ("feedback", "error", "status", "finished", "document_base_to_ui", "statistics_to_ui",
-		"feedback_request_to_ui", "cache_db_to_ui", "ordert_nuggets")
+		"feedback_request_to_ui", "cache_db_to_ui")
 
 	def __init__(self, user_id, base_id, session_id):
 		if base_id is None or not isinstance(session_id, str) or not session_id:
@@ -486,7 +486,7 @@ return publication.version
 	def snapshot(self, include_payload=True, include_feedback=True):
 		keys = self._keys()
 		names = [name for name in self.SIGNALS if name not in ("document_base_to_ui", "feedback_request_to_ui")
-			and (include_payload or name not in ("cache_db_to_ui", "ordert_nuggets"))]
+			and (include_payload or name != "cache_db_to_ui")]
 		read_keys = [keys[0]] + [f"{self.prefix}:{name}" for name in names]
 		if include_payload:
 			names.append("document_base_to_ui"); read_keys.append(keys[3])

@@ -58,19 +58,6 @@ def convert_to_nugget(nugget: InformationNugget, nugget_id: Optional[int] = None
 
 
 @dataclass
-class _InformationNuggets:
-	nuggets: list[InformationNugget]
-
-	def to_json(self):
-		return {
-		str(i): convert_to_nugget(nugget).to_json() for i, nugget in enumerate(self.nuggets)
-	}
-
-def convert_to_nuggets(nuggets: list[InformationNugget]):
-	return _InformationNuggets(nuggets)
-
-
-@dataclass
 class _Document:
 	name:str
 	text:str
@@ -143,7 +130,6 @@ class Signals:
 		self.feedback_request_to_ui = _Feedback("feedback_request_to_ui", self.__cache_user_id)
 		self.feedback_request_from_ui = _Feedback("feedback_request_from_ui", self.__cache_user_id)
 		self.cache_db_to_ui = _Dump("cache_db_to_ui", self.__cache_user_id)
-		self.ordert_nuggets = _Nuggets("ordert_nuggets", self.__cache_user_id)
 
 	def to_json(self, include_payload: bool = True, include_feedback: bool = True, snapshot=None) -> dict[str, Any]:
 		if snapshot is None and self.__session is not None:
@@ -164,8 +150,7 @@ class Signals:
 				self.document_base_to_ui.type: serialized(self.document_base_to_ui) if include_payload else {},
 				self.statistics.type: serialized(self.statistics),
 				self.feedback_request_to_ui.type: serialized(self.feedback_request_to_ui) if include_feedback else {},
-				self.cache_db_to_ui.type: serialized(self.cache_db_to_ui) if include_payload else None,
-				self.ordert_nuggets.type: serialized(self.ordert_nuggets) if include_payload else {}
+				self.cache_db_to_ui.type: serialized(self.cache_db_to_ui) if include_payload else None
 				}
 
 	def reset(self):
@@ -330,36 +315,6 @@ class _Error(Emitable):
 
 	def emit(self, exception: BaseException):
 		self.redis.set(self.type, str(exception))
-
-
-class _Nuggets(Emitable):
-
-	@property
-	def msg(self) -> Optional[list[InformationNugget]]:
-		msg = self.redis.get(self.type)
-		if msg is None:
-			return None
-		if isinstance(msg,bytes):
-			return pickle.loads(msg)
-		else:
-			raise TypeError("msg is not bytes")
-
-
-	def to_json(self):
-		msg = self.msg
-		if msg is None:
-			return {}
-		return convert_to_nuggets(msg).to_json()
-
-	def emit(self, status: list[InformationNugget]):
-		logger.info("emitting Nuggets")
-		b:bytes = pickle.dumps(status)
-		if isinstance(b,bytes):
-			self.redis.set(self.type, b)
-		elif len(status)< 2:
-			raise TypeError("status smaller than 2")
-		else:
-			raise TypeError("b is not bytes")
 
 
 class _DocumentBaseToUi(Emitable):

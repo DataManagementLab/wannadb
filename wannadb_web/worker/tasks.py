@@ -571,21 +571,6 @@ class ReloadDocumentBaseTask(FeedbackTask):
 		return {"ok": True}
 
 
-class DocumentBaseGetOrderedNuggets(BaseTask):
-	name = "DocumentBaseGetOrderedNuggets"
-
-	def run(self, user_id: int, base_name: str, organisation_id: int, document_name: str, document_content: str):
-		self.load()
-
-		api = WannaDB_WebAPI(user_id, base_name, organisation_id)
-		api.load_document_base_from_bson()
-		self.check_api_error(api)
-		# api.get_ordert_nuggets(document_id)
-		api.get_ordered_nuggets_by_doc_name(document_name, document_content)
-		# no need to update the document base
-		return self.finish(api)
-
-
 class DocumentBaseConfirmNugget(FeedbackTask):
 	name = "DocumentBaseConfirmNugget"
 
