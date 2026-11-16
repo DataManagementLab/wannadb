@@ -1,131 +1,32 @@
-# Webserver Structure
+# WannaDBWeb backend structure
 
-## File Structure
+See [deployment and database recovery](README.md#web-backend-deployment) and the [web API contract](ROUTES.md).
 
-```text
-.
-├── entrypoint.sh
-├── util.py
-├── __init__.py
-├── .env
-│   └── .dev
-├── Postgres
-│   ├── queries.py
-│   ├── transactions.py
-│   ├── util.py
-│   └── __init__.py
-├── Redis
-│   ├── RedisCache.py
-│   ├── util.py
-│   └── __init__.py
-├── routing
-│   ├── core.py
-│   ├── dev.py
-│   ├── files.py
-│   ├── user.py
-│   └── __init__.py
-├── SQLite
-│   ├── Cache_DB.py
-│   ├── util.py
-│   └── __init__.py
-└── worker
-    ├── data.py
-    ├── tasks.py
-    ├── util.py
-    ├── Web_API.py
-    └── __init__.py
-```
+| Layer | Responsibility |
+| --- | --- |
+| Next.js | Browser UI, NextAuth, and a same-origin proxy. Server-rendered pages also call Flask directly over the private backend connection. |
+| Flask web service | `app.py` registers the organization/account, file, and core blueprints. Requests carry a correlation ID. PostgreSQL membership and task scope determine access. |
+| Compute worker | Processes document creation and mutations, loads bases, runs read-only SQL previews, and advances interactive feedback a step at a time. |
+| PostgreSQL | Authoritative source documents, saved BSON snapshots, attribute metadata, votes, checkpoints, and durable receipts for committed feedback. |
+| Redis | Celery broker/results, admissions, and temporary task, feedback, and SQL publications. |
+| SQLite | In-memory read-only SQL query projection inside the worker. |
+| Flower | Optional monitoring. Production enables it with the `monitoring` profile, authentication, and the loopback listener. |
 
-### Web Root Directory
+## Queue ownership
 
-```text
-├── entrypoint.sh
-├── util.py
-├── __init__.py
-└── .env
-   └── .dev
-```
+The `worker` service consumes the `celery` queue, including interactive feedback commands. It releases its slot when a session waits for input. Separate users can have open sessions on the same base. The `feedback-worker` service listens on the legacy `feedback` queue. Its presence in Flower does not mean current review commands run there.
 
-This section contains the following files:
+Tasks have independent queue and execution deadlines. `QUEUE_SECONDS` defaults to 900. The compute queue defaults to 32 waiting or running tasks and 8 per user, controlled by `MAX_COMPUTE_TASKS` and `MAX_COMPUTE_TASKS_PER_USER`. Interactive sessions waiting for user input do not consume a compute slot. Do not change queue routing by restarting a consumer on a different queue while jobs are in flight.
 
-- `entrypoint.sh`: This is the entrypoint for the webserver.
-- `util.py`: This file provides general functionality for the entire project.
-- `__init__.py`: This is an initialization file.
-- `.env`: This file is used for environment configuration.
-- `.dev`: This file is specific to the development environment.
+## Artifacts
 
-If a production environment configuration is needed, a `.prod` file should be added. Please make sure to update the Dockerfile accordingly to reflect these changes.
+Users upload UTF-8 TXT as source documents. The persisted BSON snapshot is a backend artifact and contains derived nuggets and mappings. The browser receives compact JSON catalogs and page data. A catalog carries IDs and counts. A document view carries text once plus span offsets. Feedback views carry the current ranked candidates and a page of manual-review documents. Table exports are CSV built from the retained, bounded query result.
 
-### Postgres
+A Redis or worker failure can interrupt an active publication. The command ID can recover a committed feedback receipt from PostgreSQL. Preserve PostgreSQL independently of cache state, and reopen a session from the base if its live publication is gone.
 
-```text
-Postgres
-├── queries.py
-├── transactions.py
-├── util.py
-└── __init__.py
-```
+## Diagnose delays and image warnings
 
-Directory related to PostgresSQL database functionality.
-This section provides an abstraction layer for the database connection and queries.
-
-### Redis
-
-```text
-Redis
-├── RedisCache.py
-├── util.py
-└── __init__.py
-```
-
-Directory related to Redis cache functionality.
-This section provides an abstraction layer for the Redis cache, allowing for efficient caching of data. It also ensures that the cache is scoped to a specific namespace for the users, preventing any conflicts or data leakage.
-
-### Routing
-
-```text
-routing
-├── core.py
-├── dev.py
-├── files.py
-├── user.py
-└── __init__.py
-```
-
-Directory related to routing functionality for the Flask web server.
-
-- `core.py`: Contains the routes for the main application routes.
-- `dev.py`: Contains the routes for developers.
-- `files.py`: Contains the routes for file uploads and downloads.
-- `user.py`: Contains the routes for user authentication and management.
-
-### SQLite
-
-```text
-SQLite
-│   ├── Cache_DB.py
-│   ├── util.py
-│   └── __init__.py
-```
-
-Directory related to SQLite database functionality.
-
-This section provides an abstraction layer for the database connection and queries. It also ensures that the database is scoped to a specific namespace for the users, improving data organization and security.
-
-### Worker
-
-```text
-worker
-    ├── data.py
-    ├── tasks.py
-    ├── util.py
-    ├── Web_API.py
-    └── __init__.py
-```
-
-Directory related to worker functionality, background tasks, and asynchronous processing.
-
-- `data.py`: Contains all alert or new types.
-- `tasks.py`: Contains all the tasks that are to be run in the background.
-- `util.py`: Contains utility functions for the worker.
-- `Web_API.py`: Contains the API for the worker to communicate with the core.
+- Use the browser Network panel to separate upload, request submission, status polling, and rendering. The browser uses the frontend origin for all of those requests.
+- Check the API error's `X-Request-ID` and the task or command UUID separately. In worker logs, `queue_wait_seconds` is time before claim and `compute_seconds` is time spent running. A queue wait calls for checking the `celery` consumer and admission limits.
+- Check `/health/ready` and the migration log before diagnosing task submissions. An expired or cancelled task has a status distinct from waiting on the queue.
+- For a SIMD message such as `CPU supports … software requires …`, identify the emitting service and whether it occurred at build, startup, or request time. Capture guest CPU flags, runtime architecture, and Sharp/libvips versions if the frontend optimizer is involved. The navigation logo is served as a static PNG, and the deployed image optimizer is disabled. An image warning alone does not identify a matching or preprocessing slowdown.

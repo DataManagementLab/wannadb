@@ -1,795 +1,94 @@
-# Routes _WannaDBBackend_
-
-## Introduction
-
-Welcome to the documentation for our application! In this guide, you will find detailed information about the various routes and endpoints available in our API.
-
-Whether you are a user, a file manager, or a core functionality developer, this documentation will provide you with the necessary information to interact with our application effectively.
-
-Please refer to the specific sections for [user routes](#user-routes), [file routes](#file-routes), and [core routes](#core-routes) to find the relevant endpoints and their corresponding request methods and bodies.
-
-**Base URL:** `http://localhost:8000`
-
-If you have any questions or need further assistance, feel free to reach out to us.
-
-## Authentication
-
-The authentication method used in this application is JSON Web Token (JWT). JWT is a widely used method for securely transmitting information between parties as a JSON object. It is commonly used for authentication and authorization purposes in web applications. With JWT, a token is generated and sent to the client upon successful authentication. This token is then included in subsequent requests to authenticate and authorize the user. The server can verify the authenticity and integrity of the token to ensure that the user is authenticated and authorized to access the requested resources.
-
-To learn more about JWT and its implementation in this application, please refer to the application's documentation or codebase.
-
-## Endpoints
-
-### User Routes
-
-This category of routes handles the requests related to user and organization management. These routes are responsible for user registration, login, and deletion functionality. Additionally they are responsible for organization creation, leaving and further management functionalities.
-
-- [Register New User](#register-new-user)
-- [Login as User](#login-as-user)
-- [Delete User](#delete-user)
-- [Create Organization](#create-organization)
-- [Leave Organization](#leave-organization)
-- [Get Organizations for User](#get-organizations-for-user)
-- [Get Organization Name by ID](#get-organization-name-by-id)
-- [Get Organization Names for User](#get-organization-names-for-user)
-- [Add User to Organization](#add-user-to-organization)
-- [Get Members of Organization](#get-members-of-organization)
-- [Get User Name Suggestions](#get-user-name-suggestions)
-
----
-
-#### Register New User
-
-- Method: `POST`
-- URL: `/register`
-- Body
-
-    ```json
-    {
-        "username": "username",
-        "password": "password"
-    }
-    ```
-
-- Response
-  - 422 : User register **failed**:
-
-    ```json
-    {
-        "message": "User register failed"
-    }
-    ```
-
-  - 201: User register **success**:
-
-    ```json
-    {
-        "message": "User registered successfully",
-        "token": "eyJhbGciOiJIUI1NiIsIn5cCI6IkpXVCJ9.ey1c2VyIjocGhpbEiLCJpZCIM30.v_lKLd0X-PABkRFXHZa..."
-    }
-    ```
-
----
-
-#### Login as User
-
-- Method: `POST`
-- URL: `/login`
-- Body
-
-    ```json
-    {
-        "username": "username",
-        "password": "password"
-    }
-    ```
-
-- Response
-  - 401: User login **failed**:
-
-    ```json
-    {
-        "message": "Wrong Password"
-    }
-    ```
-
-  - 200: User login **success**:
-
-    ```json
-    {
-        "message": "Log in successfully",
-        "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1..."
-    }
-    ```
-
----
-
-#### Delete User
-
-```url
-/deleteUser/
-```
-
-- Method: `POST`
-- URL: `/deleteUser/`
-- Body
-
-    ```json
-    {
-        "username": "username",
-        "password": "password"
-    }
-    ```
-
-- Response
-  - 401: No authorization provided.
-  - 400: Invalid authorization token.
-  - 401: User not authorized.
-  - 401: Wrong Password.
-  - 204: User deleted successfully.
-  - 409: User deletion failed.
-
----
-
-#### Create Organization
-
-- Method: `POST`
-- URL: `/createOrganisation`
-- Body
-
-    ```json
-    {
-        "organisationName": "organisation_name"
-    }
-    ```
-
-- Response
-  - 401: No authorization provided.
-  - 400: Invalid authorization token.
-  - 200: Organization created successfully.
-  - 409: Organization creation failed.
-
----
-
-#### Leave Organization
-
-- Method: `POST`
-- URL: `/leaveOrganisation`
-- Body
-
-    ```json
-    {
-        "organisationId": "organisation_id"
-    }
-    ```
-
-- Response
-  - 401: No authorization provided.
-  - 400: Invalid authorization token.
-  - 200: User left the organization successfully.
-  - 500: Error leaving organization.
-
----
-
-#### Get Organizations for User
-
-- Method: `GET`
-- URL: `/getOrganisation`
-- Body
-
-    ```json
-    {
-        "authorization": "---authorization---jwt---"
-    }
-    ```
-
-- Response
-  - 401: No authorization provided.
-  - 400: Invalid authorization token.
-  - 200: Retrieved user's organizations successfully.
-
-    ```json
-    {
-        "organisation_ids": ["number"]
-    }
-    ```
-
-  - 404: User is not in any organization.
-  - 409: Error retrieving organizations.
-
----
-
-#### Get Organization Name by ID
-
-- Method: `GET`
-- URL: `/getOrganisationName/<_id>`
-- Path Parameters
-
-    ```json
-    {
-        "_id": "organisation_id"
-    }
-    ```
-
-- Body
-
-    ```json
-    {
-        "authorization": "---authorization---jwt---"
-    }
-    ```
-
-- Response
-  - 401: No authorization provided.
-  - 400: Invalid authorization token.
-  - 200: Retrieved organization name successfully.
-
-    ```json
-    {
-        "organisation_name": ["string"]
-    }
-    ```
-
-  - 404: Organization not found.
-  - 409: Error retrieving organization name.
-
----
-
-#### Get Organization Names for User
-
-- Method: `GET`
-- URL: `/getOrganisationNames`
-- Header
-
-    ```json
-    {
-        "authorization": "---authorization---jwt---"
-    }
-    ```
-
-- Response
-  - 401: No authorization provided.
-  - 400: Invalid authorization token.
-  - 200: Retrieved user's organization names successfully.
-
-    ```json
-    {
-        "organisations": ["number"]
-    }
-    ```
-
-  - 404: User is not in any organization.
-  - 409: Error retrieving organization names.
-
----
-
-#### Add User to Organization
-
-- Method: `POST`
-- URL: `/addUserToOrganisation`
-- Header
-
-    ```json
-    {
-        "authorization": "---authorization---jwt---"
-    }
-    ```
-
-- Body
-
-    ```json
-    {
-        "organisationId": "organisation_id",
-        "newUser": "new_user"
-    }
-    ```
-
-- Response
-  - 401: No authorization provided.
-  - 400: Invalid authorization token.
-  - 200: User added to the organization successfully.
-
-    ```json
-    {
-        "organisation_id": "number"
-    }
-    ```
-
-- 409: Error adding user to organization.
-
----
-
-#### Get Members of Organization
-
-```url
-/getOrganisationMembers/<_id>
-```
-
-- Method: `GET`
-- URL
-
-    ```json
-    {
-        "_id": "organisation_id"
-    }
-    ```
-
-- Header
-
-    ```json
-    {
-        "authorization": "---authorization---jwt---"
-    }
-    ```
-
-- 401: No authorization provided.
-- 400: Invalid authorization token.
-- 200: Retrieved organization members successfully.
-
-    ```json
-    {
-        "members": ["string"]
-    }
-    ```
-
-- 404: Organization not found.
-- 409: Error retrieving organization members.
-
----
-
-#### Get User Name Suggestions
-
-- Method: `GET`
-- URL: `/get/user/suggestion/<_prefix>`
-- Path Parameters
-
-    ```json
-    {
-        "_prefix": "organisation_id"
-    }
-    ```
-
-- Response
-  - 401: No authorization provided.
-  - 400: Invalid authorization token.
-  - 200: Retrieved username suggestions successfully.
-
-    ```json
-    {
-        "usernames": ["string"]
-    }
-    ```
-
----
-
-### File Routes
-
-The File Routes category includes various endpoints for managing files within the application. These routes allow users to upload files, retrieve a list of files for a specific organization, get the document base for an organization, update the content of a file, and delete a file. These routes provide essential functionality for file management and enable users to interact with the application's file system effectively. By utilizing these routes, users can easily upload, retrieve, update, and delete files as needed for their organization's needs.
-
-- [Upload File](#upload-file)
-- [Get Files](#get-files)
-- [Get Document Base for Organization](#get-document-base-for-organization)
-- [Update File Content](#update-file-content)
-- [Delete File](#delete-file)
-- [Get File](#get-file)
-
----
-
-#### Upload File
-
-- Method: `POST`
-- URL: `/data/upload/file`
-- Form
-  - `file`: The file to upload.
-  - `organisationId`: ID of the organization.
-- Header
-
-    ```json
-    {
-        "authorization": "---authorization---jwt---"
-    }
-    ```
-
-- Response
-  - 401: No authorization provided.
-  - 200: File uploaded successfully.
-
-    ```json
-    {
-        "document_ids": ["number"]
-    }
-    ```
-
-  - 400: Invalid file type.
-
-    ```json
-    {
-        "document_ids": ["string"]
-    }
-    ```
-
-  - 207: Multiple files uploaded, some with errors.
-
-    ```json
-    {
-        "document_ids": ["number|string"]
-    }
-    ```
-
----
-
-#### Get Files
-
-- Method: `GET`
-- URL: `/data/organization/get/files/<_id>`
-- Path Parameters
-
-    ```json
-    {
-        "_id": "organisation_id"
-    }
-    ```
-
-- Header
-
-    ```json
-    {
-        "authorization": "---authorization---jwt---"
-    }
-    ```
-
-- Response
-  - 401: No authorization provided.
-  - 200: Retrieved organization files successfully.
-
-    ```json
-    {
-        "documents": "id"
-    }
-    ```
-
----
-
-#### Get Document Base for Organization
-
-- Method: `GET`
-- URL: `/data/organization/get/documentbase/<_id>`
-- Path Parameters
-
-    ```json
-    {
-        "_id": "organisation_id"
-    }
-    ```
-
-- Header
-
-    ```json
-    {
-        "authorization": "---authorization---jwt---"
-    }
-    ```
-
-- Response
-  - 401: No authorization provided.
-  - 200: Retrieved document base successfully.
-
-    ```json
-    {
-        "document_base": "document_base"
-    }
-    ```
-
----
-
-#### Update File Content
-
-- Method: `POST`
-- URL: `/data/update/file/content`
-- Header
-
-    ```json
-    {
-        "authorization": "---authorization---jwt---"
-    }
-    ```
-
-- Body
-
-    ```json
-    {
-        "documentName": "document_name",
-        "newContent": "new_content"
-    }
-    ```
-
-- Response
-  - 401: No authorization provided.
-  - 200: File content updated successfully.
-
-    ```json
-    {
-        "status": "bool"
-    }
-    ```
-
----
-
-#### Delete File
-
-- Method: `POST`
-- URL: `/data/file/delete`
-- Header
-
-    ```json
-    {
-        "authorization": "---authorization---jwt---"
-    }
-    ```
-
-- Body
-
-    ```json
-    {
-        "documentId": "document_id"
-    }
-    ```
-
-- Response
-  - 401: No authorization provided.
-  - 200: File deleted successfully.
-
-    ```json
-    {
-        "status": "bool"
-    }
-    ```
-
----
-
-#### Get File
-
-- Method: `GET`
-- URL: `/data/get/file/<_id>`
-- Path Parameters
-
-    ```json
-    {
-        "_id": "document_id"
-    }
-    ```
-
-- Header
-
-    ```json
-    {
-        "authorization": "---authorization---jwt---"
-    }
-    ```
-
-- Response
-  - 401: No authorization provided.
-  - 200: Retrieved file successfully.
-
-    ```json
-    {
-        "document_ids": ["list", "string", "bytes"]
-    }
-    ```
-
-  - 404: File not found.
-
-    ```json
-    {
-        "document_ids": []
-    }
-    ```
-
-  - 206: Partial content retrieved.
-
-    ```json
-    {
-        "document_ids": ["list", "string", "bytes"]
-    }
-    ```
-
---
-
-### Core Routes
-
-This module defines Flask routes for the 'core' functionality of the WannaDB UI. It handles document bases and nuggets, as those are the central components of WannaDB.
-
-- [Create Document Base](#create-document-base)
-- [Load Document Base](#load-document-base)
-- [Interactive Document Population](#interactive-document-population)
-- [Add Attributes to Document Base](#add-attributes-to-document-base)
-- [Update Attributes of Document Base](#update-attributes-of-document-base)
-- [Sort Nuggets](#sort-nuggets)
-- [Confirm Custom Nugget](#confirm-custom-nugget)
-- [Confirm Match Nugget](#confirm-match-nugget)
-- [Get Document Base for Organization](#get-document-base-for-organization)
-
----
-
-#### Create Document Base
-
-- Method: `POST`
-- URL: `/core/document_base`
-- Form
-  - `authorization`: Your authorization token.
-  - `organisationId`: Your organization ID.
-  - `baseName`: Your document base name.
-  - `document_ids`: Comma-separated list of document IDs.
-  - `attributes`: Comma-separated list of attributes.
-- Response
-  - 401: No authorization provided.
-  - 200: Document base created successfully.
-
-    ```json
-    {"task_id": "task_id"}
-    ```
-
----
-
-#### Load Document Base
-
-- Method: `POST`
-- URL: `/core/document_base/load`
-- Form
-  - `authorization`: Your authorization token.
-  - `organisationId`: Your organization ID.
-  - `baseName`: Your document base name.
-- Response
-  - 401: No authorization provided.
-  - 200: Document base loaded successfully.
-
-    ```json
-    {"task_id": "task_id"}
-    ```
-
----
-
-#### Interactive Document Population
-
-- Method: `POST`
-- URL: `/core/document_base/interactive`
-- Form
-  - `authorization`: Your authorization token.
-  - `organisationId`: Your organization ID.
-  - `baseName`: Your document base name.
-- Response
-  - 401: No authorization provided.
-  - 200: Document base populated interactively.
-
-    ```json
-    {"task_id": "task_id"}
-    ```
-
----
-
-#### Add Attributes to Document Base
-
-- Method: `POST`
-- URL: `/core/document_base/attributes/add`
-- Form
-  - `authorization`: Your authorization token.
-  - `organisationId`: Your organization ID.
-  - `baseName`: Your document base name.
-  - `attributes`: Comma-separated list of attributes.
-- Response
-  - 401: No authorization provided.
-  - 200: Attributes added to document base successfully.
-
-    ```json
-    {"task_id": "task_id"}
-    ```
-
----
-
-#### Update Attributes of Document Base
-
-- Method: `POST`
-- URL: `/core/document_base/attributes/update`
-- Form
-  - `authorization`: Your authorization token.
-  - `organisationId`: Your organization ID.
-  - `baseName`: Your document base name.
-  - `attributes`: Comma-separated list of attributes.
-- Response
-  - 401: No authorization provided.
-  - 200: Attributes updated successfully.
-
-    ```json
-    {"task_id": "task_id"}
-    ```
-
----
-
-#### Sort Nuggets
-
-- Method: `POST`
-- URL: `/core/document_base/order/nugget`
-- Form
-  - `authorization`: Your authorization token.
-  - `organisationId`: Your organization ID.
-  - `baseName`: Your document base name.
-  - `documentName`: Your document name.
-  - `documentContent`: Your document content.
-- Response
-  - 401: No authorization provided.
-  - 200: Nuggets sorted successfully.
-
-    ```json
-    {"task_id": "task_id"}
-    ```
-
----
-
-#### Confirm Custom Nugget
-
-- Method: `POST`
-- URL: `/core/document_base/confirm/nugget/custom`
-- Form
-  - `authorization`: Your authorization token.
-  - `organisationId`: Your organization ID.
-  - `baseName`: Your document base name.
-  - `documentName`: Your document name.
-  - `documentContent`: Your document content.
-  - `nuggetText`: Nugget as text.
-  - `startIndex`: Start index of the nugget.
-  - `endIndex`: End index of the nugget.
-  - `interactiveCallTaskId`: Interactive call task ID.
-- Response
-  - 401: No authorization provided.
-  - 200: Nugget confirmed successfully.
-
-    ```json
-    {"task_id": "task_id"}
-    ```
-
----
-
-#### Confirm Match Nugget
-
-- Method: `POST`
-- URL: `/core/document_base/confirm/nugget/match`
-- Form
-  - `authorization`: Your authorization token.
-  - `organisationId`: Your organization ID.
-  - `baseName`: Your document base name.
-  - `documentName`: Your document name.
-  - `documentContent`: Your document content.
-  - `nuggetText`: Nugget as text.
-  - `startIndex`: Start index of the nugget.
-  - `endIndex`: End index of the nugget.
-  - `interactiveCallTaskId`: Interactive call task ID.
-- Response
-  - 401: No authorization provided.
-  - 200: Nugget confirmed successfully.
-
-    ```json
-    {"task_id": "task_id"}
-    ```
-
-#### Confirm Multi Match
-
-- Method: `POST`
-- URL: `/core/document_base/confirm/nugget/multi_match`
-- Form
-  - `authorization`: Your authorization token.
-  - `organisationId`: Your organization ID.
-  - `baseName`: Your document base name.
-  - `matches`: List of matches each containing:
-    - `documentName`: Your document name.
-    - `documentContent`: Your document content.
-    - `nuggetText`: Nugget as text.
-    - `startIndex`: Start index of the nugget.
-    - `endIndex`: End index of the nugget.
-  - `interactiveCallTaskId`: Interactive call task ID.
-- Response
-  - 401: No authorization provided.
-  - 200: Nugget confirmed successfully.
-
-    ```json
-    {"task_id": "task_id"}
-    ```
+# WannaDBWeb API
+
+The browser uses the Next.js `/api/backend/<path>` proxy. The proxy checks the NextAuth session and forwards a backend Bearer token from server-side storage. It requires the configured frontend origin for write requests. Sign in through NextAuth in the browser. Direct Flask API clients on a private connection use `POST /login` to obtain a token and send `Authorization: Bearer <token>`. Use JSON for request bodies unless noted.
+
+Responses are scoped to the current user and organization. Treat `401` as a sign-in or credential failure, `403` as denied access, and `404` as a missing or unavailable resource. `409` means the request conflicts with current state. Reload before repeating an edit with a new version. `429` means the queue or a rate limit is full. Use `Retry-After` when present. `503` indicates a temporary dependency or publication failure. Keep the `X-Request-ID` from errors for log correlation.
+
+## Health and accounts
+
+| Method and path | Request and response |
+| --- | --- |
+| `GET /health/live` or `GET /` | Process status. Does not require authentication. |
+| `GET /health/ready` | PostgreSQL migration and Redis checks. Returns `200` when ready and `503` otherwise. |
+| `POST /register` | `username` and `password`. Returns `201`, `409` with `USERNAME_TAKEN` for a duplicate, or `429` when throttled. |
+| `POST /login` | `username` and `password`. Returns `200` with a private `token`, `401` for invalid credentials, or `429` when throttled. |
+| `DELETE /deleteUser` | Current `username` and `password`. Returns `204`. |
+
+## Organizations
+
+| Method and path | Request and response |
+| --- | --- |
+| `GET /getOrganisationNames` | `organisations` for the authenticated user. |
+| `GET /getOrganisationName/<orgId>` | `organisation_name` for a member. |
+| `GET /getOrganisationMembers/<orgId>` | `members`, `isOwner`, `canManageOwnership`, and `canInvite`. |
+| `POST /createOrganisation` | `organisationName`, returns `organisation_id`. |
+| `GET /get/user/suggestion?organisationId=…&prefix=…` | Suggested `usernames` for authorized management. |
+| `POST /addUserToOrganisation` | `organisationId` and `newUser`. |
+| `DELETE /removeUserFromOrganisation` | `organisationId` and `userToRemove`. The backend checks management access and role rules. |
+| `DELETE /leaveOrganisation` | `organisationId`. An owner must transfer ownership or delete the organization where applicable. |
+| `POST /transferOrganisationOwnership` | `organisationId` and `newOwner`. |
+| `DELETE /deleteOrganisation` | `organisationId` and `confirmDelete: true`. Deletes the organization and its data. |
+
+## Files and document bases
+
+Convenience names in the URL or body are case-sensitive. Prefer stable numeric IDs for routes. Existing scoped operations also take `baseName`. Where supported, include `baseId` so the server can reject a stale name-to-ID mapping.
+
+| Method and path | Request and response |
+| --- | --- |
+| `POST /data/upload/file` | Multipart `organisationId` and one or more parts named `file` containing UTF-8 text. For a new base, omit `baseName` and `baseId`. The response is an array of document IDs and per-file errors, with `201` for success, `207` for mixed results, or `400` for all failures. For an existing base include its name and ID, then poll the `taskId` returned with `202`. Check `errors` for any files skipped. |
+| `GET /data/organization/get/files/<orgId>` | Files available to an organization member. |
+| `GET /data/organization/get/documentbase/<orgId>` | Document bases available to an organization member. |
+| `POST /core/document_base` | `organisationId`, `baseName`, `document_ids` as a list of distinct IDs from the upload, and `attributes` as a list of names. Returns `202` with `task_id`. On success, status includes the new `base_id`. |
+| `GET /core/document_base/by-id/<orgId>/<baseId>` | Base reference with `id`, `name` and `attributeIds`. |
+| `GET /core/document_base/resolve/<orgId>?name=…` | Same reference, resolved by exact name. |
+| `DELETE /core/document_base/by-id/<orgId>/<baseId>` | Deletes the scoped base, subject to role checks. |
+| `POST /core/document_base/load` | `organisationId`, `baseName` and optional `baseId`. Returns `task_id` to read a catalog or document through status. |
+| `PUT /data/update/file/content` | `organisationId`, `baseName`, `baseId`, `documentId`, `newContent` and `expectedContent` to guard against concurrent edits. Returns `202` with `taskId`. |
+| `DELETE /data/file/delete` | `organisationId`, `baseName`, `baseId` and `documentId` for a document in a base. Returns `202` with `taskId`. |
+| `GET /core/document_base/feedback/overview?organisationId=…&baseName=…` | Attribute progress, IDs and current `attributeVersion`. No task is started. |
+| `POST /core/document_base/attributes/update` | `organisationId`, `baseName`, `baseId`, `expectedVersion` and `operations`. Operations are `{"op":"add","name":"City"}`, `{"op":"rename","id":"…","name":"Place"}`, or `{"op":"remove","id":"…"}`. Returns `202` with `task_id`. |
+
+## Tasks and SQL query results
+
+A response of `202` acknowledges a submission. Poll `GET /core/status/<task_id>?summary=1&feedback=0` with backoff. This is a scoped read. Task status includes `state`, `meta`, a publication in `session`, and `command` when applicable. `QUEUED` means work has been admitted, `STARTED` means processing or an active interactive session, and `SUCCESS` means the task completed. Terminal faults can return HTTP `500` with states such as `FAILURE`, `EXPIRED`, or `REVOKED`, plus `meta.error` when available. A browser timeout only ends the wait.
+
+| Status view | Content |
+| --- | --- |
+| `view=catalog` | Attribute counts and document IDs/names without text. |
+| `view=document&documentId=…` | One document. `documentName` is available for legacy references. |
+| `view=review&offset=…` | Current ranked candidates and a page of up to eight manual-review documents. |
+| `view=table&offset=…` | Up to 50 rows and metadata including `columns`, `totalRows` and `truncated`. |
+| `view=table-export` | All retained rows from the same query. |
+
+Post `organisationId`, `baseName`, `baseId`, and `sqlQuery` to `/core/document_base/query`. For example, `select City where City is not null` is a read-only query against the documents table. The backend bounds result size. `truncated` indicates that only the retained rows can be downloaded. Query results expire after an hour, so rerun an expired query.
+
+## Interactive feedback
+
+1. Post `organisationId`, `baseName` and `baseId` to `/core/document_base/interactive`. Use the returned `task_id` as `sessionId`. Read it with `feedbackSession=1`, `organisationId` and `baseName` on the status URL. The parent publication moves from `loading` to `selection`.
+2. In `selection`, post `attribute` and `doAttribute` to `/core/document_base/do_current_attribute` along with the command fields below and the base scope. Use `doAttribute: true` to start ranking, or `false` to skip the waiting attribute. `reset: true` with `doAttribute: true` repopulates it. The session moves through `processing`, then publishes a new version in `ranking`, `selection`, or `finished`.
+3. In `ranking`, use a match, custom span, batch submission, or no-match decision. Poll the command's returned task ID. A command is confirmed when `command.state` is `published` and the session version reaches `command.published_version`. The Celery state alone is insufficient. A conflict may be published for review without accepting the proposed change. The UI can keep the saved decision or explicitly replace it.
+4. Close a session through `/core/document_base/feedback/stop`. `finished` represents a closed publication. A failed or expired session can be reopened from the base with its saved matches.
+
+Every command below is a JSON POST under `/core/document_base` and carries `sessionId` (UUID), `expectedVersion` (the last published version), and a fresh `commandId` (UUID) for each new decision. Single-document and batch match requests include `organisationId` and `baseName` as scope.
+
+| Path suffix | Additional fields |
+| --- | --- |
+| `/do_current_attribute` | `organisationId`, `baseName`, `attribute`, `doAttribute` and optional `reset`. |
+| `/confirm/nugget/match` or `/confirm/nugget/custom` | `documentName`, `documentContent`, `nuggetText`, `startIndex` and `endIndex`. Optional negative span fields are `noMatchText`, `noMatchStartIndex`, and `noMatchEndIndex`. |
+| `/confirm/nugget/multiple` | `nuggets` list, one per document, each with `documentName`, `documentContent`, `text`, `startIndex` and `endIndex`. |
+| `/confirm/nugget/none` | `documentName`, `documentContent` and the span fields. For a whole-document no match, use empty `nuggetText` and both offsets zero. |
+| `/reload` | Optional `conflictResolution`, either `keep` or `replace` when resolving a conflict. |
+| `/feedback/stop` | Command fields alone. |
+
+Offsets count Unicode code points and use an exclusive end. Text fields must match the selected span of the current stored document exactly.
+
+If a reply is lost, poll by the original command ID before retrying. For an exact replay, reuse the same command ID, expected version, and payload. Changed data or a new decision requires a new command ID after checking the live version. If a saved receipt is recovered from PostgreSQL, `command.recovered` is true and the result confirms the saved decision. Reopen the base to continue because the live publication is unavailable. If there is no saved outcome and the session is gone, reopen the base and inspect current state before sending another decision.
+
+## Member document feedback
+
+The historical path name `public` refers to votes shared with the organization. Both routes require membership.
+
+- `POST /core/document_base/feedback/public/get` takes `organisationId`, `baseId`, and `documentId`. It returns `feedback` keyed by attribute name.
+- `POST /core/document_base/feedback/public` also takes `attributeId`, `documentContent`, `isPositive`, and either the selected span or null `startIndex`, `endIndex`, and `nuggetText`. The response includes the updated `feedback` counts and `mine`. Repeating the current vote clears it. Selecting the opposite vote switches it.
+
+`POST /core/status/<task_id>` is retired and returns `410` to authenticated callers. The legacy `/core/document_base/order/nugget` route is outside the supported web workflow. The former development route inventory and debug endpoints are unavailable.

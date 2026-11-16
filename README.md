@@ -31,7 +31,7 @@ See [EXTRACTORS.md](EXTRACTORS.md) for more information on the interactive extra
 
 ## Installation
 
-This project requires Python 3.10 or newer.
+The steps below install the desktop and core components. The web deployment uses Python 3.11 and installs both dependency files in Docker.
 
 ##### 1. Create a virtual environment
 
@@ -45,7 +45,7 @@ export PYTHONPATH="."
 
 ```shell
 pip install --upgrade pip
-pip install --use-pep517 -r requirements.txt
+pip install --use-pep517 -r core-requirements.txt
 pip install --use-pep517 pytest
 ```
 
@@ -204,93 +204,100 @@ The diagram below illustrates the backend application’s Entity-Relationship Di
 
 ---
 
-## Start the Web-Backend Docker Build
+## Web backend deployment
 
-### Fresh installation
+The backend, compute worker, database, and Redis run on the same Linux Docker host as the frontend. Use Docker Engine 28 or later and the Compose plugin. The first build downloads Python dependencies and NLP models.
 
-Copy `deployment/production.env.example` to `wannadb_web/.env/.prod`, restrict the
-file to the deployment account, and fill in the credentials. Keep the existing database
-name, role, and backend signing secret when upgrading. The database role must own the
-existing WannaDB schema and be able to create objects in `public`.
+### Fresh production installation
 
-```shell
-docker compose --env-file wannadb_web/.env/.prod -f docker-compose-prod.yaml up -d --build
+From the backend checkout, create the production environment file once.
+
+```sh
+mkdir -p wannadb_web/.env
+(umask 077; cp -i deployment/production.env.example wannadb_web/.env/.prod)
+chmod 600 wannadb_web/.env/.prod
 ```
 
-The frontend is the entry point for browsers. Run it on the same host, set its
-`BACKEND_API_ORIGIN` to `http://127.0.0.1:8000`, and set `NEXTAUTH_URL` to the
-origin users actually open. For an SSH port forward that can be `http://localhost:3000`.
-For a public deployment, point the HTTPS reverse proxy at the frontend on port 3000.
-Production publishes the backend on loopback and keeps PostgreSQL and Redis on the
-Compose network. Use Docker Engine 28 or newer for loopback port isolation and expose
-only the HTTPS reverse proxy through the host firewall. The optional Flower profile
-stays on loopback and requires authentication.
+Fill in `DATABASE_NAME`, `DATABASE_USER`, `DATABASE_PASSWORD`, `CACHE_PASSWORD`, and `WANNA_DB_JWT_SECRET`. Use a separate secret for each password or key. Generate random hexadecimal values with `openssl rand -hex 32`. Compose requires a Redis password of at least 32 hexadecimal characters. The backend signing secret must be at least 32 UTF-8 bytes. On upgrades keep the database name, its owning role and password, and the existing backend signing secret. Set `FLOWER_BASIC_AUTH` to `username:password` only to enable Flower.
 
-The `migrate` job applies the PostgreSQL schema before the application services start.
-`/health/live` checks the web process. `/health/ready` checks the schema version and
-authenticated Redis access. Both return a short status without deployment details.
+In your deployment shell, define this helper and start the stack from the backend checkout. Use the same Compose file, environment file, project name, and volumes throughout operations.
 
-For development, run `docker compose up -d --build` with the development environment.
-
-### Upgrading and restoring a database
-
-1. Finish active jobs and feedback sessions, then stop `wannadb`, `worker`, and
-   `feedback-worker` with the Compose file used for the deployment.
-2. Back up PostgreSQL before an upgrade. To restore a backup, restore it to the configured
-   database before starting the application services.
-3. Remove the previous completed migration container with `docker compose rm -f migrate`,
-   then start with `up -d --build`. Use the same Compose file and project name for both
-   commands, including `--env-file wannadb_web/.env/.prod` for production. Keep the
-   existing `pgdata` volume. Check the migration log before resuming work.
-
-When switching an existing production database to a new password, first change the
-database role's password through PostgreSQL administration. Changing the Compose
-environment updates the client configuration and fresh database initialization.
-Redis uses the separate `CACHE_PASSWORD` and stores its append-only log in the
-`redisdata` volume. Drain work before the initial cutover, which starts with a new
-cache volume. Subsequent restarts use that volume. Committed matches and durable
-feedback receipts live in PostgreSQL.
-
-Migration `0001` creates the public WannaDB tables on a fresh volume. It also adopts
-the unversioned schema created by the previous setup, including installs that lack
-`documents.documentbaseid`, `document_bases.last_modified`, or `document_feedback`.
-Existing rows and IDs are kept. The migration checks the required columns and keys
-before recording the version. An incompatible schema or failed migration leaves the
-transaction rolled back and startup blocked.
-
-Migration `0002` keeps shared documents, snapshots, and feedback with the organization
-when their contributor's account is deleted. It retains attribution while the account exists.
-Migration `0003` adds a version and stable IDs for document-base attribute edits.
-Migration `0004` adds durable acknowledgements for feedback decisions saved to PostgreSQL.
-Migration `0005` adds expiring feedback checkpoints. The compute worker runs one step
-at a time and releases its slot whenever a session waits for input. Worker logs report
-queue wait and compute time separately.
-Migration `0006` keeps one public vote per user, document, and attribute.
-
-Jobs have up to `QUEUE_SECONDS` (900 seconds by default) to reach a worker. Starting
-a job replaces its queue deadline with a lease based on the worker's hard time limit.
-The compute queue accepts up to `MAX_COMPUTE_TASKS` waiting or running jobs across
-all users (32 by default) and up to `MAX_COMPUTE_TASKS_PER_USER` per user (8 by
-default). Waiting feedback sessions do not use a slot between steps.
-
-Run the same migration as a one-off operation with the application services stopped:
-
-```shell
-docker compose --env-file wannadb_web/.env/.prod -f docker-compose-prod.yaml build migrate
-docker compose --env-file wannadb_web/.env/.prod -f docker-compose-prod.yaml run --rm migrate
+```sh
+compose() { docker compose --env-file wannadb_web/.env/.prod -f docker-compose-prod.yaml "$@"; }
+compose up -d --build
+compose ps -a
+compose logs --tail=100 migrate
+curl -fsS http://127.0.0.1:8000/health/ready
 ```
 
-The job runs `python -m wannadb_web.postgres.migrate`. It serializes concurrent migration
-attempts and records each applied version and checksum in `public.wannadb_schema_migrations`.
-Repeating it against a migrated database is safe. Add a new versioned migration for
-future schema changes.
+A successful migration container exits with code 0. The web service and both workers wait for that result. `/health/live` checks the web process. `/health/ready` checks PostgreSQL's applied migration versions and Redis connectivity.
 
-For more information on the structure of the web server, click [here](https://github.com/lw86ruwo/wannadbBackend/blob/main/WEBSERVER_STRUCTURE.md).
+Start the [frontend](https://github.com/DataManagementLab/wannadbDemo) on the same host. For SSH use the forwarded frontend at `http://localhost:3000`. For public access terminate TLS at a reverse proxy that targets loopback port 3000 and set the frontend's `NEXTAUTH_URL` to the public HTTPS origin. The production backend listens on host loopback port 8000. PostgreSQL and Redis stay inside the Compose network. Flower is optional through the `monitoring` profile and requires authentication on loopback port 5555. Expose only the HTTPS reverse proxy publicly.
 
-To view the available routes and the structure of the web server, refer to the documentation [here](https://github.com/lw86ruwo/wannadbBackend/blob/main/ROUTES.md).
+### Local backend development
 
-To attach to the container and work within the Docker environment, use the `code` command.
+The development Compose file uses Flask debug and development database credentials. Run it on a trusted machine because it publishes backend port 8000 on all interfaces. Create `wannadb_web/.env/.dev` locally with mode 600 and the settings below. Replace the signing-secret placeholder with a fresh random value and keep this file out of version control.
 
-Please note that Git operations require the `gh` command to be installed and authenticated using `gh auth`. Once authenticated, you can work with Git as usual.
+```dotenv
+DATABASE_HOST=postgres
+DATABASE_PORT=5432
+DATABASE_NAME=userManagement
+DATABASE_USER=postgres
+DATABASE_PASSWORD=0
+CACHE_HOST=redis
+CACHE_PORT=6379
+CACHE_DB=0
+CELERY_BROKER_URL=redis://redis:6379/0
+CELERY_RESULT_BACKEND=redis://redis:6379/0
+WANNA_DB_JWT_SECRET=replace-with-a-unique-secret
+```
 
-Rebuild production images after source or dependency changes. The development services mount the checkout and need an image rebuild when dependencies change.
+Run `docker compose up -d --build` from the backend checkout. The development file mounts the checkout. Rebuild if dependencies change. If the mounted checkout needs additional desktop or experimental models, see `scripts/prepare_models.py` and `scripts/prepare_glove.py`. Use the production file for deployments where you rely on the model assets baked into the image.
+
+### Upgrade and back up
+
+Schedule downtime. Finish active jobs and close feedback sessions before stopping writers. The commands below assume the production `compose` helper above. For development define it as `compose() { docker compose "$@"; }`.
+
+```sh
+compose stop wannadb worker feedback-worker
+database=userManagement  # Set this to the current DATABASE_NAME.
+backup="wannadb-$(date -u +%Y%m%dT%H%M%SZ).dump"
+(umask 077; compose exec -T postgres sh -ec 'exec pg_dump -Fc -U "${POSTGRES_USER:-postgres}" -d "$1"' sh "$database" > "$backup")
+compose exec -T postgres pg_restore -l < "$backup" > /dev/null
+```
+
+Continue only when both backup commands succeed. Store the dump securely since it contains account and document data. Update the checkout, then rerun the migration job without replacing the database volume.
+
+```sh
+compose rm -f migrate
+compose up -d --build
+compose logs --tail=100 migrate
+compose ps -a
+curl -fsS http://127.0.0.1:8000/health/ready
+```
+
+If migration fails, review its log with the application stopped. Resolve the reported error before restarting. PostgreSQL applies each migration transactionally and tracks versions and checksums in `public.wannadb_schema_migrations`. Reapplying the same migration set is safe. Add new migration files for future schema changes instead of editing applied migrations.
+
+| Version | Change |
+| --- | --- |
+| 0001 | Creates a fresh web schema or adopts the supported unversioned schema while retaining existing rows and IDs. |
+| 0002 | Preserves shared organization data when a contributor deletes their account. |
+| 0003 | Adds stable attribute IDs and a versioned attribute schema. |
+| 0004 | Stores durable receipts for saved feedback commands. |
+| 0005 | Stores expiring feedback-session checkpoints. |
+| 0006 | Keeps one vote per user, document, and attribute. Migration removes opposing duplicates. |
+
+### Restore
+
+Keep the app and both workers stopped. Restore into a new database in the existing PostgreSQL service. The example expects `$backup` to point to the dump and uses the configured owning role. Choose an unused database name.
+
+```sh
+compose exec -T postgres sh -ec 'exec createdb -U "${POSTGRES_USER:-postgres}" wannadb_restore'
+compose exec -T postgres sh -ec 'exec pg_restore --exit-on-error --single-transaction -U "${POSTGRES_USER:-postgres}" -d wannadb_restore' < "$backup"
+```
+
+Verify the restored data before switching `DATABASE_NAME` to the restored database in the deployment environment. With the intended code version and environment, recreate the migration job and start the services using the upgrade sequence above. The old database remains available for recovery. PostgreSQL contains committed document data and feedback receipts. Use a fresh Redis cache before starting the app and workers so queued jobs and cached results from the old database cannot be used. Development can renew the Redis container’s anonymous volume. Production can attach a fresh named volume using a Compose override for the `redisdata` volume. Keep that override active for later deploys. Preserve the PostgreSQL volume.
+
+### Operate and troubleshoot
+
+See [Web backend structure](WEBSERVER_STRUCTURE.md) for queues, timings, and where to diagnose image warnings. See [Web API](ROUTES.md) for authentication, status polling, and feedback recovery. When rotating a database password on an existing volume, update the actual PostgreSQL role password and the Compose environment together. Updating Compose alone changes client settings and fresh database initialization.
