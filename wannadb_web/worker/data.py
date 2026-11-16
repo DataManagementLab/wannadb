@@ -11,6 +11,7 @@ from wannadb.data.data import DocumentBase, InformationNugget, Document, Attribu
 from wannadb.data.signals import BaseSignal
 from wannadb.statistics import Statistics
 from wannadb_web.Redis.RedisCache import RedisCache, SessionState, get_signal_scope
+from wannadb_web.worker.payload import compact_base, encode_base
 
 logger: logging.Logger = logging.getLogger(__name__)
 
@@ -363,24 +364,16 @@ class _Nuggets(Emitable):
 
 class _DocumentBaseToUi(Emitable):
 
-	@property
-	def msg(self) -> Optional[DocumentBase]:
-		msg = self.redis.get(self.type)
-		if msg is None:
-			return None
-		if isinstance(msg,bytes):
-			return pickle.loads(msg)
-		else:
-			raise TypeError("msg is not bytes")
-
 	def to_json(self):
-		msg = self.msg
-		if msg is None:
+		raw = self.redis.get(self.type)
+		if raw is None:
 			return {}
-		return convert_to_document_base(msg).to_json()
+		if raw.startswith(b"{"):
+			return json.loads(raw)
+		return compact_base(pickle.loads(raw))
 
-	def emit(self, status: DocumentBase):
-		self.redis.set(self.type, pickle.dumps(status))
+	def emit(self, status: DocumentBase, document_ids=None):
+		self.redis.set(self.type, encode_base(status, document_ids))
 
 
 class _Statistics(Emitable):
@@ -408,10 +401,12 @@ class _Feedback(Emitable):
 		self.redis.set(self.type, encode_feedback_request(status))
 
 
-def encode_feedback_request(status: dict[str, Any]):
+def encode_feedback_request(status: dict[str, Any], *, compact=False):
 	# Preserve the matcher-owned request; change annotations are desktop-only.
 	status = status.copy()
 	status.pop("nugget-updates-context", None)
+	if compact:
+		status.pop("all-guessed-nugget-matches", None)
 	nugget_ids = {}
 
 	def serialize_nugget(nugget):
@@ -419,7 +414,10 @@ def encode_feedback_request(status: dict[str, Any]):
 		if document_key not in nugget_ids:
 			nugget_ids[document_key] = {id(candidate): index
 				for index, candidate in enumerate(nugget.document.nuggets)}
-		return convert_to_nugget(nugget, nugget_ids[document_key].get(id(nugget))).to_json()
+		index = nugget_ids[document_key].get(id(nugget))
+		if compact and index is not None:
+			return {"document": {"name": nugget.document.name}, "id": index}
+		return convert_to_nugget(nugget, index).to_json()
 
 	for key, value in status.items():
 		if isinstance(value, Attribute):

@@ -235,21 +235,23 @@ class TaskAccess:
 	def activate(self, scope):
 		self._set("active", scope)
 
-	def permitted(self, scope):
-		from wannadb_web.postgres.queries import get_base_id, get_organisation_authorisation
+	def poll_access(self, scope):
+		from wannadb_web.postgres.queries import task_scope_access
 		if not isinstance(scope, dict):
-			return False
-		if get_organisation_authorisation(self.user_id, scope.get("organisation_id")) is None:
-			return False
-		if scope.get("creation") is True:
-			return scope.get("base_id") == 0 and scope.get("interactive") is False
-		base_id = get_base_id(scope.get("base_name"), scope.get("organisation_id"))
-		return base_id is not None and base_id == scope.get("base_id")
+			return False, False
+		if scope.get("creation") is True and (scope.get("base_id") != 0 or scope.get("interactive") is not False):
+			return False, False
+		return task_scope_access(self.user_id, scope)
+
+	def permitted(self, scope):
+		return self.poll_access(scope)[0]
 
 
 class SessionState:
 	"""Session publications and fenced command steps cached in Redis."""
 	TTL = 86400
+	COMMAND_TTL = 3600
+	TABLE_TTL = 3600
 	SIGNALS = ("feedback", "error", "status", "finished", "document_base_to_ui", "statistics_to_ui",
 		"feedback_request_to_ui", "cache_db_to_ui", "ordert_nuggets")
 
@@ -298,8 +300,13 @@ class SessionState:
 		value = self.redis.get(self._keys()[0])
 		return self._visible_publication(json.loads(value)) if value is not None else self._empty()
 
+	def _command_key(self, command_id):
+		return f"{self.prefix}:command:{command_id}"
+
 	def command(self, command_id):
-		value = self.redis.hget(self._keys()[5], command_id)
+		value = self.redis.get(self._command_key(command_id))
+		if value is None:
+			value = self.redis.hget(self._keys()[5], command_id)
 		if value is None:
 			return None
 		record = json.loads(value)
@@ -313,7 +320,7 @@ class SessionState:
 		script = r'''
 local command_id, expected_version, fingerprint, lease = ARGV[1], tonumber(ARGV[2]), ARGV[3], ARGV[4]
 local now = tonumber(redis.call('TIME')[1])
-local raw_command = redis.call('HGET', KEYS[6], command_id)
+local raw_command = redis.call('GET', KEYS[7]) or redis.call('HGET', KEYS[6], command_id)
 local existing = raw_command and cjson.decode(raw_command) or nil
 if existing then
  if existing.fingerprint ~= fingerprint or existing.expected_version ~= expected_version then
@@ -326,11 +333,14 @@ local publication = raw and cjson.decode(raw) or nil
 if publication and publication.phase=='processing' and publication.lease_until and publication.lease_until<=now then
  local expired_id = publication.processing_command
  if expired_id~=command_id then
-  local old = redis.call('HGET', KEYS[6], expired_id)
+  local expired_key = ARGV[10] .. expired_id
+  local old = redis.call('GET', expired_key) or redis.call('HGET', KEYS[6], expired_id)
   if old then
    local expired = cjson.decode(old)
    expired.state='rejected';expired.error='Feedback processing expired. Try the action again.'
-   redis.call('HSET',KEYS[6],expired_id,cjson.encode(expired))
+   expired.lease=nil;expired.lease_until=nil
+   redis.call('SET',expired_key,cjson.encode(expired),'EX',ARGV[9])
+   redis.call('HDEL',KEYS[6],expired_id)
   end
  end
  publication.phase=publication.waiting_phase
@@ -359,11 +369,15 @@ else
  redis.call('SET',KEYS[1],cjson.encode(publication),'EX',ARGV[6])
 end
 local encoded = cjson.encode(record)
-redis.call('HSET',KEYS[6],command_id,encoded);redis.call('EXPIRE',KEYS[6],ARGV[6])
+local retention = tonumber(ARGV[9])
+if record.state=='consumed' then retention=retention+tonumber(ARGV[5]) end
+redis.call('SET',KEYS[7],encoded,'EX',retention)
+redis.call('HDEL',KEYS[6],command_id)
 return encoded
 '''
-		return json.loads(self.redis.eval(script, 6, *self._keys(), command_id, expected_version,
-			fingerprint, lease, lease_seconds, self.TTL, payload["message"], payload.get("attribute", "")))
+		return json.loads(self.redis.eval(script, 7, *self._keys(), self._command_key(command_id), command_id,
+			expected_version, fingerprint, lease, lease_seconds, self.TTL, payload["message"],
+			payload.get("attribute", ""), self.COMMAND_TTL, self._command_key("")))
 
 	def fail_step(self, command_id, lease, error):
 		"""Release an uncommitted step's lease without closing the waiting session."""
@@ -373,18 +387,21 @@ local publication = cjson.decode(raw)
 if publication.phase~='processing' or publication.processing_command~=ARGV[1] or publication.lease~=ARGV[2] then
  return 0
 end
-local raw_command=redis.call('HGET',KEYS[6],ARGV[1])
+local raw_command=redis.call('GET',KEYS[7]) or redis.call('HGET',KEYS[6],ARGV[1])
 if raw_command then
  local record=cjson.decode(raw_command)
  record.state='rejected';record.error=ARGV[3]
- redis.call('HSET',KEYS[6],ARGV[1],cjson.encode(record));redis.call('EXPIRE',KEYS[6],ARGV[4])
+ record.lease=nil;record.lease_until=nil
+ redis.call('SET',KEYS[7],cjson.encode(record),'EX',ARGV[5])
+ redis.call('HDEL',KEYS[6],ARGV[1])
 end
 publication.phase=publication.waiting_phase
 publication.waiting_phase=nil;publication.lease=nil;publication.lease_until=nil;publication.processing_command=nil
 redis.call('SET',KEYS[1],cjson.encode(publication),'EX',ARGV[4])
 return 1
 '''
-		return bool(self.redis.eval(script, 6, *self._keys(), command_id, lease, error, self.TTL))
+		return bool(self.redis.eval(script, 7, *self._keys(), self._command_key(command_id),
+			command_id, lease, error, self.TTL, self.COMMAND_TTL))
 
 	def publish_step(self, version, phase, attribute, document, feedback, *, command_id=None, lease=None,
 			propagation_limited=False):
@@ -399,22 +416,26 @@ if command_id~='' then
  if publication.phase~='processing' or publication.processing_command~=command_id or publication.lease~=ARGV[5] then
   return 0
  end
- local raw_command=redis.call('HGET',KEYS[6],command_id)
+ local raw_command=redis.call('GET',KEYS[7]) or redis.call('HGET',KEYS[6],command_id)
  if not raw_command then return 0 end
  local record=cjson.decode(raw_command)
  record.state='published';record.published_version=version
  if ARGV[9]=='1' then record.propagation_limited=true end
- redis.call('HSET',KEYS[6],command_id,cjson.encode(record));redis.call('EXPIRE',KEYS[6],ARGV[8])
+ record.lease=nil;record.lease_until=nil
+ redis.call('SET',KEYS[7],cjson.encode(record),'EX',ARGV[10])
+ redis.call('HDEL',KEYS[6],command_id)
 elseif publication.phase~='loading' then return 0 end
 redis.call('SET',KEYS[4],ARGV[6],'EX',ARGV[8])
+redis.call('DEL',KEYS[2],KEYS[3])
 if ARGV[7]~='' then redis.call('SET',KEYS[5],ARGV[7],'EX',ARGV[8]) else redis.call('DEL',KEYS[5]) end
 publication={session_id=publication.session_id,version=version,phase=phase,
  attribute=cjson.decode(ARGV[3]),closed=phase=='finished',error=cjson.null}
 redis.call('SET',KEYS[1],cjson.encode(publication),'EX',ARGV[8])
 return 1
 '''
-		return bool(self.redis.eval(script, 6, *self._keys(), version, phase, json.dumps(attribute),
-			command_id or "", lease or "", document, feedback or "", self.TTL, int(propagation_limited)))
+		return bool(self.redis.eval(script, 7, *self._keys(), self._command_key(command_id or ""),
+			version, phase, json.dumps(attribute), command_id or "", lease or "", document, feedback or "",
+			self.TTL, int(propagation_limited), self.COMMAND_TTL))
 
 	def close(self, error=None):
 		"""Close a one-off task, promoting its staged payload on success."""
@@ -425,10 +446,13 @@ if prior.closed then return prior.version end
 local error_message = cjson.decode(ARGV[2])
 if error_message==cjson.null then
  for i=2,3 do
-  local payload=redis.call('GET',KEYS[i])
-  if payload then redis.call('SET',KEYS[i+2],payload,'EX',ARGV[3]) else redis.call('DEL',KEYS[i+2]) end
+  if redis.call('EXISTS',KEYS[i])==1 then
+   redis.call('RENAME',KEYS[i],KEYS[i+2])
+   redis.call('EXPIRE',KEYS[i+2],ARGV[3])
+  else redis.call('DEL',KEYS[i+2]) end
  end
 end
+redis.call('DEL',KEYS[2],KEYS[3])
 local publication = {session_id=ARGV[1],version=prior.version+1,
  phase=error_message==cjson.null and 'finished' or 'failed',
  attribute=cjson.null,closed=true,error=error_message}
@@ -436,6 +460,28 @@ redis.call('SET',KEYS[1],cjson.encode(publication),'EX',ARGV[3])
 return publication.version
 '''
 		return int(self.redis.eval(script, 6, *self._keys(), self.session_id, json.dumps(error), self.TTL))
+
+	def store_table_result(self, result):
+		rows = result["rows"]
+		meta = {"columns": result["columns"], "truncated": result["truncated"], "totalRows": len(rows)}
+		meta_key, rows_key = f"{self.prefix}:table-meta", f"{self.prefix}:table-rows"
+		with self.redis.pipeline() as pipe:
+			pipe.set(meta_key, json.dumps(meta), ex=self.TABLE_TTL)
+			pipe.delete(rows_key)
+			if rows:
+				pipe.rpush(rows_key, *(json.dumps(row) for row in rows))
+				pipe.expire(rows_key, self.TABLE_TTL)
+			pipe.execute()
+
+	def table_page(self, offset=0, size=None):
+		meta_key, rows_key = f"{self.prefix}:table-meta", f"{self.prefix}:table-rows"
+		with self.redis.pipeline() as pipe:
+			pipe.get(meta_key)
+			pipe.lrange(rows_key, offset, offset + size - 1 if size is not None else -1)
+			meta, rows = pipe.execute()
+		if meta is None:
+			return None
+		return dict(json.loads(meta), rows=[json.loads(row) for row in rows], offset=offset)
 
 	def snapshot(self, include_payload=True, include_feedback=True):
 		keys = self._keys()

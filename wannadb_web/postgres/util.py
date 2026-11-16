@@ -1,10 +1,12 @@
 import logging
 import os
+from threading import Lock
 
 import psycopg2
 from flask import g, has_request_context
 from psycopg2 import extensions, IntegrityError
 from psycopg2.sql import SQL
+from psycopg2.pool import PoolError, ThreadedConnectionPool
 
 logger = logging.getLogger(__name__)
 
@@ -60,21 +62,44 @@ def execute_transaction(query, params=None, commit=False, fetch=True):
 			conn.close()
 
 
+_pool_lock = Lock()
+_read_pool = None
+
+
+def _read_connection():
+	"""Reuse connections in the HTTP worker; background jobs use their own connection."""
+	global _read_pool
+	if not has_request_context():
+		return connectPG(), None
+	with _pool_lock:
+		if _read_pool is None:
+			_read_pool = ThreadedConnectionPool(1, 8, dbname=DB_NAME, user=DB_USER, password=DB_PASSWORD,
+				host=DB_HOST, port=DB_PORT, connect_timeout=5)
+		pool = _read_pool
+	try:
+		return pool.getconn(), pool
+	except PoolError:
+		# A full pool must not fail otherwise valid requests.
+		return connectPG(connect_timeout=5), None
+
+
 def execute_query(query: SQL, params=None):
 	"""Return rows, None for no rows, or False on failure."""
-	conn = None
-	cur = None
+	conn = pool = None
+	discard = False
 	try:
-		conn = connectPG()
+		conn, pool = _read_connection()
 		conn.set_isolation_level(extensions.ISOLATION_LEVEL_AUTOCOMMIT)
-		cur = conn.cursor()
-		cur.execute(query, params)
-		return cur.fetchall() or None
+		with conn.cursor() as cur:
+			cur.execute(query, params)
+			return cur.fetchall() or None
 	except Exception as error:
+		discard = isinstance(error, (psycopg2.InterfaceError, psycopg2.OperationalError))
 		_log_failure("query", error)
 		return False
 	finally:
-		if cur is not None:
-			cur.close()
 		if conn is not None:
-			conn.close()
+			if pool is not None:
+				pool.putconn(conn, close=discard)
+			else:
+				conn.close()

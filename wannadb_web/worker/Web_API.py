@@ -2,7 +2,6 @@ import csv
 import io
 import json
 import logging
-import pickle
 import time
 from typing import Optional, Any
 
@@ -27,13 +26,14 @@ from wannadb.statistics import Statistics
 from wannadb.status import StatusCallback
 from wannadb_web.SQLite.Cache_DB import SQLiteCacheDBWrapper
 from wannadb_web.postgres.queries import get_document_base_snapshot, get_document_by_name_and_content, compare_and_swap_document_content, \
-	get_document
+	get_document, get_document_ids_for_snapshot
 from wannadb_web.postgres.transactions import DocumentBaseCreationConflict, create_document_base_with_snapshot, mutate_base_documents
 from wannadb_web.limits import validate_attribute_count, validate_corpus
 from wannadb_web.Redis.RedisCache import SessionState, get_signal_scope
 from wannadb_web.postgres.feedback_sessions import FeedbackSessionConflict, FeedbackSnapshotConflict, load_session, save_session
 from wannadb_web.worker.custom_match_extraction import WebMatchPropagation
 from wannadb_web.worker.data import Signals, encode_feedback_request
+from wannadb_web.worker.payload import encode_base
 from wannadb_web.worker.feedback_reconciliation import (
 	clear_replaced_decisions, compact_proposal, compare_feedback, conflict_review, observe_documents, proposed_previews,
 )
@@ -105,7 +105,7 @@ class WannaDB_WebAPI:
 		if not isinstance(value, DocumentBase):
 			raise TypeError("Document base must be of type DocumentBase!")
 		self._document_base = value
-		self.signals.document_base_to_ui.emit(value)
+		self._stage_document_base(value)
 		return
 
 	def get_ordert_nuggets(self, document_id: int):
@@ -220,7 +220,7 @@ class WannaDB_WebAPI:
 
 			self._document_base = document_base
 			if publish_to_ui:
-				self.signals.document_base_to_ui.emit(document_base)
+				self._stage_document_base(document_base)
 			self.document_id = document_id
 			self._expected_bson = document
 		except Exception as error:
@@ -243,8 +243,15 @@ class WannaDB_WebAPI:
 		self._expected_bson = serialized
 		self.signals.status.emit("Changes saved.")
 
+	def _document_ids(self, base):
+		return get_document_ids_for_snapshot(self.session.base_id, self.organisation_id, self.user_id,
+			{document.name: document.text for document in base.documents})
+
+	def _stage_document_base(self, base):
+		self.signals.document_base_to_ui.emit(base, self._document_ids(base))
+
 	def complete_session(self):
-		self.signals.document_base_to_ui.emit(self.document_base)
+		self._stage_document_base(self.document_base)
 		self.session.close()
 
 	# todo: below not implemented yet
@@ -333,7 +340,7 @@ class WannaDB_WebAPI:
 					if attribute.name in document.attribute_mappings.keys():
 						del document.attribute_mappings[attribute.name]
 				self.signals.status.emit("Matches forgotten.")
-				self.signals.document_base_to_ui.emit(self.document_base)
+				self._stage_document_base(self.document_base)
 			else:
 				logger.error("Attribute name does not exist!")
 				self.signals.error.emit(Exception("Attribute name does not exist!"))
@@ -349,7 +356,7 @@ class WannaDB_WebAPI:
 		try:
 			for document in self.document_base.documents:
 				document.attribute_mappings.clear()
-			self.signals.document_base_to_ui.emit(self.document_base)
+			self._stage_document_base(self.document_base)
 			self.signals.finished.emit(1)
 		except Exception as error:
 			self._report_error("RESET_FAILED", error)
@@ -541,7 +548,8 @@ class WannaDB_WebAPI:
 		else:
 			phase = "selection" if "do-attribute-request" in request else "ranking"
 			attribute = request["attribute"].name
-			feedback_payload = encode_feedback_request(dict(request, identifier=identifier))
+			feedback_payload = encode_feedback_request(dict(request, identifier=identifier), compact=True)
+		document_payload = encode_base(self.document_base, self._document_ids(self.document_base))
 		serialized = self.document_base.to_bson()
 		canonical = self._expected_bson if current is None else current["snapshot"]
 		new_snapshot = serialized if write_snapshot and serialized != canonical else None
@@ -566,7 +574,7 @@ class WannaDB_WebAPI:
 		)
 		self.matching_step_saved = True
 		if not self.session.publish_step(
-			version, phase, attribute, pickle.dumps(self.document_base), feedback_payload,
+			version, phase, attribute, document_payload, feedback_payload,
 			command_id=command["command_id"] if command else None, lease=lease,
 			propagation_limited=propagation_limited,
 		):

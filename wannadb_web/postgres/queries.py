@@ -330,22 +330,39 @@ def get_document_base_data(base_name: str, organisation_id: int):
 
 
 def get_document_ids_for_snapshot(base_id: int, organisation_id: int, user_id: int, documents: dict[str, str]):
-	"""Find raw document IDs only where the scoped row still agrees with the published text."""
+	"""Resolve IDs once per publication without returning source text from PostgreSQL."""
 	if not documents:
 		return {}
-	query = sql.SQL("""SELECT d.id, d.name, d.content FROM documents d
-		WHERE d.documentbaseid = %s AND d.organisationid = %s AND d.name = ANY(%s) AND d.content IS NOT NULL
-		AND EXISTS (SELECT 1 FROM membership m WHERE m.userid = %s
-			AND m.organisationid = d.organisationid AND m.authorisation IN (0, 1, 10));""")
-	result = execute_query(query, (base_id, organisation_id, list(documents), user_id))
-	if result is False:
+	query = sql.SQL("""SELECT wanted.name, CASE WHEN count(*) = 1 THEN min(d.id) END
+		FROM unnest(%s::text[], %s::text[]) AS wanted(name, digest)
+		JOIN documents d ON d.documentbaseid = %s AND d.organisationid = %s AND d.name = wanted.name
+			AND d.content IS NOT NULL AND encode(sha256(convert_to(d.content, 'UTF8')), 'hex') = wanted.digest
+		WHERE EXISTS (SELECT 1 FROM membership m WHERE m.userid = %s
+			AND m.organisationid = d.organisationid AND m.authorisation IN (0, 1, 10))
+		GROUP BY wanted.name""")
+	rows = execute_query(query, (list(documents), [sha256(text.encode()).hexdigest() for text in documents.values()],
+		base_id, organisation_id, user_id))
+	if rows is False:
 		raise RuntimeError("Could not load document IDs for the base.")
-	matching_ids = {}
-	for document_id, name, content in result or ():
-		if documents[name] == content:
-			# Legacy duplicate rows have no unique ID for this snapshot document.
-			matching_ids[name] = None if name in matching_ids else document_id
-	return matching_ids
+	return dict(rows or ())
+
+
+def task_scope_access(user_id, scope):
+	"""Check live membership, base identity and any saved session in one statement."""
+	query = sql.SQL("""SELECT
+		EXISTS (SELECT 1 FROM membership m WHERE m.userid = %(user)s
+			AND m.organisationid = %(org)s AND m.authorisation IN (0, 1, 10))
+		AND (%(creation)s OR EXISTS (SELECT 1 FROM document_bases b
+			WHERE b.id = %(base)s AND b.organisation_id = %(org)s AND b.name = %(name)s)),
+		EXISTS (SELECT 1 FROM feedback_sessions s JOIN documents d ON d.id = s.snapshot_id
+			WHERE s.user_id = %(user)s AND s.base_id = %(base)s AND s.session_id = %(session)s
+			AND s.expires_at > clock_timestamp())""")
+	session_id = scope.get("session_id") if scope.get("interactive") and not scope.get("command_id") else None
+	rows = execute_query(query, {"user": user_id, "org": scope.get("organisation_id"), "base": scope.get("base_id"),
+		"name": scope.get("base_name"), "creation": scope.get("creation") is True, "session": session_id})
+	if rows is False:
+		raise FeedbackOutcomeUnavailable("Could not check task access.")
+	return tuple(rows[0])
 
 
 @deprecated

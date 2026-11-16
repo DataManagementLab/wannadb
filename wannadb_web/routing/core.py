@@ -45,6 +45,7 @@ from wannadb_web.SQLite.table_query import TableQueryError, validate_table_query
 from wannadb_web.limits import MAX_BASE_DOCUMENTS, QueueFullError, WorkLimitError, validate_attribute_count
 from wannadb_web.util import tokenDecode
 from wannadb_web.worker.data import Signals
+from wannadb_web.worker.payload import TABLE_PAGE_SIZE, legacy_payload, project_base
 
 from wannadb_web.worker.tasks import CreateDocumentBase, BaseTask, DocumentBaseConfirmMultipleNuggets, DocumentBaseConfirmNugget, DocumentBaseInteractiveTablePopulation, DocumentBaseLoad, DocumentBaseNoMatchForDocument, DocumentBaseStartRanking, DocumentBaseStopMatching, \
 	DocumentBaseUpdateAttributes, DocumentBaseGetOrderedNuggets, ReloadDocumentBaseTask
@@ -135,8 +136,10 @@ def authorize_core_request():
 			elif request.args.get("feedbackSession") == "1":
 				scope = load_session(token.id, view["task_id"])
 				g.feedback_publication_missing = scope is not None
-		elif not access.permitted(scope):
-			scope = None
+		else:
+			allowed, g.task_session_exists = access.poll_access(scope)
+			if not allowed:
+				scope = None
 		if scope is None or not scope.get("session_id"):
 			return make_response({"error": "task not found"}, 404)
 		if request.args.get("feedbackSession") == "1" and (
@@ -568,8 +571,21 @@ def _read_task_status(task_id, user_id, scope):
 		created_base_id = _positive_id(result.get("base_id")) if isinstance(result, dict) else None
 		if created_base_id is None or get_base_id(scope["base_name"], scope["organisation_id"]) != created_base_id:
 			return make_response({"error": "The created document base is no longer available."}, 404)
-	include_payload = request.args.get("summary") != "1"
-	include_feedback = request.args.get("feedback") != "0"
+	view = request.args.get("view")
+	if view not in (None, "full", "catalog", "document", "review", "table", "table-export"):
+		return make_response({"error": "Invalid task view."}, 400)
+	raw_offset = request.args.get("offset", "0")
+	if not raw_offset.isascii() or not raw_offset.isdecimal() or len(raw_offset) > 7:
+		return make_response({"error": "Invalid page offset."}, 400)
+	offset = int(raw_offset)
+	document_id = _positive_id(request.args.get("documentId"))
+	document_name = request.args.get("documentName")
+	if view == "document" and (("documentId" in request.args and document_id is None) or
+		(document_id is None and not document_name)):
+		return make_response({"error": "A document is required."}, 400)
+	full_response = request.args.get("summary") != "1"
+	include_payload = full_response and view not in ("table", "table-export")
+	include_feedback = request.args.get("feedback") != "0" and view in (None, "full", "review")
 	session = SessionState(user_id, scope["base_id"], scope["session_id"])
 	parent_status = BaseTask().AsyncResult(task_id=scope["session_id"]).status if scope.get("command_id") else None
 	parent_failed = parent_status in _TASK_FAILURE_STATES
@@ -578,16 +594,26 @@ def _read_task_status(task_id, user_id, scope):
 		include_payload=include_payload, include_feedback=include_feedback, snapshot=snapshot)
 	base = signals["document_base_to_ui"]
 	if base:
-		document_ids = get_document_ids_for_snapshot(scope["base_id"], scope["organisation_id"], user_id,
-			{document["name"]: document["text"] for document in base["documents"]})
+		if not base["ids_resolved"]:
+			document_ids = get_document_ids_for_snapshot(scope["base_id"], scope["organisation_id"], user_id,
+				{document["name"]: document["text"] for document in base["documents"]})
+			for document in base["documents"]:
+				document["id"] = document_ids.get(document["name"])
 		base.update(id=scope["base_id"], organization_id=scope["organisation_id"], name=scope["base_name"])
-		for document in base["documents"]:
-			document["id"] = document_ids.get(document["name"])
+		feedback = signals["feedback_request_to_ui"]
+		if view is None:
+			base, feedback = legacy_payload(base, feedback)
+		else:
+			base, feedback = project_base(base, feedback, view, offset=offset,
+				document_id=document_id, document_name=document_name)
+			if view == "document" and not base["documents"]:
+				return make_response({"error": "Document not found."}, 404)
+		signals.update(document_base_to_ui=base, feedback_request_to_ui=feedback)
 	publication = snapshot["publication"]
 	if scope.get("interactive") and not scope.get("command_id") and not publication["closed"]:
 		# A finished compute step can leave an interactive session waiting for input.
 		if publication["version"] > 0 and status in ("SUCCESS", "PENDING"):
-			if load_session(user_id, scope["session_id"]) is None:
+			if not g.task_session_exists:
 				return _lost_feedback_publication()
 			status = "STARTED"
 		elif publication["version"] == 0 and status == "SUCCESS":
@@ -599,8 +625,9 @@ def _read_task_status(task_id, user_id, scope):
 	live_processing = (status == "STARTED" and publication["phase"] == "processing" and
 		command is not None and command["state"] == "consumed")
 	if scope.get("command_id") and (parent_failed or status in _TASK_FAILURE_STATES or
-		signals.get("error") or not command or command["state"] == "rejected" or
-		(command["state"] == "consumed" and not live_processing)):
+		signals.get("error") or (command is None and status != "QUEUED") or
+		(command is not None and (command["state"] == "rejected" or
+			(command["state"] == "consumed" and not live_processing)))):
 		outcome = get_feedback_outcome(user_id, task_id)
 		if outcome is not None:
 			if parent_failed or publication["closed"] or (outcome["settled"] and not live_processing):
@@ -633,8 +660,22 @@ def _read_task_status(task_id, user_id, scope):
 	body = {"state": status, "meta": signals, "session": publication, "command": command}
 	if created_base_id is not None:
 		body["base_id"] = created_base_id
-	if scope.get("table_query") and status == "SUCCESS" and include_payload:
-		body["table_query"] = task.result.get("table_query") if isinstance(task.result, dict) else None
+	if scope.get("table_query") and status == "SUCCESS" and full_response:
+		paged = view == "table"
+		size = TABLE_PAGE_SIZE if paged else None
+		result = session.table_page(offset if paged else 0, size)
+		if result is None:
+			legacy = task.result
+			legacy = legacy.get("table_query") if isinstance(legacy, dict) else None
+			if legacy is not None:
+				rows = legacy["rows"]
+				result = dict(legacy, rows=rows[offset:offset + size] if paged else rows,
+					totalRows=len(rows), offset=offset if paged else 0)
+		if result is None and view in ("table", "table-export"):
+			return make_response({"error": "This query result expired. Run the query again."}, 404)
+		if result is not None:
+			result.update(taskId=task_id, pageSize=TABLE_PAGE_SIZE)
+		body["table_query"] = result
 	http_status = 200 if status == "SUCCESS" else 202
 	if status in _TASK_FAILURE_STATES:
 		body["state"] = "FAILURE" if status == "ERROR" else status

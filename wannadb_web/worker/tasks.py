@@ -342,13 +342,14 @@ class DocumentBaseLoad(BaseTask):
 	def run(self, user_id: int, base_name: str, organisation_id: int, include_automatic_matches=False, sql_query=None):
 		self.load()
 		api = WannaDB_WebAPI(user_id, base_name, organisation_id, build_query_cache=False)
-		api.load_document_base_from_bson(publish_to_ui=not (include_automatic_matches or sql_query is not None))
+		api.load_document_base_from_bson(publish_to_ui=False)
 		self.check_api_error(api)
 		if include_automatic_matches or sql_query is not None:
 			api.add_automatic_matches_for_preview()
 		if sql_query is not None:
 			try:
-				return {"table_query": query_document_table(api.document_base, sql_query)}
+				api.session.store_table_result(query_document_table(api.document_base, sql_query))
+				return {"ok": True}
 			except TableQueryError as error:
 				api.signals.error.emit(error)
 				raise
