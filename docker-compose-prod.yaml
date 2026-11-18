@@ -15,7 +15,7 @@ x-backend-env: &backend-env
 
 services:
   wannadb:
-    build: &web-build
+    build:
       context: .
       dockerfile: Dockerfile
       target: prod
@@ -43,7 +43,10 @@ services:
       - mynetwork
 
   migrate:
-    build: *web-build
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: migrate
     command: ["python", "-m", "wannadb_web.postgres.migrate"]
     environment: *backend-env
     env_file:
@@ -98,7 +101,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-      target: worker-prod
+      target: flower
     tty: true
     profiles: ["monitoring"]
     command:
@@ -106,7 +109,7 @@ services:
       - -ec
       - |
         : "$${FLOWER_BASIC_AUTH:?Set FLOWER_BASIC_AUTH to username:password}"
-        exec celery -A celery_app flower
+        exec celery flower
     environment:
       <<: *backend-env
       FLOWER_MAX_TASKS: "1000"

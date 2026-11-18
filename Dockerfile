@@ -1,3 +1,44 @@
+FROM python:3.11-slim-bookworm AS web-runtime
+
+ENV PYTHONUNBUFFERED=1
+ENV PYTHONDONTWRITEBYTECODE=1
+
+WORKDIR /home/wannadb
+
+COPY backend-requirements.txt /tmp/backend-requirements.txt
+
+FROM web-runtime AS postgres-runtime
+# PostgreSQL and Flask are shared by the API and migration runner.
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends gcc libc6-dev libpq-dev libpq5 \
+  && python -m pip install --no-cache-dir --no-binary=psycopg2 \
+    --constraint /tmp/backend-requirements.txt flask psycopg2 \
+  && apt-get purge -y --auto-remove gcc libc6-dev libpq-dev \
+  && rm -rf /var/lib/apt/lists/*
+
+FROM postgres-runtime AS migrate
+
+COPY wannadb_web/__init__.py ./wannadb_web/
+COPY wannadb_web/postgres/migrate.py wannadb_web/postgres/util.py ./wannadb_web/postgres/
+COPY wannadb_web/postgres/migrations/ ./wannadb_web/postgres/migrations/
+
+FROM postgres-runtime AS api
+
+# Match the worker's BSON and NumPy versions for document payload compatibility.
+RUN python -m pip install --no-cache-dir --constraint /tmp/backend-requirements.txt \
+    flask-cors gunicorn bcrypt PyJWT celery redis deprecated numpy==1.26.4 pymongo==4.8.0
+
+COPY app.py ./
+COPY wannadb/__init__.py wannadb/statistics.py wannadb/utils.py ./wannadb/
+COPY wannadb/data ./wannadb/data
+COPY wannadb_web ./wannadb_web
+
+FROM api AS dev
+CMD ["flask", "--app", "app", "--no-debug", "run", "--host", "0.0.0.0", "--port", "8000"]
+
+FROM web-runtime AS flower
+RUN python -m pip install --no-cache-dir --constraint /tmp/backend-requirements.txt celery flower redis
+
 FROM python:3.11-slim-bookworm AS build
 
 ENV PYTHONUNBUFFERED=1
@@ -61,9 +102,6 @@ RUN python /home/wannadb/scripts/prepare_glove.py
 
 FROM dev-models AS worker
 
-FROM dev-models AS dev
-CMD ["flask", "--app", "app", "--no-debug", "run", "--host", "0.0.0.0", "--port", "8000"]
-
 FROM build AS worker-prod
 
 # Seed the caches used by the web preprocessing and matching pipelines.
@@ -82,5 +120,5 @@ COPY wannadb_ui ./wannadb_ui
 COPY wannadb_web ./wannadb_web
 COPY tests ./tests
 
-FROM worker-prod AS prod
+FROM api AS prod
 CMD ["sh", "./wannadb_web/entrypoint.sh"]

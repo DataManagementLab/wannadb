@@ -4,9 +4,6 @@ import sqlite3
 import time
 from contextlib import closing
 
-from wannadb_parsql.cache_db import SQLiteCacheDB
-
-
 MAX_QUERY_BYTES = 8_192
 MAX_RESULT_ROWS = 1_000
 MAX_RESULT_BYTES = 2 * 1024 * 1024
@@ -135,6 +132,8 @@ def _read_results(cursor):
 
 
 def query_document_table(document_base, query):
+    from wannadb_parsql.cache_db import SQLiteCacheDB
+
     query = _with_document_source(validate_table_query(query))
 
     columns = _column_names(document_base.attributes)

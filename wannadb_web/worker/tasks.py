@@ -12,9 +12,7 @@ from celery import Task
 from celery.exceptions import Ignore, SoftTimeLimitExceeded, TaskPredicate, TimeLimitExceeded, WorkerLostError
 from celery.signals import task_failure, task_revoked
 
-import wannadb.resources
 from wannadb.data.data import Document, Attribute, InformationNugget
-from wannadb.resources import ResourceManager
 from wannadb.statistics import Statistics
 from wannadb_web.Redis.RedisCache import RedisCache, TaskAccess, TaskAdmission, SessionState, set_signal_scope, get_signal_scope
 from wannadb_web.SQLite.table_query import TableQueryError, query_document_table
@@ -25,7 +23,6 @@ from wannadb_web.limits import (
 from wannadb_web.postgres.attribute_schema import AttributeSchemaConflict, edit_attribute_schema
 from wannadb_web.postgres.feedback_sessions import FeedbackSessionConflict, extend_session_step, load_session
 from wannadb_web.postgres.queries import get_creation_documents, get_base_id, get_feedback_outcome
-from wannadb_web.worker.Web_API import WannaDB_WebAPI
 from wannadb_web.worker.data import DoAttributeRanking, MultiNuggetsMatchFeedback, ReloadDocumentBase, Signals, NoMatchFeedback, NuggetMatchFeedback, CustomMatchFeedback, SkipAttributeRanking, StopMatching
 from wannadb_web.worker.util import State
 
@@ -46,10 +43,12 @@ class InitManager(Task):
 	name = "InitManager"
 
 	def run(self, *args, **kwargs):
-		ResourceManager()
-		if wannadb.resources.MANAGER is None:
+		from wannadb import resources
+
+		resources.ResourceManager()
+		if resources.MANAGER is None:
 			raise RuntimeError("Resource_Manager is None!")
-		manager = pickle.dumps(wannadb.resources.MANAGER)
+		manager = pickle.dumps(resources.MANAGER)
 		RedisCache("0").set("manager", manager)
 
 
@@ -217,11 +216,20 @@ class BaseTask(Task):
 
 	@staticmethod
 	def load():
-		if wannadb.resources.MANAGER is None:
-			wannadb.resources.ResourceManager()
+		from wannadb import resources
+
+		if resources.MANAGER is None:
+			resources.ResourceManager()
 			BaseTask.load()
 			return
 		logger.debug("Worker resources ready.")
+
+	@staticmethod
+	def _create_api(user_id, base_name, organisation_id, **options):
+		# Task submission uses these same classes in the Flask API.
+		from wannadb_web.worker.Web_API import WannaDB_WebAPI
+
+		return WannaDB_WebAPI(user_id, base_name, organisation_id, **options)
 
 	def update(self,
 			   state: State,
@@ -326,7 +334,7 @@ class CreateDocumentBase(BaseTask):
 
 		try:
 			self.load()
-			api = WannaDB_WebAPI(user_id, base_name, organisation_id, build_query_cache=False)
+			api = self._create_api(user_id, base_name, organisation_id, build_query_cache=False)
 		except Exception:
 			signals.error.emit(RuntimeError("CREATE_FAILED"))
 			raise
@@ -341,7 +349,7 @@ class DocumentBaseLoad(BaseTask):
 
 	def run(self, user_id: int, base_name: str, organisation_id: int, include_automatic_matches=False, sql_query=None):
 		self.load()
-		api = WannaDB_WebAPI(user_id, base_name, organisation_id, build_query_cache=False)
+		api = self._create_api(user_id, base_name, organisation_id, build_query_cache=False)
 		api.load_document_base_from_bson(publish_to_ui=False)
 		self.check_api_error(api)
 		if include_automatic_matches or sql_query is not None:
@@ -361,7 +369,7 @@ class DocumentBaseAddDocument(BaseTask):
 
 	def run(self, user_id: int, documents: list[list[str]], base_name: str, organisation_id: int):
 		self.load()
-		api = WannaDB_WebAPI(user_id, base_name, organisation_id, build_query_cache=False)
+		api = self._create_api(user_id, base_name, organisation_id, build_query_cache=False)
 		api.mutate_documents(additions=[Document(name, content) for name, content in documents])
 		return self.finish(api)
 
@@ -371,7 +379,7 @@ class DocumentBaseRemoveDocument(BaseTask):
 
 	def run(self, user_id: int, document_name: str, base_name: str, organisation_id: int, document_id: int):
 		self.load()
-		api = WannaDB_WebAPI(user_id, base_name, organisation_id, build_query_cache=False)
+		api = self._create_api(user_id, base_name, organisation_id, build_query_cache=False)
 		api.mutate_documents(removal=(document_id, document_name))
 		return self.finish(api)
 
@@ -382,7 +390,7 @@ class DocumentBaseUpdateDocument(BaseTask):
 	def run(self, user_id: int, document_name: str, document_content: str, base_name: str, organisation_id: int,
 			document_id: int, old_content: str):
 		self.load()
-		api = WannaDB_WebAPI(user_id, base_name, organisation_id, build_query_cache=False)
+		api = self._create_api(user_id, base_name, organisation_id, build_query_cache=False)
 		api.mutate_documents(replacement=(document_id, old_content, Document(document_name, document_content)))
 		return self.finish(api)
 
@@ -419,7 +427,7 @@ class DocumentBaseForgetMatches(BaseTask):
 				raise Exception("Attribute names must be unique!")
 			attributes.append(Attribute(attribute_string))
 
-		api = WannaDB_WebAPI(user_id, base_name, organisation_id)
+		api = self._create_api(user_id, base_name, organisation_id)
 		api.load_document_base_from_bson()
 		self.check_api_error(api)
 		api.forget_matches()
@@ -434,7 +442,7 @@ class DocumentBaseForgetMatchesForAttribute(BaseTask):
 
 		attribute = (Attribute(attribute_string))
 
-		api = WannaDB_WebAPI(user_id, base_name, organisation_id)
+		api = self._create_api(user_id, base_name, organisation_id)
 		api.load_document_base_from_bson()
 		self.check_api_error(api)
 		api.forget_matches_for_attribute(attribute)
@@ -447,7 +455,7 @@ class DocumentBaseInteractiveTablePopulation(BaseTask):
 
 	def run(self, user_id: int, base_name: str, organisation_id: int):
 		self.load()
-		api = WannaDB_WebAPI(user_id, base_name, organisation_id, build_query_cache=False)
+		api = self._create_api(user_id, base_name, organisation_id, build_query_cache=False)
 		api.load_document_base_from_bson(publish_to_ui=False)
 		self.check_api_error(api)
 		self.update(State.STARTED)
@@ -520,7 +528,7 @@ class FeedbackTask(BaseTask):
 				raise FeedbackSessionConflict("Feedback has changed or the session expired. Reopen the attribute.")
 			self.update(State.STARTED)
 			self.load()
-			api = WannaDB_WebAPI(user_id, scope["base_name"], scope["organisation_id"], build_query_cache=False)
+			api = self._create_api(user_id, scope["base_name"], scope["organisation_id"], build_query_cache=False)
 			api.advance_interactive_table_population(current, scope, payload, lease)
 		except Exception as error:
 			if api is None or not api.matching_step_saved:

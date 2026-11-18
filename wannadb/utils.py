@@ -3,9 +3,12 @@ Utility class providing common functionality.
 """
 
 import math
+from typing import TYPE_CHECKING
 
 import numpy as np
-from PyQt6.QtGui import QColor
+
+if TYPE_CHECKING:
+    from PyQt6.QtGui import QColor
 
 
 def get_possible_duplicate(nugget_to_check, nugget_list):
@@ -61,7 +64,7 @@ class AccessibleColor:
     suffering from color blindness.
     """
 
-    def __init__(self, color: QColor, corresponding_accessible_color: QColor):
+    def __init__(self, color: "QColor", corresponding_accessible_color: "QColor"):
         """
         Parameters
         ----------

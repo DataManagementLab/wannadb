@@ -1,7 +1,7 @@
 version: '3.6'
 services:
     wannadb:
-        build: &web-build
+        build:
             context: .
             dockerfile: Dockerfile
             target: dev
@@ -25,7 +25,10 @@ services:
             - mynetwork
 
     migrate:
-        build: *web-build
+        build:
+            context: .
+            dockerfile: Dockerfile
+            target: migrate
         command: ["python", "-m", "wannadb_web.postgres.migrate"]
         env_file:
             - wannadb_web/.env/.dev
@@ -83,13 +86,11 @@ services:
         build:
             context: .
             dockerfile: Dockerfile
-            target: worker
+            target: flower
         tty: true
-        command: ['celery', '-A', 'celery_app', 'flower']
+        command: ['celery', 'flower']
         env_file:
             - wannadb_web/.env/.dev
-        volumes:
-            - ./:/home/wannadb
         networks:
             - mynetwork
         ports:
