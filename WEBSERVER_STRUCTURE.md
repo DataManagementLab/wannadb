@@ -6,7 +6,8 @@ See [deployment and database recovery](README.md#web-backend-deployment) and the
 | --- | --- |
 | Next.js | Browser UI, NextAuth, and a same-origin proxy. Server-rendered pages also call Flask directly over the private backend connection. |
 | Flask web service | `app.py` registers the organization/account, file, and core blueprints. Requests carry a correlation ID. PostgreSQL membership and task scope determine access. |
-| Compute worker | Processes document creation and mutations, loads bases, runs read-only SQL previews, and advances interactive feedback a step at a time. |
+| Compute worker | Processes document creation and mutations, loads bases, and runs read-only SQL previews. |
+| Feedback worker | Opens interactive sessions and advances feedback one step at a time. |
 | PostgreSQL | Authoritative source documents, saved BSON snapshots, attribute metadata, votes, checkpoints, and durable receipts for committed feedback. |
 | Redis | Celery broker/results, admissions, and temporary task, feedback, and SQL publications. |
 | SQLite | In-memory read-only SQL query projection inside the worker. |
@@ -14,9 +15,9 @@ See [deployment and database recovery](README.md#web-backend-deployment) and the
 
 ## Queue ownership
 
-The `worker` service consumes the `celery` queue, including interactive feedback commands. It releases its slot when a session waits for input. Separate users can have open sessions on the same base. The `feedback-worker` service listens on the legacy `feedback` queue. Its presence in Flower does not mean current review commands run there.
+The `worker` service consumes the `celery` queue for general document-base work. The `feedback-worker` service consumes the `feedback` queue for opening interactive sessions and applying feedback commands. It releases its slot when a session waits for input. Separate users can have open sessions on the same base.
 
-Tasks have independent queue and execution deadlines. `QUEUE_SECONDS` defaults to 900. The compute queue defaults to 32 waiting or running tasks and 8 per user, controlled by `MAX_COMPUTE_TASKS` and `MAX_COMPUTE_TASKS_PER_USER`. Interactive sessions waiting for user input do not consume a compute slot. Do not change queue routing by restarting a consumer on a different queue while jobs are in flight.
+Tasks have independent queue and execution deadlines. `QUEUE_SECONDS` defaults to 900. Both queues share an admission limit of 32 waiting or running tasks and 8 per user by default, controlled by `MAX_COMPUTE_TASKS` and `MAX_COMPUTE_TASKS_PER_USER`. Interactive sessions waiting for user input do not consume a compute slot. Do not change queue routing by restarting a consumer on a different queue while jobs are in flight.
 
 ## Artifacts
 
@@ -27,6 +28,6 @@ A Redis or worker failure can interrupt an active publication. The command ID ca
 ## Diagnose delays and image warnings
 
 - Use the browser Network panel to separate upload, request submission, status polling, and rendering. The browser uses the frontend origin for all of those requests.
-- Check the API error's `X-Request-ID` and the task or command UUID separately. In worker logs, `queue_wait_seconds` is time before claim and `compute_seconds` is time spent running. A queue wait calls for checking the `celery` consumer and admission limits.
+- Check the API error's `X-Request-ID` and the task or command UUID separately. In worker logs, `queue_wait_seconds` is time before claim and `compute_seconds` is time spent running. For a queue wait, check the worker for that task’s queue and the shared admission limits.
 - Check `/health/ready` and the migration log before diagnosing task submissions. An expired or cancelled task has a status distinct from waiting on the queue.
 - For a SIMD message such as `CPU supports … software requires …`, identify the emitting service and whether it occurred at build, startup, or request time. Capture guest CPU flags, runtime architecture, and Sharp/libvips versions if the frontend optimizer is involved. The navigation logo is served as a static PNG, and the deployed image optimizer is disabled. An image warning alone does not identify a matching or preprocessing slowdown.

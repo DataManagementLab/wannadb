@@ -63,7 +63,7 @@ services:
       dockerfile: Dockerfile
       target: worker-prod
     tty: true
-    command: ["celery", "-A", "celery_app", "worker", "-l", "info", "--concurrency=1", "-Q", "celery"]
+    command: ["python", "-m", "celery", "-A", "celery_app", "worker", "-l", "info", "--concurrency=1", "-Q", "celery"]
     environment: *backend-env
     env_file:
       - ${WANNA_PROD_ENV_FILE:-wannadb_web/.env/.prod}
@@ -83,7 +83,7 @@ services:
       dockerfile: Dockerfile
       target: worker-prod
     tty: true
-    command: ["celery", "-A", "celery_app", "worker", "-l", "info", "--concurrency=1", "--prefetch-multiplier=1", "-Q", "feedback"]
+    command: ["python", "-m", "celery", "-A", "celery_app", "worker", "-l", "info", "--concurrency=1", "--prefetch-multiplier=1", "-Q", "feedback"]
     environment: *backend-env
     env_file:
       - ${WANNA_PROD_ENV_FILE:-wannadb_web/.env/.prod}

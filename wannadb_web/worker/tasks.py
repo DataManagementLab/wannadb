@@ -29,6 +29,7 @@ from wannadb_web.worker.util import State
 logger = logging.getLogger(__name__)
 
 _ADMISSION_HEADER = "wannadb_admission"
+_FEEDBACK_QUEUE = "feedback"
 
 
 def _task_user_id(args, kwargs):
@@ -90,6 +91,9 @@ class BaseTask(Task):
 			if not isinstance(self, FeedbackTask):
 				self._signals.error.emit(error)
 			raise RuntimeError("WORK_LIMIT") from None
+		except ModuleNotFoundError as error:
+			logger.error("Worker module not found. task=%s module=%r", self.name, error.name)
+			raise RuntimeError("TASK_FAILED") from None
 		except Exception as error:
 			# Celery records the raised exception and traceback. Keep library/SQL messages private.
 			logger.error("Task failed. task=%s error_type=%s", self.name, type(error).__name__)
@@ -139,6 +143,7 @@ class BaseTask(Task):
 				scope["table_query"] = True
 			if not access.permitted(scope):
 				raise PermissionError("Document base access denied.")
+		# Both broker queues share one admission budget and status namespace.
 		admission = TaskAdmission("celery", user_id, task_id)
 		deadline_ms = admission.reserve(scope, MAX_COMPUTE_TASKS, MAX_COMPUTE_TASKS_PER_USER, QUEUE_SECONDS)
 		if not deadline_ms:
@@ -451,6 +456,7 @@ class DocumentBaseForgetMatchesForAttribute(BaseTask):
 
 class DocumentBaseInteractiveTablePopulation(BaseTask):
 	name = "DocumentBaseInteractiveTablePopulation"
+	queue = _FEEDBACK_QUEUE
 	track_started = False  # STARTED below means the base is loaded, not just dequeued.
 
 	def run(self, user_id: int, base_name: str, organisation_id: int):
@@ -465,7 +471,7 @@ class DocumentBaseInteractiveTablePopulation(BaseTask):
 
 class FeedbackTask(BaseTask):
 	# Each command performs one bounded compute step, then releases the worker.
-	queue = "celery"
+	queue = _FEEDBACK_QUEUE
 
 	def _durable_replay(self, parameters, outcome, session_id, expected_version, command_id):
 		if (outcome["session_id"] != session_id or outcome["command_id"] != command_id or

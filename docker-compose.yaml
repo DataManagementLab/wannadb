@@ -46,7 +46,7 @@ services:
             dockerfile: Dockerfile
             target: worker
         tty: true
-        command: ['celery', '-A', 'celery_app', 'worker', '-l', 'info', '--concurrency=1', '-Q', 'celery']
+        command: ['python', '-m', 'celery', '-A', 'celery_app', 'worker', '-l', 'info', '--concurrency=1', '-Q', 'celery']
         env_file:
             - wannadb_web/.env/.dev
         volumes:
@@ -67,7 +67,7 @@ services:
             dockerfile: Dockerfile
             target: worker
         tty: true
-        command: ['celery', '-A', 'celery_app', 'worker', '-l', 'info', '--concurrency=1', '--prefetch-multiplier=1', '-Q', 'feedback']
+        command: ['python', '-m', 'celery', '-A', 'celery_app', 'worker', '-l', 'info', '--concurrency=1', '--prefetch-multiplier=1', '-Q', 'feedback']
         env_file:
             - wannadb_web/.env/.dev
         volumes:
