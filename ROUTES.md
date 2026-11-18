@@ -89,6 +89,7 @@ If a reply is lost, poll by the original command ID before retrying. For an exac
 The historical path name `public` refers to votes shared with the organization. Both routes require membership.
 
 - `POST /core/document_base/feedback/public/get` takes `organisationId`, `baseId`, and `documentId`. It returns `feedback` keyed by attribute name.
-- `POST /core/document_base/feedback/public` also takes `attributeId`, `documentContent`, `isPositive`, and either the selected span or null `startIndex`, `endIndex`, and `nuggetText`. The response includes the updated `feedback` counts and `mine`. Repeating the current vote clears it. Selecting the opposite vote switches it.
+- `POST /core/document_base/feedback/public` also takes `attributeId`, `documentContent`, `isPositive`, and either the selected span or null `startIndex`, `endIndex`, and `nuggetText`. The response includes the updated `feedback` counts and `mine`. Repeating the current thumbs-up or thumbs-down vote clears it. Selecting the opposite vote switches it.
+- Send `noMatch: true` with `isPositive: false` and null span fields to suggest no match in the document. The correction replaces the user’s previous feedback, counts as a negative vote, and stays saved if resubmitted.
 
 `POST /core/status/<task_id>` is retired and returns `410` to authenticated callers. The former `POST /core/document_base/order/nugget` endpoint has been removed. The browser proxy rejects it with `404`, and Flask rejects direct POST requests with `405`. Use `view=review` on task status for ranked feedback candidates, or `view=document` to inspect a document’s nuggets. The former development route inventory and debug endpoints are unavailable.

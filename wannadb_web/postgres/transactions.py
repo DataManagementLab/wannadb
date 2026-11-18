@@ -717,9 +717,9 @@ def mutate_base_documents(base_name, base_id, organisation_id, user_id, *,
 			if cur.fetchone() is None:
 				raise ValueError("The document changed or was deleted. Reload the base before editing again.")
 			if document.text != old_text:
-				# These offsets describe the previous text.
+				# Corrections describe the previous text.
 				cur.execute("""DELETE FROM document_feedback WHERE documentid = %s
-					AND (feedback_start IS NOT NULL OR feedback_end IS NOT NULL);""", (document_id,))
+					AND (no_match OR feedback_start IS NOT NULL OR feedback_end IS NOT NULL);""", (document_id,))
 			for index, existing in enumerate(base.documents):
 				if existing.name == document.name:
 					if existing.text != document.text or SentenceStartCharsSignal.identifier not in existing.signals:
@@ -830,8 +830,8 @@ def delete_document_base_data(base_name: str, organisation_id: int, user_id: int
 		raise RuntimeError("Could not delete document base.") from None
 
 
-def add_feedback(document_id: int, user_id: int, positive: bool, attribute: str, feedback_start: int = None, feedback_end: int = None, organisation_id: int = None, *, expected_content: str = None, base_name: str = None, base_id=None, attribute_id=None):
-	"""Toggle a public vote, or save a negative correction, and return the current counts."""
+def add_feedback(document_id: int, user_id: int, positive: bool, attribute: str, feedback_start: int = None, feedback_end: int = None, organisation_id: int = None, *, expected_content: str = None, base_name: str = None, base_id=None, attribute_id=None, no_match: bool = False):
+	"""Toggle a public vote or save a text or no-match correction."""
 	try:
 		with closing(connectPG()) as conn, conn, conn.cursor() as cur:
 			# Attribute edits lock the base before touching its feedback rows.
@@ -872,18 +872,19 @@ def add_feedback(document_id: int, user_id: int, positive: bool, attribute: str,
 			existing = cur.fetchone()
 			mine = positive
 			feedback_id = None
-			if existing is not None and existing[1] == positive and feedback_start is None:
+			if existing is not None and existing[1] == positive and feedback_start is None and not no_match:
 				cur.execute("DELETE FROM public.document_feedback WHERE id = %s", (existing[0],))
 				mine = None
 			elif existing is not None:
-				cur.execute("""UPDATE public.document_feedback SET positive = %s, feedback_start = %s, feedback_end = %s
-					WHERE id = %s""", (positive, feedback_start, feedback_end, existing[0]))
+				cur.execute("""UPDATE public.document_feedback SET positive = %s, feedback_start = %s,
+					feedback_end = %s, no_match = %s WHERE id = %s""",
+					(positive, feedback_start, feedback_end, no_match, existing[0]))
 				feedback_id = existing[0]
 			else:
 				cur.execute("""INSERT INTO public.document_feedback
-					(documentid, userid, positive, attribute, feedback_start, feedback_end)
-					VALUES (%s, %s, %s, %s, %s, %s) RETURNING id""",
-					(document_id, user_id, positive, attribute, feedback_start, feedback_end))
+					(documentid, userid, positive, attribute, feedback_start, feedback_end, no_match)
+					VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING id""",
+					(document_id, user_id, positive, attribute, feedback_start, feedback_end, no_match))
 				feedback_id = cur.fetchone()[0]
 
 			cur.execute("""SELECT count(*) FILTER (WHERE positive) AS positive_count,

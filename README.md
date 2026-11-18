@@ -286,6 +286,7 @@ If migration fails, review its log with the application stopped. Resolve the rep
 | 0004 | Stores durable receipts for saved feedback commands. |
 | 0005 | Stores expiring feedback-session checkpoints. |
 | 0006 | Keeps one vote per user, document, and attribute. Migration removes opposing duplicates. |
+| 0007 | Stores explicit no-match suggestions in public feedback. |
 
 ### Restore
 

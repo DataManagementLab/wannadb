@@ -965,7 +965,7 @@ def _public_feedback_document(form):
 
 @core_routes.route('/document_base/feedback/public', methods=['POST'])
 def add_public_feedback():
-	"""Save a vote against the attribute ID and the current source text."""
+	"""Save a vote or correction against the attribute ID and the current source text."""
 	form = request.get_json()
 	attribute, positive = form.get("attribute"), form.get("isPositive")
 	attribute_id = form.get("attributeId")
@@ -983,13 +983,17 @@ def add_public_feedback():
 	if form["documentContent"] != content:
 		return make_response({"error": "The document changed. Reload before retrying."}, 409)
 	start, end, text = form.get("startIndex"), form.get("endIndex"), form.get("nuggetText")
-	if start is not None or end is not None or text is not None:
+	no_match = form.get("noMatch", False)
+	has_span = start is not None or end is not None or text is not None
+	if type(no_match) is not bool or (no_match and (positive or has_span)):
+		return make_response({"error": "A no-match correction requires a negative vote without a text selection."}, 400)
+	if has_span:
 		start, end = _selection_span(content, start, end, text)
 
 	outcome = add_feedback(
 		document_id=document_id, user_id=g.auth_token.id, positive=positive, attribute=attribute,
 		feedback_start=start, feedback_end=end, organisation_id=g.organisation_id,
-		expected_content=content, base_name=base_name, base_id=base_id, attribute_id=attribute_id)
+		expected_content=content, base_name=base_name, base_id=base_id, attribute_id=attribute_id, no_match=no_match)
 	if outcome == -409:
 		return make_response({"error": "The document changed or feedback conflicted. Reload before retrying."}, 409)
 	if outcome == -422:
