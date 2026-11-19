@@ -230,7 +230,7 @@ compose logs --tail=100 migrate
 curl -fsS http://127.0.0.1:8000/health/ready
 ```
 
-A successful migration container exits with code 0. The web service and both workers wait for that result. `/health/live` checks the web process. `/health/ready` checks PostgreSQL's applied migration versions and Redis connectivity.
+A successful migration container exits with code 0. The web service and both workers wait for that result. `/health/live` checks the web process. `/health/ready` checks PostgreSQL's applied migration versions, Redis connectivity and a live consumer for each of the `celery` and `feedback` queues. Readiness may return `503` during startup until both workers publish their first heartbeat, normally within ten seconds after their consumers start.
 
 Start the [frontend](https://github.com/DataManagementLab/wannadbDemo) on the same host. For SSH use the forwarded frontend at `http://localhost:3000`. For public access terminate TLS at a reverse proxy that targets loopback port 3000 and set the frontend's `NEXTAUTH_URL` to the public HTTPS origin. The production backend listens on host loopback port 8000. PostgreSQL and Redis stay inside the Compose network. Flower is optional through the `monitoring` profile and requires authentication on loopback port 5555. Expose only the HTTPS reverse proxy publicly.
 
@@ -253,6 +253,37 @@ WANNA_DB_JWT_SECRET=replace-with-a-unique-secret
 ```
 
 Run `docker compose up -d --build` from the backend checkout. The development file mounts the checkout. Rebuild if dependencies change. If the mounted checkout needs additional desktop or experimental models, see `scripts/prepare_models.py` and `scripts/prepare_glove.py`. Use the production file for deployments where you rely on the model assets baked into the image.
+
+### Service recovery and queue health
+
+Enable Docker Engine to start when the Linux host boots. Both Compose files give long-running services a restart policy. The API keeps its existing `always` policy, and the other services use `unless-stopped`. The separate frontend Compose service also uses `unless-stopped`. Docker restarts exited containers and resumes eligible containers after a Docker or host restart. An intentionally stopped `unless-stopped` service requires `compose up -d` to resume. The migration job remains a one-shot service.
+
+Recreate containers with `compose up -d --build` to load backend code and policy changes. From the frontend checkout, use `docker compose up -d frontend` for a Compose-only policy change. A process that remains running but becomes unhealthy needs operator attention. Docker restart policies respond to container exits. See [Docker restart policies](https://docs.docker.com/engine/containers/start-containers-automatically/).
+
+Workers refresh queue-consumer leases from their parent event loop, including while a prefork child processes a task. The API checks those leases without loading models or inspecting task contents. Configure these settings consistently in the API and both workers.
+
+| Setting | Default | Meaning |
+| --- | --- | --- |
+| `WORKER_HEARTBEAT_INTERVAL_SECONDS` | 10 | Seconds between consumer lease refreshes. |
+| `WORKER_HEARTBEAT_TTL_SECONDS` | 45 | Seconds before an unrefreshed consumer lease expires. Must exceed the refresh interval. |
+| `QUEUE_WAIT_WARNING_SECONDS` | 60 | Broker waiting age that marks a queue `delayed` and emits a warning. |
+
+Poll `/health/ready` from the private deployment network and monitor its `queues` fields. A missing consumer returns `503`, subject to the heartbeat lease's expiry window. A healthy consumer with a delayed backlog still returns `200`, with queue status `delayed` and a warning in the API log. Configure monitoring alerts for missing consumers, delayed queues and unknown waiting ages. Queue depth and age cover messages waiting in the broker. Reserved and running tasks have left that count. `oldest_wait_seconds: null` means a waiting message has no usable enqueue timestamp, which also emits a warning.
+
+#### Rehearse recovery in staging
+
+Finish active jobs and feedback sessions, confirm a current PostgreSQL backup, and use the staging deployment's usual `compose` helper and environment. First confirm both queues are ready and complete a small creation job and feedback step.
+
+Ask the worker's main process to terminate through Celery's SIGTERM handler to exercise automatic recovery. The exec command can fail when the container exits. Repeat with `feedback-worker` after the first recovery succeeds.
+
+```sh
+compose exec -T worker python -c 'import os, signal; os.kill(1, signal.SIGTERM)'
+compose ps -a
+compose logs --since=5m worker feedback-worker
+curl -fsS http://127.0.0.1:8000/health/ready
+```
+
+Allow time for Docker restart, broker reconnection and fresh heartbeats. Verify each queue has a consumer, then complete a fresh creation job and feedback step. In the same staging environment, restart Docker with the host's service manager and repeat those checks. Reboot the staging host, reconnect and repeat them again, including access through the frontend. Record the restart results and any queue warnings. These recovery checks are deployment rehearsals performed by the operator.
 
 ### Upgrade and back up
 

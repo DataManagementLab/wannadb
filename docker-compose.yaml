@@ -21,6 +21,12 @@ services:
                 condition: service_healthy
         volumes:
             - ./:/home/wannadb
+        healthcheck:
+            test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/ready', timeout=9).close()"]
+            interval: 30s
+            timeout: 10s
+            retries: 3
+            start_period: 60s
         networks:
             - mynetwork
 
@@ -41,6 +47,7 @@ services:
             - ./:/home/wannadb:ro
 
     worker:
+        restart: unless-stopped
         build:
             context: .
             dockerfile: Dockerfile
@@ -62,6 +69,7 @@ services:
                 condition: service_healthy
 
     feedback-worker:
+        restart: unless-stopped
         build:
             context: .
             dockerfile: Dockerfile
@@ -83,6 +91,7 @@ services:
                 condition: service_healthy
 
     flower:
+        restart: unless-stopped
         build:
             context: .
             dockerfile: Dockerfile
@@ -102,6 +111,7 @@ services:
                 condition: service_healthy
 
     postgres:
+        restart: unless-stopped
         image: postgres:16
         container_name: postgres-container
         environment:
@@ -120,6 +130,7 @@ services:
             retries: 12
 
     redis:
+        restart: unless-stopped
         image: redis:alpine
         container_name: redis-container
         healthcheck:

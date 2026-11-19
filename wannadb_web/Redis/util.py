@@ -11,12 +11,13 @@ if CACHE_PASSWORD == "0":
 	CACHE_PASSWORD = None
 
 
-def connectRedis():
+def connectRedis(*, timeout=5, **options):
 	return redis.Redis(
 		host=CACHE_HOST,
 		port=CACHE_PORT,
 		db=CACHE_DB,
 		password=CACHE_PASSWORD,
-		socket_connect_timeout=5,
-		socket_timeout=5,
+		socket_connect_timeout=timeout,
+		socket_timeout=timeout,
+		**options,
 	)

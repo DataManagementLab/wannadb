@@ -58,6 +58,7 @@ services:
       - mynetwork
 
   worker:
+    restart: unless-stopped
     build:
       context: .
       dockerfile: Dockerfile
@@ -78,6 +79,7 @@ services:
         condition: service_healthy
 
   feedback-worker:
+    restart: unless-stopped
     build:
       context: .
       dockerfile: Dockerfile
@@ -98,6 +100,7 @@ services:
         condition: service_healthy
 
   flower:
+    restart: unless-stopped
     build:
       context: .
       dockerfile: Dockerfile
@@ -124,6 +127,7 @@ services:
         condition: service_healthy
 
   postgres:
+    restart: unless-stopped
     image: postgres:16
     container_name: postgres-container
     environment:

@@ -19,6 +19,16 @@ The `worker` service consumes the `celery` queue for general document-base work.
 
 Tasks have independent queue and execution deadlines. `QUEUE_SECONDS` defaults to 900. Both queues share an admission limit of 32 waiting or running tasks and 8 per user by default, controlled by `MAX_COMPUTE_TASKS` and `MAX_COMPUTE_TASKS_PER_USER`. Interactive sessions waiting for user input do not consume a compute slot. Do not change queue routing by restarting a consumer on a different queue while jobs are in flight.
 
+## Worker recovery and health
+
+Both Compose configurations restart exited long-running services. The migration job runs once and exits. Docker must start on host boot, and intentionally stopped services using `unless-stopped` need an explicit start. Docker's restart policy responds to process exits, so external monitoring must also check queue health and alert on stale consumers or waiting work.
+
+Each worker publishes a lease for the queues it actually consumes from its parent event loop. By default it refreshes every ten seconds and the lease expires after 45 seconds. Redis time determines lease expiry. Busy prefork children do not prevent the parent from refreshing availability.
+
+`/health/live` reports the API process. `/health/ready` also checks migrations, Redis and live consumers for both `celery` and `feedback`. It reports broker waiting depth, oldest waiting age and `ready`, `missing_consumer` or `delayed` for each queue. Missing consumers cause `503` after lease expiry. Waiting age of at least 60 seconds produces `delayed` and a log warning while readiness remains `200` with available consumers. Reserved/running tasks are excluded. Missing enqueue timestamps produce a null age and a warning.
+
+The API reads these metrics without importing worker models. See [service recovery and queue health](README.md#service-recovery-and-queue-health) for configuration and the operator's staging restart rehearsal.
+
 ## Artifacts
 
 Users upload UTF-8 TXT as source documents. The persisted BSON snapshot is a backend artifact and contains derived nuggets and mappings. The browser receives compact JSON catalogs and page data. A catalog carries IDs and counts. A document view carries text once plus span offsets. Feedback views carry the current ranked candidates and a page of manual-review documents. Table exports are CSV built from the retained, bounded query result.

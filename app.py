@@ -13,7 +13,7 @@ from wannadb_web.limits import MAX_REQUEST_BYTES, MAX_UPLOAD_FILES, QueueFullErr
 from wannadb_web.log_filters import _RedactLegacyTaskStatus
 from wannadb_web.postgres.migrate import MIGRATIONS
 from wannadb_web.postgres.util import connectPG
-from wannadb_web.Redis.util import connectRedis
+from wannadb_web.queue_health import connect_monitor, queue_health
 from wannadb_web.routing.core import core_routes
 from wannadb_web.routing.user import user_management
 from wannadb_web.routing.files import main_routes
@@ -111,14 +111,16 @@ def liveness():
 
 @app.get('/health/ready')
 def readiness():
+	queues = {}
 	try:
 		with closing(connectPG(connect_timeout=2)) as conn, conn.cursor() as cursor:
 			cursor.execute("SET LOCAL statement_timeout = '2s'")
 			cursor.execute("SELECT count(*), max(version) FROM public.wannadb_schema_migrations")
 			migrated = cursor.fetchone() == (len(MIGRATIONS), len(MIGRATIONS))
-		with closing(connectRedis()) as redis:
-			ready = migrated and redis.ping()
+		with closing(connect_monitor()) as redis:
+			queues = queue_health(redis)
+			ready = migrated and redis.ping() and all(queue["consumers"] > 0 for queue in queues.values())
 	except Exception:
 		ready = False
-	return make_response({'status': 'ready' if ready else 'unavailable'},
+	return make_response({'status': 'ready' if ready else 'unavailable', 'queues': queues},
 		200 if ready else 503, {'Cache-Control': 'no-store'})

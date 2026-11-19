@@ -9,10 +9,12 @@ Responses are scoped to the current user and organization. Treat `401` as a sign
 | Method and path | Request and response |
 | --- | --- |
 | `GET /health/live` or `GET /` | Process status. Does not require authentication. |
-| `GET /health/ready` | PostgreSQL migration and Redis checks. Returns `200` when ready and `503` otherwise. |
+| `GET /health/ready` | PostgreSQL migration, Redis connectivity and consumer leases for both required queues. Returns `200` when ready and `503` otherwise, with top-level `status` and per-queue metrics in `queues`. |
 | `POST /register` | `username` and `password`. Returns `201`, `409` with `USERNAME_TAKEN` for a duplicate, or `429` when throttled. |
 | `POST /login` | `username` and `password`. Returns `200` with a private `token`, `401` for invalid credentials, or `429` when throttled. |
 | `DELETE /deleteUser` | Current `username` and `password`. Returns `204`. |
+
+Readiness reports `queues.celery` and `queues.feedback`, each containing `consumers`, `queued`, `oldest_wait_seconds` and `status`. Queue status is `ready`, `missing_consumer` or `delayed`. A missing consumer makes readiness unavailable after its lease expires, by default 45 seconds. A delayed broker backlog emits a warning while keeping readiness `200` if dependencies and both consumers are available. `queued` excludes reserved and running tasks. An unknown enqueue timestamp produces `oldest_wait_seconds: null` and a warning. Queue metrics contain counts and ages. See [service recovery and queue health](README.md#service-recovery-and-queue-health) for settings and operator checks.
 
 ## Organizations
 

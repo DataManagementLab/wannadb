@@ -3,11 +3,14 @@ import os
 
 from celery import Celery
 
+from wannadb_web.worker.health import QueueHeartbeat
+
 from wannadb_web.worker.tasks import BaseTask, DocumentBaseAddDocument, DocumentBaseConfirmMultipleNuggets, DocumentBaseConfirmNugget, DocumentBaseForgetMatches, DocumentBaseForgetMatchesForAttribute, DocumentBaseInteractiveTablePopulation, DocumentBaseLoad, DocumentBaseNoMatchForDocument, DocumentBaseRemoveDocument, DocumentBaseStartRanking, DocumentBaseStopMatching, DocumentBaseUpdateAttributes, DocumentBaseUpdateDocument, ReloadDocumentBaseTask, ReviewPublicSuggestion, TestTask, InitManager, CreateDocumentBase
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 
 app = Celery(__name__)
+app.steps["consumer"].add(QueueHeartbeat)
 
 app.conf.broker_url = os.environ.get("CELERY_BROKER_URL")
 app.conf.result_serializer = "json"
