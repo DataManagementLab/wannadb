@@ -7,7 +7,7 @@ from flask import g, has_request_context
 import bcrypt
 from psycopg2 import sql, IntegrityError
 from wannadb.data.data import Document, DocumentBase, InformationNugget
-from wannadb.data.signals import SentenceStartCharsSignal
+from wannadb.data.signals import ExtractorNameSignal, LabelSignal, SentenceStartCharsSignal, SuggestedAttributeMappingsSignal
 from wannadb_web.util import Token, Authorisation, tokenDecode
 from wannadb_web.postgres.queries import (
 	check_password, document_base_snapshot_query, document_base_snapshot_scope, get_organisation_authorisation, get_organisation_id,
@@ -877,8 +877,11 @@ def add_feedback(document_id: int, user_id: int, positive: bool, attribute: str,
 				mine = None
 			elif existing is not None:
 				cur.execute("""UPDATE public.document_feedback SET positive = %s, feedback_start = %s,
-					feedback_end = %s, no_match = %s WHERE id = %s""",
-					(positive, feedback_start, feedback_end, no_match, existing[0]))
+					feedback_end = %s, no_match = %s,
+					reviewed = reviewed AND (positive, feedback_start, feedback_end, no_match)
+						IS NOT DISTINCT FROM (%s, %s, %s, %s)
+					WHERE id = %s""", (positive, feedback_start, feedback_end, no_match,
+						positive, feedback_start, feedback_end, no_match, existing[0]))
 				feedback_id = existing[0]
 			else:
 				cur.execute("""INSERT INTO public.document_feedback
@@ -899,3 +902,95 @@ def add_feedback(document_id: int, user_id: int, positive: bool, attribute: str,
 	except Exception:
 		logger.error("Could not save feedback")
 		return -500
+
+
+class PublicSuggestionConflict(ValueError):
+	"""The selected suggestion or its source changed during review."""
+
+
+def _pending_suggestion(cursor, organisation_id, base_id, document_id, attribute, replacement, *, include_reviewed=False):
+	cursor.execute("""
+		SELECT d.name, d.content,
+			min(f.feedback_start) FILTER (WHERE NOT f.reviewed),
+			array_agg(f.id) FILTER (WHERE %s OR NOT f.reviewed)
+		FROM public.document_feedback f JOIN public.documents d ON d.id = f.documentid
+		WHERE d.id = %s AND d.organisationid = %s AND d.documentbaseid = %s
+		AND d.content IS NOT NULL AND f.attribute = %s AND NOT f.positive
+		AND (f.no_match OR (f.feedback_start >= 0 AND f.feedback_end > f.feedback_start
+			AND f.feedback_end <= char_length(d.content)))
+		AND (CASE WHEN NOT f.no_match AND f.feedback_start >= 0 AND f.feedback_end > f.feedback_start
+			AND f.feedback_end <= char_length(d.content) THEN
+			substring(d.content FROM f.feedback_start + 1 FOR f.feedback_end - f.feedback_start)
+			END) IS NOT DISTINCT FROM %s::text
+		GROUP BY d.id
+		HAVING bool_or(NOT f.reviewed)
+	""", (include_reviewed, document_id, organisation_id, base_id, attribute, replacement))
+	row = cursor.fetchone()
+	if row is None:
+		raise PublicSuggestionConflict("This suggestion has changed or already been reviewed. Refresh the suggestions.")
+	return row
+
+
+def _apply_public_match(snapshot, name, text, attribute, replacement, start, prepare_nugget):
+	base = DocumentBase.from_bson(snapshot, deduplicate_nuggets=False)
+	document = next((document for document in base.documents if document.name == name and document.text == text), None)
+	if document is None or not any(item.name == attribute for item in base.attributes):
+		raise PublicSuggestionConflict("The saved document or attribute changed. Refresh the suggestions.")
+	matches = []
+	if replacement is not None:
+		end = start + len(replacement)
+		nugget = next((item for item in document.nuggets if (item.start_char, item.end_char) == (start, end)), None)
+		if nugget is None:
+			nugget = InformationNugget(document, start, end)
+			nugget[ExtractorNameSignal] = "<CUSTOM_SELECTION>"
+			nugget[LabelSignal] = attribute
+			prepare_nugget(nugget)
+			document.nuggets.append(nugget)
+		matches.append(nugget)
+	document.attribute_mappings[attribute] = matches
+	marker = SuggestedAttributeMappingsSignal
+	if marker.identifier in document.signals:
+		names = [name for name in document[marker] if name != attribute]
+		if names:
+			document[marker] = names
+		else:
+			document.signals.pop(marker.identifier)
+	return base.to_bson()
+
+
+def _review_snapshot(cursor, base_name, base_id, organisation_id, user_id, *, lock=False):
+	cursor.execute(document_base_snapshot_query(lock=lock), (base_name, base_id, organisation_id, user_id))
+	rows = cursor.fetchall()
+	if len(rows) != 1:
+		raise PublicSuggestionConflict("The saved document base is unavailable. Refresh the suggestions.")
+	return rows[0][0], bytes(rows[0][1])
+
+
+def review_public_suggestion(user_id, organisation_id, base_id, base_name, document_id,
+		attribute, replacement, accepted, prepare_nugget):
+	args = (organisation_id, base_id, document_id, attribute, replacement)
+	if accepted:
+		with closing(connectPG()) as conn, conn.cursor() as cur:
+			_require_organisation_owner(cur, organisation_id, user_id)
+			name, text, start, _ = _pending_suggestion(cur, *args)
+			snapshot = _review_snapshot(cur, base_name, base_id, organisation_id, user_id)
+		updated = _apply_public_match(snapshot[1], name, text, attribute, replacement, start, prepare_nugget)
+
+	with closing(connectPG()) as conn, conn, conn.cursor() as cur:
+		_lock_organisation(cur, organisation_id)
+		_require_organisation_owner(cur, organisation_id, user_id)
+		cur.execute("""SELECT id FROM public.document_bases
+			WHERE id = %s AND organisation_id = %s AND name = %s FOR UPDATE""",
+			(base_id, organisation_id, base_name))
+		if cur.fetchone() is None:
+			raise PublicSuggestionConflict("The document base changed. Refresh the suggestions.")
+		current_name, current_text, current_start, ids = _pending_suggestion(cur, *args, include_reviewed=accepted)
+		if accepted:
+			current = _review_snapshot(cur, base_name, base_id, organisation_id, user_id, lock=True)
+			if current != snapshot or (current_name, current_text, current_start) != (name, text, start):
+				raise PublicSuggestionConflict("The saved match or suggestion changed. Refresh the suggestions and try again.")
+			cur.execute("UPDATE public.documents SET content_byte = %s WHERE id = %s", (updated, snapshot[0]))
+			cur.execute("UPDATE public.document_bases SET last_modified = now() WHERE id = %s", (base_id,))
+			cur.execute("DELETE FROM public.document_feedback WHERE id = ANY(%s)", (ids,))
+		else:
+			cur.execute("UPDATE public.document_feedback SET reviewed = TRUE WHERE id = ANY(%s)", (ids,))

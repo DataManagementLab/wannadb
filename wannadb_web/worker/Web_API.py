@@ -356,18 +356,39 @@ class WannaDB_WebAPI:
 			num_random_docs=1,
 			sampling_mode="AT_MAX_DISTANCE_THRESHOLD",
 			adjust_threshold=True,
-			nugget_pipeline=Pipeline([
-				ContextSentenceCacher(), CopyNormalizer(), OntoNotesLabelParaphraser(),
-				SplitAttributeNameLabelParaphraser(do_lowercase=True, splitters=[" ", "_"]),
-				SBERTLabelEmbedder("SBERTBertLargeNliMeanTokensResource"),
-				SBERTTextEmbedder("SBERTBertLargeNliMeanTokensResource"),
-				BERTContextSentenceEmbedder("BertLargeCasedResource"),
-				RelativePositionEmbedder(),
-			]),
+			nugget_pipeline=WannaDB_WebAPI._nugget_pipeline(),
 			find_additional_nuggets=propagation if propagation is not None else WebMatchPropagation(),
 			allow_manual_without_candidates=True,
 			suggestion_provenance=True,
 		)
+
+	@staticmethod
+	def _nugget_pipeline():
+		return Pipeline([
+			ContextSentenceCacher(), CopyNormalizer(), OntoNotesLabelParaphraser(),
+			SplitAttributeNameLabelParaphraser(do_lowercase=True, splitters=[" ", "_"]),
+			SBERTLabelEmbedder("SBERTBertLargeNliMeanTokensResource"),
+			SBERTTextEmbedder("SBERTBertLargeNliMeanTokensResource"),
+			BERTContextSentenceEmbedder("BertLargeCasedResource"),
+			RelativePositionEmbedder(),
+		])
+
+	def prepare_public_nugget(self, nugget):
+		statistics = Statistics(False)
+		interaction = EmptyInteractionCallback()
+		document = Document(nugget.document.name, nugget.document.text)
+		base = DocumentBase([document], [])
+		sentence_signal = SentenceStartCharsSignal
+		if sentence_signal.identifier in nugget.document.signals:
+			document[sentence_signal] = nugget.document[sentence_signal]
+		else:
+			StanzaNERExtractor()(base, interaction, self.status_callback, statistics)
+			nugget.document[sentence_signal] = document[sentence_signal]
+		temporary = InformationNugget(document, nugget.start_char, nugget.end_char)
+		temporary.signals.update(nugget.signals)
+		document.nuggets[:] = [temporary]
+		self._nugget_pipeline()(base, interaction, self.status_callback, statistics)
+		nugget.signals.update(temporary.signals)
 
 	def add_automatic_matches_for_preview(self):
 		self._matcher().add_automatic_matches_for_preview(self.document_base, Statistics(False))

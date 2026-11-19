@@ -25,6 +25,7 @@ from wannadb_web.postgres.feedback_sessions import FeedbackSessionConflict, exte
 from wannadb_web.postgres.queries import get_creation_documents, get_base_id, get_feedback_outcome
 from wannadb_web.worker.data import DoAttributeRanking, MultiNuggetsMatchFeedback, ReloadDocumentBase, Signals, NoMatchFeedback, NuggetMatchFeedback, CustomMatchFeedback, SkipAttributeRanking, StopMatching
 from wannadb_web.worker.util import State
+from wannadb_web.postgres.transactions import PublicSuggestionConflict, review_public_suggestion
 
 logger = logging.getLogger(__name__)
 
@@ -411,6 +412,23 @@ class DocumentBaseUpdateAttributes(BaseTask):
 			self._signals.error.emit(RuntimeError("ATTRIBUTES_CHANGED"))
 			raise
 		except ValueError as error:
+			self._signals.error.emit(error)
+			raise
+		return {"ok": True}
+
+
+class ReviewPublicSuggestion(BaseTask):
+	name = "ReviewPublicSuggestion"
+
+	def run(self, user_id, base_name, organisation_id, base_id, document_id, attribute, replacement, accepted):
+		def prepare_nugget(nugget):
+			self.load()
+			api = self._create_api(user_id, base_name, organisation_id, build_query_cache=False)
+			api.prepare_public_nugget(nugget)
+		try:
+			review_public_suggestion(user_id, organisation_id, base_id, base_name, document_id,
+				attribute, replacement, accepted, prepare_nugget)
+		except (PublicSuggestionConflict, PermissionError) as error:
 			self._signals.error.emit(error)
 			raise
 		return {"ok": True}

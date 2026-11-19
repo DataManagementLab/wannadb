@@ -35,7 +35,7 @@ from bson import decode as decode_bson
 from redis.exceptions import RedisError
 from wannadb_web.postgres.queries import get_base_reference, get_document, get_document_base_data, get_document_by_name_and_content, get_feedbacks_for_document, get_document_by_name, get_base_id, get_organisation_authorisation, documents_available_for_base, get_document_ids_for_snapshot, get_document_base_snapshot
 from wannadb_web.postgres.attribute_schema import SUGGESTED_ATTRIBUTE_MAPPINGS, attribute_ids_for_snapshot, get_attribute_schema_version, parse_attribute_edit
-from wannadb_web.postgres.queries import FeedbackOutcomeUnavailable, get_feedback_outcome
+from wannadb_web.postgres.queries import FeedbackOutcomeUnavailable, get_feedback_outcome, get_public_feedback_suggestions
 from wannadb_web.postgres.feedback_sessions import FeedbackSessionUnavailable, load_session
 from wannadb_web.postgres.transactions import add_feedback, delete_document_base_data
 
@@ -48,7 +48,7 @@ from wannadb_web.worker.data import Signals
 from wannadb_web.worker.payload import TABLE_PAGE_SIZE, legacy_payload, project_base
 
 from wannadb_web.worker.tasks import CreateDocumentBase, BaseTask, DocumentBaseConfirmMultipleNuggets, DocumentBaseConfirmNugget, DocumentBaseInteractiveTablePopulation, DocumentBaseLoad, DocumentBaseNoMatchForDocument, DocumentBaseStartRanking, DocumentBaseStopMatching, \
-	DocumentBaseUpdateAttributes, ReloadDocumentBaseTask
+	DocumentBaseUpdateAttributes, ReloadDocumentBaseTask, ReviewPublicSuggestion
 
 core_routes = Blueprint('core_routes', __name__, url_prefix='/core')
 
@@ -208,6 +208,7 @@ def authorize_core_request():
 	if role is None or (endpoint in ("delete_document_base", "delete_document_base_by_id") and role not in (0, 1)):
 		return make_response({"error": "organization access denied"}, 403)
 	g.organisation_id = organisation_id
+	g.organisation_role = role
 	g.requested_base_id = _positive_id(base_scope.get("baseId"))
 	if "baseId" in base_scope and g.requested_base_id is None:
 		return make_response({"error": "invalid document base ID"}, 400)
@@ -1005,9 +1006,45 @@ def add_public_feedback():
 
 @core_routes.route('/document_base/feedback/public/get', methods=['POST'])
 def get_public_feedback():
-	document_id, _, _, _ = _public_feedback_document(request.get_json())
+	form = request.get_json()
 	try:
+		if "suggestionsOffset" in form:
+			offset = form["suggestionsOffset"]
+			if type(offset) is not int or not 0 <= offset <= 2147483647:
+				return make_response({"error": "Invalid suggestion page offset."}, 400)
+			page_size = 20
+			if "documentId" in form or "documentName" in form:
+				document_id, _, _, base_id = _public_feedback_document(form)
+			else:
+				base_id = _positive_id(form.get("baseId"))
+				if base_id is None:
+					return make_response({"error": "A valid document base ID is required."}, 400)
+				_base_reference(base_id=base_id)
+				document_id = None
+			rows = get_public_feedback_suggestions(g.organisation_id, base_id, document_id, offset, page_size + 1)
+			return make_response({"suggestions": rows[:page_size],
+				"nextOffset": offset + page_size if len(rows) > page_size else None,
+				"canReview": g.organisation_role == 0}, 200)
+		document_id, _, _, _ = _public_feedback_document(form)
 		feedback = get_feedbacks_for_document(document_id, g.auth_token.id)
 	except RuntimeError:
 		return make_response({"error": "Document feedback is temporarily unavailable."}, 503)
 	return make_response({"feedback": feedback}, 200)
+
+
+@core_routes.route('/document_base/feedback/public/review', methods=['POST'])
+def review_public_feedback():
+	if g.organisation_role != 0:
+		return make_response({"error": "Organization owner access required."}, 403)
+	form = request.get_json()
+	base_id = _positive_id(form.get("baseId"))
+	document_id = _positive_id(form.get("documentId"))
+	attribute, replacement, accepted = form.get("attribute"), form.get("replacement"), form.get("accepted")
+	if (base_id is None or document_id is None or not isinstance(attribute, str) or not attribute.strip()
+		or "\0" in attribute or "replacement" not in form or type(accepted) is not bool
+		or (replacement is not None and (not isinstance(replacement, str) or not replacement.strip() or "\0" in replacement))):
+		return make_response({"error": "Invalid suggestion review."}, 400)
+	base_name = _base_reference(base_id=base_id)[1]
+	task = ReviewPublicSuggestion().apply_async(args=(g.auth_token.id, base_name, g.organisation_id, base_id,
+		document_id, attribute, replacement, accepted), expected_base_id=base_id)
+	return make_response({"task_id": task.id}, 202)

@@ -88,7 +88,8 @@ If a reply is lost, poll by the original command ID before retrying. For an exac
 
 The historical path name `public` refers to votes shared with the organization. Both routes require membership.
 
-- `POST /core/document_base/feedback/public/get` takes `organisationId`, `baseId`, and `documentId`. It returns `feedback` keyed by attribute name.
+- `POST /core/document_base/feedback/public/get` takes `organisationId`, `baseId`, and `documentId`. It returns `feedback` keyed by attribute name. With `suggestionsOffset` (start at 0), it instead returns a page of distinct corrections and `nextOffset`. Omit `documentId` when paging through suggestions for the entire base. Each item includes the document ID and name. A null replacement represents no match. Counts show how often each correction was suggested. `canReview` indicates organization-owner access.
+- Owners can POST `organisationId`, `baseId`, `documentId`, `attribute`, `replacement` and boolean `accepted` to `/core/document_base/feedback/public/review`. The response gives a task ID. Accept applies the selected replacement or confirms no match. Reject dismisses the suggestion. Both preserve the votes.
 - `POST /core/document_base/feedback/public` also takes `attributeId`, `documentContent`, `isPositive`, and either the selected span or null `startIndex`, `endIndex`, and `nuggetText`. The response includes the updated `feedback` counts and `mine`. Repeating the current thumbs-up or thumbs-down vote clears it. Selecting the opposite vote switches it.
 - Send `noMatch: true` with `isPositive: false` and null span fields to suggest no match in the document. The correction replaces the user’s previous feedback, counts as a negative vote, and stays saved if resubmitted.
 

@@ -712,3 +712,28 @@ def get_feedbacks_for_document(document_id: int, user_id: int = None):
 	for attribute, positive, negative, mine in result:
 		feedback_summary[attribute] = {"positive": positive, "negative": negative, "mine": mine}
 	return feedback_summary
+
+
+def get_public_feedback_suggestions(organisation_id, base_id, document_id, offset, limit):
+	"""List distinct corrections and how often each was suggested."""
+	rows = execute_query("""
+		SELECT d.id, d.name, f.attribute,
+			CASE WHEN f.no_match THEN NULL
+				ELSE substring(d.content FROM f.feedback_start + 1 FOR f.feedback_end - f.feedback_start)
+			END AS replacement,
+			count(*)
+		FROM public.document_feedback f JOIN public.documents d ON d.id = f.documentid
+		WHERE d.organisationid = %s AND d.content IS NOT NULL AND NOT f.positive AND NOT f.reviewed
+		AND (%s::bigint IS NULL OR d.documentbaseid = %s)
+		AND (%s::bigint IS NULL OR d.id = %s)
+		AND (f.no_match OR (f.feedback_start >= 0 AND f.feedback_end > f.feedback_start
+			AND f.feedback_end <= char_length(d.content)))
+		GROUP BY d.id, d.name, f.attribute, replacement
+		ORDER BY d.name, d.id, f.attribute, replacement NULLS FIRST
+		LIMIT %s OFFSET %s
+	""", (organisation_id, base_id, base_id, document_id, document_id, limit, offset))
+	if rows is False:
+		raise RuntimeError("Could not read document feedback suggestions.")
+	return [{"documentId": identifier, "documentName": name, "attribute": attribute,
+		"replacement": replacement, "count": count}
+		for identifier, name, attribute, replacement, count in rows or []]
