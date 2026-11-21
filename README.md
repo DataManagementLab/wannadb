@@ -318,6 +318,10 @@ If migration fails, review its log with the application stopped. Resolve the rep
 | 0005 | Stores expiring feedback-session checkpoints. |
 | 0006 | Keeps one vote per user, document, and attribute. Migration removes opposing duplicates. |
 | 0007 | Stores explicit no-match suggestions in public feedback. |
+| 0008 | Adds owner review state for public correction suggestions. |
+| 0009 | Binds public votes to mapping identities and gives correction review stable attribute, source, span and version identities. |
+
+Public feedback after migration 0009 uses the identity of the displayed mapping. Historical votes without that identity stay unbound and are excluded from current-value counts. Usable source-anchored correction suggestions remain reviewable. Deploy the API and both workers with the migrated schema before updating the frontend. Old frontend requests must refresh through the updated frontend to obtain the required mapping identities.
 
 ### Restore
 

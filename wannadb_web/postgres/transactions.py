@@ -15,6 +15,10 @@ from wannadb_web.postgres.queries import (
 from wannadb_web.limits import validate_corpus
 from wannadb_web.postgres.attribute_schema import attribute_ids_for_snapshot
 from wannadb_web.postgres.util import connectPG, execute_transaction
+from wannadb_web.postgres.public_review import (
+	PublicFeedbackConflict, PublicSuggestionConflict, load_review_base, load_review_document,
+	suggestion_version as public_suggestion_version,
+)
 
 logger: logging.Logger = logging.getLogger(__name__)
 
@@ -830,73 +834,70 @@ def delete_document_base_data(base_name: str, organisation_id: int, user_id: int
 		raise RuntimeError("Could not delete document base.") from None
 
 
-def add_feedback(document_id: int, user_id: int, positive: bool, attribute: str, feedback_start: int = None, feedback_end: int = None, organisation_id: int = None, *, expected_content: str = None, base_name: str = None, base_id=None, attribute_id=None, no_match: bool = False):
-	"""Toggle a public vote or save a text or no-match correction."""
+def add_feedback(document_id: int, user_id: int, positive: bool, attribute: str, feedback_start: int = None, feedback_end: int = None, organisation_id: int = None, *, expected_content: str = None, base_name: str = None, base_id=None, attribute_id=None, no_match: bool = False, mapping_revision=None):
+	"""Toggle a vote for the displayed value or save a source-anchored correction."""
 	try:
 		with closing(connectPG()) as conn, conn, conn.cursor() as cur:
-			# Attribute edits lock the base before touching its feedback rows.
-			cur.execute("""SELECT b.id, b.attribute_schema_version::text, b.attribute_ids,
-				(CASE WHEN b.attributes::text = '[]' THEN '{}' ELSE b.attributes::text END)::text[]
-				FROM document_bases b JOIN documents d ON d.documentbaseid = b.id
+			# All canonical writers take the base lock before source/snapshot writes.
+			cur.execute("""SELECT b.id FROM document_bases b JOIN documents d ON d.documentbaseid = b.id
 					AND d.organisationid = b.organisation_id
 				WHERE d.id = %s AND b.organisation_id = %s
 				AND (%s::bigint IS NULL OR b.id = %s) AND (%s::text IS NULL OR b.name = %s)
 				AND EXISTS (SELECT 1 FROM membership m WHERE m.userid = %s
 					AND m.organisationid = b.organisation_id AND m.authorisation IN (0, 1, 10))
 				FOR SHARE OF b""", (document_id, organisation_id, base_id, base_id, base_name, base_name, user_id))
-			schema = cur.fetchone()
-			if schema is None:
-				return -404
-			resolved_base_id, version, stored_ids, names = schema
-			ids = attribute_ids_for_snapshot({"attributes": [{"name": name} for name in names]}, version, stored_ids)
-			if attribute_id is not None:
-				attribute = next((name for name, current_id in ids.items() if current_id == attribute_id), None)
-			if attribute not in ids:
-				return -422
-			# Serialize votes with each other and with source-document edits. The next
-			# statement sees any vote committed while this source lock was waiting.
-			cur.execute("""SELECT d.id FROM public.documents d
-				WHERE d.id = %s AND d.content IS NOT NULL
-				AND (%s::bigint IS NULL OR d.organisationid = %s)
-				AND (%s::text IS NULL OR d.content = %s)
-				AND d.documentbaseid = %s
-				AND EXISTS (SELECT 1 FROM public.membership m WHERE m.organisationid = d.organisationid
-					AND m.userid = %s AND m.authorisation IN (0, 1, 10))
-				FOR UPDATE OF d""",
-				(document_id, organisation_id, organisation_id, expected_content, expected_content, resolved_base_id, user_id))
 			if cur.fetchone() is None:
-				return -409 if expected_content is not None else -403
+				return -404
+			cur.execute("""SELECT id FROM public.documents WHERE id = %s AND content IS NOT NULL
+				AND (%s::text IS NULL OR content = %s) FOR UPDATE""",
+				(document_id, expected_content, expected_content))
+			if cur.fetchone() is None:
+				return -409
+			context = load_review_document(cur, document_id, user_id)
+			ids = context["base"]["attribute_ids"]
+			attribute = next((name for name, identifier in ids.items() if identifier == attribute_id), None)
+			if attribute is None or mapping_revision != context["mapping_revisions"].get(attribute):
+				return -409
 
-			cur.execute("""SELECT id, positive FROM public.document_feedback
-				WHERE documentid = %s AND userid = %s AND attribute = %s""", (document_id, user_id, attribute))
+			cur.execute("""SELECT id, positive, mapping_revision, source_revision,
+					feedback_start, feedback_end, no_match
+				FROM public.document_feedback WHERE documentid = %s AND userid = %s AND attribute = %s""",
+				(document_id, user_id, attribute))
 			existing = cur.fetchone()
 			mine = positive
 			feedback_id = None
-			if existing is not None and existing[1] == positive and feedback_start is None and not no_match:
+			if (existing is not None and existing[1] == positive and existing[2] == mapping_revision
+				and feedback_start is None and not no_match):
 				cur.execute("DELETE FROM public.document_feedback WHERE id = %s", (existing[0],))
 				mine = None
 			elif existing is not None:
+				unchanged = existing[1:] == (positive, mapping_revision, context["source_revision"],
+					feedback_start, feedback_end, no_match)
 				cur.execute("""UPDATE public.document_feedback SET positive = %s, feedback_start = %s,
-					feedback_end = %s, no_match = %s,
-					reviewed = reviewed AND (positive, feedback_start, feedback_end, no_match)
-						IS NOT DISTINCT FROM (%s, %s, %s, %s)
-					WHERE id = %s""", (positive, feedback_start, feedback_end, no_match,
-						positive, feedback_start, feedback_end, no_match, existing[0]))
+					feedback_end = %s, no_match = %s, attribute_id = %s, mapping_revision = %s,
+					source_revision = %s, reviewed = reviewed AND %s,
+					feedback_revision = CASE WHEN %s THEN feedback_revision ELSE gen_random_uuid() END
+					WHERE id = %s""", (positive, feedback_start, feedback_end, no_match, attribute_id,
+						mapping_revision, context["source_revision"], unchanged, unchanged, existing[0]))
 				feedback_id = existing[0]
 			else:
 				cur.execute("""INSERT INTO public.document_feedback
-					(documentid, userid, positive, attribute, feedback_start, feedback_end, no_match)
-					VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING id""",
-					(document_id, user_id, positive, attribute, feedback_start, feedback_end, no_match))
+					(documentid, userid, positive, attribute, feedback_start, feedback_end, no_match,
+					 attribute_id, mapping_revision, source_revision)
+					VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id""",
+					(document_id, user_id, positive, attribute, feedback_start, feedback_end, no_match,
+					 attribute_id, mapping_revision, context["source_revision"]))
 				feedback_id = cur.fetchone()[0]
 
-			cur.execute("""SELECT count(*) FILTER (WHERE positive) AS positive_count,
-				count(*) FILTER (WHERE NOT positive) AS negative_count
-				FROM public.document_feedback WHERE documentid = %s AND attribute = %s""", (document_id, attribute))
+			cur.execute("""SELECT count(*) FILTER (WHERE positive), count(*) FILTER (WHERE NOT positive)
+				FROM public.document_feedback WHERE documentid = %s AND attribute_id = %s
+					AND mapping_revision = %s AND source_revision = %s""",
+				(document_id, attribute_id, mapping_revision, context["source_revision"]))
 			approvals, rejections = cur.fetchone()
 			return {"feedback_id": feedback_id,
-				"feedback": {"positive": approvals, "negative": rejections, "mine": mine}}
-	except IntegrityError:
+				"feedback": {"positive": approvals, "negative": rejections, "mine": mine,
+					"mappingRevision": mapping_revision, "sourceRevision": context["source_revision"]}}
+	except (IntegrityError, PublicFeedbackConflict):
 		logger.error("Feedback write conflicted")
 		return -409
 	except Exception:
@@ -904,31 +905,35 @@ def add_feedback(document_id: int, user_id: int, positive: bool, attribute: str,
 		return -500
 
 
-class PublicSuggestionConflict(ValueError):
-	"""The selected suggestion or its source changed during review."""
-
-
-def _pending_suggestion(cursor, organisation_id, base_id, document_id, attribute, replacement, *, include_reviewed=False):
-	cursor.execute("""
-		SELECT d.name, d.content,
-			min(f.feedback_start) FILTER (WHERE NOT f.reviewed),
-			array_agg(f.id) FILTER (WHERE %s OR NOT f.reviewed)
-		FROM public.document_feedback f JOIN public.documents d ON d.id = f.documentid
-		WHERE d.id = %s AND d.organisationid = %s AND d.documentbaseid = %s
-		AND d.content IS NOT NULL AND f.attribute = %s AND NOT f.positive
-		AND (f.no_match OR (f.feedback_start >= 0 AND f.feedback_end > f.feedback_start
-			AND f.feedback_end <= char_length(d.content)))
-		AND (CASE WHEN NOT f.no_match AND f.feedback_start >= 0 AND f.feedback_end > f.feedback_start
-			AND f.feedback_end <= char_length(d.content) THEN
-			substring(d.content FROM f.feedback_start + 1 FOR f.feedback_end - f.feedback_start)
-			END) IS NOT DISTINCT FROM %s::text
-		GROUP BY d.id
-		HAVING bool_or(NOT f.reviewed)
-	""", (include_reviewed, document_id, organisation_id, base_id, attribute, replacement))
-	row = cursor.fetchone()
-	if row is None:
-		raise PublicSuggestionConflict("This suggestion has changed or already been reviewed. Refresh the suggestions.")
-	return row
+def _pending_suggestion(cursor, user_id, organisation_id, base_id, document_id, *,
+		attribute_id, suggestion_id, suggestion_version, mapping_revision, source_revision, start, end):
+	try:
+		base = load_review_base(cursor, base_id, organisation_id, user_id)
+		context = load_review_document(cursor, document_id, user_id, base=base)
+	except PublicFeedbackConflict as error:
+		raise PublicSuggestionConflict(str(error)) from None
+	if not (start is None and end is None) and (
+		type(start) is not int or type(end) is not int
+		or not 0 <= start < end <= len(context["document"]["text"])):
+		raise PublicSuggestionConflict("The suggestion range changed. Refresh the suggestions.")
+	attribute = next((name for name, identifier in base["attribute_ids"].items()
+		if identifier == attribute_id), None)
+	if (attribute is None or context["source_revision"] != source_revision
+		or context["mapping_revisions"].get(attribute) != mapping_revision):
+		raise PublicSuggestionConflict("The source, attribute or saved value changed. Refresh the suggestions.")
+	cursor.execute("""SELECT id, feedback_revision::text, reviewed
+		FROM public.document_feedback
+		WHERE documentid = %s AND attribute = %s
+			AND (attribute_id = %s OR attribute_id IS NULL) AND source_revision = %s
+			AND NOT positive AND no_match = %s
+			AND feedback_start IS NOT DISTINCT FROM %s AND feedback_end IS NOT DISTINCT FROM %s
+		ORDER BY id""", (document_id, attribute, attribute_id, source_revision, start is None, start, end))
+	rows = cursor.fetchall()
+	pending = [(identifier, revision) for identifier, revision, reviewed in rows if not reviewed]
+	if (not pending or pending[0][0] != suggestion_id
+		or public_suggestion_version([row[0] for row in pending], [row[1] for row in pending]) != suggestion_version):
+		raise PublicSuggestionConflict("This suggestion changed or was already reviewed. Refresh the suggestions.")
+	return context, attribute, [row[0] for row in rows], [row[0] for row in pending]
 
 
 def _apply_public_match(snapshot, name, text, attribute, replacement, start, prepare_nugget):
@@ -958,23 +963,21 @@ def _apply_public_match(snapshot, name, text, attribute, replacement, start, pre
 	return base.to_bson()
 
 
-def _review_snapshot(cursor, base_name, base_id, organisation_id, user_id, *, lock=False):
-	cursor.execute(document_base_snapshot_query(lock=lock), (base_name, base_id, organisation_id, user_id))
-	rows = cursor.fetchall()
-	if len(rows) != 1:
-		raise PublicSuggestionConflict("The saved document base is unavailable. Refresh the suggestions.")
-	return rows[0][0], bytes(rows[0][1])
-
-
-def review_public_suggestion(user_id, organisation_id, base_id, base_name, document_id,
-		attribute, replacement, accepted, prepare_nugget):
-	args = (organisation_id, base_id, document_id, attribute, replacement)
+def review_public_suggestion(user_id, organisation_id, base_id, base_name, document_id, *,
+		attribute_id, suggestion_id, suggestion_version, mapping_revision, source_revision,
+		start, end, accepted, prepare_nugget):
+	identity = dict(attribute_id=attribute_id, suggestion_id=suggestion_id,
+		suggestion_version=suggestion_version, mapping_revision=mapping_revision,
+		source_revision=source_revision, start=start, end=end)
 	if accepted:
 		with closing(connectPG()) as conn, conn.cursor() as cur:
 			_require_organisation_owner(cur, organisation_id, user_id)
-			name, text, start, _ = _pending_suggestion(cur, *args)
-			snapshot = _review_snapshot(cur, base_name, base_id, organisation_id, user_id)
-		updated = _apply_public_match(snapshot[1], name, text, attribute, replacement, start, prepare_nugget)
+			context, attribute, _, _ = _pending_suggestion(cur, user_id, organisation_id, base_id, document_id, **identity)
+			snapshot = context["base"]["snapshot"]
+			document = context["document"]
+		replacement = None if start is None else document["text"][start:end]
+		updated = _apply_public_match(snapshot, document["name"], document["text"],
+			attribute, replacement, start, prepare_nugget)
 
 	with closing(connectPG()) as conn, conn, conn.cursor() as cur:
 		_lock_organisation(cur, organisation_id)
@@ -984,13 +987,13 @@ def review_public_suggestion(user_id, organisation_id, base_id, base_name, docum
 			(base_id, organisation_id, base_name))
 		if cur.fetchone() is None:
 			raise PublicSuggestionConflict("The document base changed. Refresh the suggestions.")
-		current_name, current_text, current_start, ids = _pending_suggestion(cur, *args, include_reviewed=accepted)
+		current, _, ids, pending_ids = _pending_suggestion(cur, user_id, organisation_id, base_id, document_id, **identity)
 		if accepted:
-			current = _review_snapshot(cur, base_name, base_id, organisation_id, user_id, lock=True)
-			if current != snapshot or (current_name, current_text, current_start) != (name, text, start):
-				raise PublicSuggestionConflict("The saved match or suggestion changed. Refresh the suggestions and try again.")
-			cur.execute("UPDATE public.documents SET content_byte = %s WHERE id = %s", (updated, snapshot[0]))
+			if current["base"]["snapshot"] != snapshot:
+				raise PublicSuggestionConflict("The saved document base changed. Refresh the suggestions and try again.")
+			cur.execute("UPDATE public.documents SET content_byte = %s WHERE id = %s",
+				(updated, current["base"]["snapshot_id"]))
 			cur.execute("UPDATE public.document_bases SET last_modified = now() WHERE id = %s", (base_id,))
 			cur.execute("DELETE FROM public.document_feedback WHERE id = ANY(%s)", (ids,))
 		else:
-			cur.execute("UPDATE public.document_feedback SET reviewed = TRUE WHERE id = ANY(%s)", (ids,))
+			cur.execute("UPDATE public.document_feedback SET reviewed = TRUE WHERE id = ANY(%s)", (pending_ids,))

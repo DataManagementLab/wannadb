@@ -18,6 +18,7 @@ MIGRATIONS = (
     "0006_public_feedback_votes.sql",
     "0007_public_feedback_no_match.sql",
     "0008_public_feedback_review.sql",
+    "0009_public_review_identity.sql",
 )
 ADVISORY_LOCK = (0x57414E4E, 0x414442)
 
@@ -39,6 +40,7 @@ _REQUIRED_COLUMNS = {
     "document_feedback": {
         "id": _INTEGER, "documentid": _INTEGER, "userid": _INTEGER, "positive": ("bool",),
         "attribute": _TEXT, "feedback_start": _INTEGER, "feedback_end": _INTEGER, "no_match": ("bool",), "reviewed": ("bool",),
+        "attribute_id": ("uuid",), "mapping_revision": _TEXT, "source_revision": _TEXT, "feedback_revision": ("uuid",),
     },
     "feedback_outcomes": {
         "user_id": _INTEGER, "command_id": _TEXT, "session_id": _TEXT, "base_id": _INTEGER,

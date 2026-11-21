@@ -420,15 +420,21 @@ class DocumentBaseUpdateAttributes(BaseTask):
 class ReviewPublicSuggestion(BaseTask):
 	name = "ReviewPublicSuggestion"
 
-	def run(self, user_id, base_name, organisation_id, base_id, document_id, attribute, replacement, accepted):
+	def run(self, user_id, base_name, organisation_id, base_id, document_id, review, accepted):
 		def prepare_nugget(nugget):
 			self.load()
 			api = self._create_api(user_id, base_name, organisation_id, build_query_cache=False)
 			api.prepare_public_nugget(nugget)
 		try:
 			review_public_suggestion(user_id, organisation_id, base_id, base_name, document_id,
-				attribute, replacement, accepted, prepare_nugget)
-		except (PublicSuggestionConflict, PermissionError) as error:
+				attribute_id=review["attributeId"], suggestion_id=review["suggestionId"],
+				suggestion_version=review["suggestionVersion"], mapping_revision=review["mappingRevision"],
+				source_revision=review["sourceRevision"], start=review["startIndex"], end=review["endIndex"],
+				accepted=accepted, prepare_nugget=prepare_nugget)
+		except PublicSuggestionConflict:
+			self._signals.error.emit(RuntimeError("PUBLIC_REVIEW_CONFLICT"))
+			raise
+		except PermissionError as error:
 			self._signals.error.emit(error)
 			raise
 		return {"ok": True}

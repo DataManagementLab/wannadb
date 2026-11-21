@@ -28,6 +28,7 @@ Example:
 Author: Leon Wenderoth
 """
 import logging
+import re
 from uuid import UUID
 from typing import Optional
 
@@ -640,10 +641,12 @@ def _read_task_status(task_id, user_id, scope):
 		message = "The interactive session stopped before publishing feedback. Reload the base."
 		command = dict(command or {}, command_id=scope["command_id"], expected_version=scope["expected_version"],
 			state="rejected", error=message)
+	public_review_conflict = signals.get("error") == "PUBLIC_REVIEW_CONFLICT"
 	if signals.get("error") == "STALE_BASE":
 		signals["error"] = "This base changed in another session or access was lost. Reload before editing again; no newer changes were overwritten."
 	else:
 		error_messages = {
+			"PUBLIC_REVIEW_CONFLICT": "This suggestion or its saved match changed. Reload the suggestions before reviewing it.",
 			"PERSISTENCE_FAILED": "Changes could not be saved.",
 			"ATTRIBUTES_CHANGED": "Attributes changed. Reload them before editing again.",
 			"MATCHING_FAILED": "The feedback session could not continue. Reload the base before retrying.",
@@ -685,6 +688,9 @@ def _read_task_status(task_id, user_id, scope):
 		elif not signals.get("error"):
 			signals["error"] = "The task was cancelled." if status == "REVOKED" else "The background task failed."
 		http_status = 500
+	if public_review_conflict:
+		body.update(state="FAILURE", code="CONFLICT", error=signals["error"])
+		http_status = 409
 	return make_response(body, http_status, {"Cache-Control": "no-store"})
 
 
@@ -966,17 +972,17 @@ def _public_feedback_document(form):
 
 @core_routes.route('/document_base/feedback/public', methods=['POST'])
 def add_public_feedback():
-	"""Save a vote or correction against the attribute ID and the current source text."""
+	"""Save feedback only for the source and canonical mapping displayed to the voter."""
 	form = request.get_json()
 	attribute, positive = form.get("attribute"), form.get("isPositive")
 	attribute_id = form.get("attributeId")
-	if "attributeId" in form:
-		try:
-			attribute_id = str(UUID(attribute_id))
-		except (ValueError, TypeError, AttributeError):
-			return make_response({"error": "invalid attribute ID"}, 400)
-	elif not isinstance(attribute, str) or not attribute.strip() or "\0" in attribute:
-		return make_response({"error": "an attribute is required"}, 400)
+	try:
+		attribute_id = str(UUID(attribute_id))
+	except (ValueError, TypeError, AttributeError):
+		return make_response({"error": "A current attribute ID is required."}, 400)
+	mapping_revision = form.get("mappingRevision")
+	if not isinstance(mapping_revision, str) or not re.fullmatch(r"[a-f0-9]{64}", mapping_revision):
+		return make_response({"error": "Reload the document to get its current mapping identity."}, 400)
 	if type(positive) is not bool or not isinstance(form.get("documentContent"), str):
 		return make_response({"error": "invalid document feedback"}, 400)
 
@@ -986,7 +992,7 @@ def add_public_feedback():
 	start, end, text = form.get("startIndex"), form.get("endIndex"), form.get("nuggetText")
 	no_match = form.get("noMatch", False)
 	has_span = start is not None or end is not None or text is not None
-	if type(no_match) is not bool or (no_match and (positive or has_span)):
+	if type(no_match) is not bool or (no_match and has_span) or (positive and (no_match or has_span)):
 		return make_response({"error": "A no-match correction requires a negative vote without a text selection."}, 400)
 	if has_span:
 		start, end = _selection_span(content, start, end, text)
@@ -994,7 +1000,7 @@ def add_public_feedback():
 	outcome = add_feedback(
 		document_id=document_id, user_id=g.auth_token.id, positive=positive, attribute=attribute,
 		feedback_start=start, feedback_end=end, organisation_id=g.organisation_id,
-		expected_content=content, base_name=base_name, base_id=base_id, attribute_id=attribute_id, no_match=no_match)
+		expected_content=content, base_name=base_name, base_id=base_id, attribute_id=attribute_id, no_match=no_match, mapping_revision=mapping_revision)
 	if outcome == -409:
 		return make_response({"error": "The document changed or feedback conflicted. Reload before retrying."}, 409)
 	if outcome == -422:
@@ -1021,12 +1027,17 @@ def get_public_feedback():
 					return make_response({"error": "A valid document base ID is required."}, 400)
 				_base_reference(base_id=base_id)
 				document_id = None
-			rows = get_public_feedback_suggestions(g.organisation_id, base_id, document_id, offset, page_size + 1)
+			rows = get_public_feedback_suggestions(g.organisation_id, base_id, document_id, offset, page_size + 1, user_id=g.auth_token.id)
 			return make_response({"suggestions": rows[:page_size],
 				"nextOffset": offset + page_size if len(rows) > page_size else None,
 				"canReview": g.organisation_role == 0}, 200)
+		if (not isinstance(form.get("documentContent"), str) or
+			not isinstance(form.get("attributeIds"), dict) or not isinstance(form.get("expectedMappings"), dict)):
+			return make_response({"error": "The displayed document, attributes and mappings are required."}, 400)
 		document_id, _, _, _ = _public_feedback_document(form)
-		feedback = get_feedbacks_for_document(document_id, g.auth_token.id)
+		feedback = get_feedbacks_for_document(document_id, g.auth_token.id,
+			expected_content=form["documentContent"], expected_attribute_ids=form["attributeIds"],
+			expected_mappings=form["expectedMappings"])
 	except RuntimeError:
 		return make_response({"error": "Document feedback is temporarily unavailable."}, 503)
 	return make_response({"feedback": feedback}, 200)
@@ -1039,12 +1050,24 @@ def review_public_feedback():
 	form = request.get_json()
 	base_id = _positive_id(form.get("baseId"))
 	document_id = _positive_id(form.get("documentId"))
-	attribute, replacement, accepted = form.get("attribute"), form.get("replacement"), form.get("accepted")
-	if (base_id is None or document_id is None or not isinstance(attribute, str) or not attribute.strip()
-		or "\0" in attribute or "replacement" not in form or type(accepted) is not bool
-		or (replacement is not None and (not isinstance(replacement, str) or not replacement.strip() or "\0" in replacement))):
-		return make_response({"error": "Invalid suggestion review."}, 400)
+	accepted = form.get("accepted")
+	suggestion_id = _positive_id(form.get("suggestionId"))
+	try:
+		attribute_id = str(UUID(form.get("attributeId")))
+	except (ValueError, TypeError, AttributeError):
+		return make_response({"error": "A current attribute ID is required."}, 400)
+	revisions = ("suggestionVersion", "mappingRevision", "sourceRevision")
+	if (base_id is None or document_id is None or suggestion_id is None or type(accepted) is not bool
+		or any(not isinstance(form.get(key), str) or not re.fullmatch(r"[a-f0-9]{64}", form[key]) for key in revisions)
+		or "startIndex" not in form or "endIndex" not in form):
+		return make_response({"error": "Invalid suggestion review identity."}, 400)
+	start, end = form["startIndex"], form["endIndex"]
+	if (start is not None or end is not None) and (
+		type(start) is not int or type(end) is not int or not 0 <= start < end):
+		return make_response({"error": "Invalid suggestion span."}, 400)
 	base_name = _base_reference(base_id=base_id)[1]
+	review = {key: form[key] for key in (*revisions, "startIndex", "endIndex")}
+	review.update(attributeId=attribute_id, suggestionId=suggestion_id)
 	task = ReviewPublicSuggestion().apply_async(args=(g.auth_token.id, base_name, g.organisation_id, base_id,
-		document_id, attribute, replacement, accepted), expected_base_id=base_id)
+		document_id, review, accepted), expected_base_id=base_id)
 	return make_response({"task_id": task.id}, 202)

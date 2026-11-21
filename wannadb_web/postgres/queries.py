@@ -696,44 +696,78 @@ def get_document_ids(organisation_id: int, user_id: int):
 	return []
 
 
-def get_feedbacks_for_document(document_id: int, user_id: int = None):
-	"""Return vote counts and this user's current vote for each document attribute."""
-	select_query = sql.SQL("""SELECT attribute,
-			count(*) FILTER (WHERE positive) AS positive_count,
-			count(*) FILTER (WHERE NOT positive) AS negative_count,
-			bool_or(positive) FILTER (WHERE userid = %s) AS mine
-		FROM public.document_feedback WHERE documentid = %s GROUP BY attribute""")
-	result = execute_query(select_query, (user_id, document_id))
-	feedback_summary = {}
-	if result is False:
-		raise RuntimeError("Could not read document feedback.")
-	if result is None:
-		return feedback_summary
-	for attribute, positive, negative, mine in result:
-		feedback_summary[attribute] = {"positive": positive, "negative": negative, "mine": mine}
-	return feedback_summary
+def get_feedbacks_for_document(document_id: int, user_id: int = None, *,
+		expected_content=None, expected_attribute_ids=None, expected_mappings=None):
+	"""Return ratings only for the exact canonical value shown by the reader."""
+	from wannadb_web.postgres.public_review import load_review_document, validate_displayed_document
+
+	with closing(connectPG()) as connection, connection.cursor() as cursor:
+		context = load_review_document(cursor, document_id, user_id)
+		if any(value is not None for value in (expected_content, expected_attribute_ids, expected_mappings)):
+			validate_displayed_document(context, expected_content, expected_attribute_ids, expected_mappings)
+		ids = context["base"]["attribute_ids"]
+		revisions = context["mapping_revisions"]
+		names = list(ids)
+		cursor.execute("""SELECT current.attribute,
+				count(*) FILTER (WHERE f.positive),
+				count(*) FILTER (WHERE NOT f.positive),
+				bool_or(f.positive) FILTER (WHERE f.userid = %s)
+			FROM unnest(%s::text[], %s::uuid[], %s::text[])
+				AS current(attribute, attribute_id, mapping_revision)
+			LEFT JOIN public.document_feedback f ON f.documentid = %s
+				AND f.attribute = current.attribute AND f.attribute_id = current.attribute_id
+				AND f.mapping_revision = current.mapping_revision AND f.source_revision = %s
+			GROUP BY current.attribute""",
+			(user_id, names, [ids[name] for name in names], [revisions[name] for name in names],
+				document_id, context["source_revision"]))
+		return {name: {"positive": positive, "negative": negative, "mine": mine,
+				"mappingRevision": revisions[name], "sourceRevision": context["source_revision"]}
+			for name, positive, negative, mine in cursor.fetchall()}
 
 
-def get_public_feedback_suggestions(organisation_id, base_id, document_id, offset, limit):
-	"""List distinct corrections and how often each was suggested."""
-	rows = execute_query("""
-		SELECT d.id, d.name, f.attribute,
-			CASE WHEN f.no_match THEN NULL
-				ELSE substring(d.content FROM f.feedback_start + 1 FOR f.feedback_end - f.feedback_start)
-			END AS replacement,
-			count(*)
-		FROM public.document_feedback f JOIN public.documents d ON d.id = f.documentid
-		WHERE d.organisationid = %s AND d.content IS NOT NULL AND NOT f.positive AND NOT f.reviewed
-		AND (%s::bigint IS NULL OR d.documentbaseid = %s)
-		AND (%s::bigint IS NULL OR d.id = %s)
-		AND (f.no_match OR (f.feedback_start >= 0 AND f.feedback_end > f.feedback_start
-			AND f.feedback_end <= char_length(d.content)))
-		GROUP BY d.id, d.name, f.attribute, replacement
-		ORDER BY d.name, d.id, f.attribute, replacement NULLS FIRST
-		LIMIT %s OFFSET %s
-	""", (organisation_id, base_id, base_id, document_id, document_id, limit, offset))
-	if rows is False:
-		raise RuntimeError("Could not read document feedback suggestions.")
-	return [{"documentId": identifier, "documentName": name, "attribute": attribute,
-		"replacement": replacement, "count": count}
-		for identifier, name, attribute, replacement, count in rows or []]
+def get_public_feedback_suggestions(organisation_id, base_id, document_id, offset, limit, *, user_id=None):
+	"""List source-anchored corrections with exact occurrence and group identities."""
+	from wannadb_web.postgres.public_review import (
+		PublicFeedbackConflict, load_review_base, mapping_revisions, source_revision, suggestion_version,
+	)
+
+	with closing(connectPG()) as connection, connection.cursor() as cursor:
+		base = load_review_base(cursor, base_id, organisation_id, user_id)
+		ids = base["attribute_ids"]
+		names = list(ids)
+		cursor.execute("""
+			SELECT d.id, d.name, f.attribute, a.id::text, f.feedback_start, f.feedback_end,
+				f.no_match, f.source_revision, array_agg(f.id ORDER BY f.id),
+				array_agg(f.feedback_revision::text ORDER BY f.id)
+			FROM public.document_feedback f JOIN public.documents d ON d.id = f.documentid
+			JOIN unnest(%s::text[], %s::uuid[]) AS a(name, id)
+				ON a.name = f.attribute AND (f.attribute_id IS NULL OR f.attribute_id = a.id)
+			WHERE d.organisationid = %s AND d.documentbaseid = %s AND d.content IS NOT NULL
+			AND NOT f.positive AND NOT f.reviewed AND (%s::bigint IS NULL OR d.id = %s)
+			AND f.source_revision = encode(sha256(convert_to(d.content, 'UTF8')), 'hex')
+			AND (f.no_match OR (f.feedback_start >= 0 AND f.feedback_end > f.feedback_start
+				AND f.feedback_end <= char_length(d.content)))
+			GROUP BY d.id, d.name, f.attribute, a.id, f.feedback_start, f.feedback_end,
+				f.no_match, f.source_revision
+			ORDER BY d.name, d.id, f.attribute, f.no_match DESC,
+				f.feedback_start NULLS FIRST, f.feedback_end NULLS FIRST
+			LIMIT %s OFFSET %s
+		""", (names, [ids[name] for name in names], organisation_id, base_id,
+			document_id, document_id, limit, offset))
+		documents = {document["name"]: document for document in base["base"]["documents"]}
+		result = []
+		for identifier, name, attribute, attribute_id, start, end, no_match, source, row_ids, row_revisions in cursor.fetchall():
+			document = documents.get(name)
+			if document is None or source_revision(document["text"]) != source:
+				raise PublicFeedbackConflict("The saved document changed. Refresh the suggestions.")
+			text = document["text"]
+			replacement = None if no_match else text[start:end]
+			result.append({
+				"documentId": identifier, "documentName": name, "attribute": attribute, "attributeId": attribute_id,
+				"suggestionId": row_ids[0], "suggestionVersion": suggestion_version(row_ids, row_revisions),
+				"mappingRevision": mapping_revisions(document, ids)[attribute], "sourceRevision": source,
+				"startIndex": start, "endIndex": end, "replacement": replacement, "count": len(row_ids),
+				"context": {"before": "" if no_match else text[max(0, start - 40):start],
+					"selected": replacement or "", "after": "" if no_match else text[end:end + 40]},
+			})
+		return result
