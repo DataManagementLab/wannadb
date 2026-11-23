@@ -16,6 +16,10 @@ Responses are scoped to the current user and organization. Treat `401` as a sign
 
 Readiness reports `queues.celery` and `queues.feedback`, each containing `consumers`, `queued`, `oldest_wait_seconds` and `status`. Queue status is `ready`, `missing_consumer` or `delayed`. A missing consumer makes readiness unavailable after its lease expires, by default 45 seconds. A delayed broker backlog emits a warning while keeping readiness `200` if dependencies and both consumers are available. `queued` excludes reserved and running tasks. An unknown enqueue timestamp produces `oldest_wait_seconds: null` and a warning. Queue metrics contain counts and ages. See [service recovery and queue health](README.md#service-recovery-and-queue-health) for settings and operator checks.
 
+Sign-in and registration admission uses a client budget, a separate service-wide budget and, for sign-in, the existing username budget. The API returns `429` with `Retry-After` when an applicable budget is exhausted and `503` if admission is unavailable. See [authentication request limits](README.md#authentication-request-limits) for configuration.
+
+The frontend supplies `X-WannaDB-Auth-Client`, `X-WannaDB-Auth-Timestamp` and `X-WannaDB-Auth-Signature` on its private authentication requests. The signature uses the shared `AUTH_PROXY_SECRET`, covers the method and route, and expires after 60 seconds with at most five seconds of future clock tolerance. Clients should use the frontend's normal authentication flow. Direct API clients can omit this context and receive peer-based admission. Supplied context that fails verification returns `503`. Unsigned forwarded headers do not affect the backend's admission identity.
+
 ## Organizations
 
 | Method and path | Request and response |

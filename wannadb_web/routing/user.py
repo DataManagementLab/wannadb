@@ -3,11 +3,9 @@ import logging
 from flask import Blueprint, request, make_response, abort, g
 from psycopg2 import Error as PostgresError
 from redis.exceptions import RedisError
-from werkzeug.exceptions import RequestEntityTooLarge
+from werkzeug.exceptions import HTTPException, RequestEntityTooLarge
 
-from wannadb_web.auth_limits import (
-	LOGINS_PER_PEER, LOGINS_PER_USERNAME, REGISTRATIONS_PER_PEER, auth_retry_after,
-)
+from wannadb_web.auth_limits import AuthProxyError, auth_client_identity, auth_retry_after
 
 from wannadb_web.util import Token, tokenEncode, tokenDecode
 from wannadb_web.postgres.queries import check_password, get_members_of_organisation, get_organisation_from_user_id, \
@@ -72,9 +70,9 @@ def _auth_error(code, message, status):
 	return make_response({"code": code, "error": message}, status, {"Cache-Control": "no-store"})
 
 
-def _check_auth_limit(scope, identity, maximum):
+def _check_auth_limit(action, identity, username=None):
 	try:
-		retry_after = auth_retry_after(scope, identity, maximum)
+		retry_after = auth_retry_after(action, identity, username)
 	except RedisError:
 		abort(_auth_error("AUTH_UNAVAILABLE", "Sign-in and registration are temporarily unavailable.", 503))
 	if retry_after:
@@ -104,11 +102,24 @@ def _auth_credentials():
 	return username, password, password_bytes
 
 
+def _limited_auth_credentials(action):
+	try:
+		identity = auth_client_identity(request.headers, request.method, request.path, request.remote_addr or "")
+	except AuthProxyError:
+		abort(_auth_error("AUTH_UNAVAILABLE", "The authentication gateway is temporarily unavailable.", 503))
+	try:
+		credentials = _auth_credentials()
+	except HTTPException:
+		# Invalid requests also consume client and service admission capacity.
+		_check_auth_limit(action, identity)
+		raise
+	_check_auth_limit(action, identity, credentials[0] if action == "login" else None)
+	return credentials
+
+
 @user_management.route('/register', methods=['POST'])
 def register():
-	# Use the connection peer. The frontend proxy may share a bucket across users.
-	_check_auth_limit("register-peer", request.remote_addr or "unknown", REGISTRATIONS_PER_PEER)
-	username, password, password_bytes = _auth_credentials()
+	username, password, password_bytes = _limited_auth_credentials("register")
 	if len(username) > 128:
 		return _auth_error("INVALID_CREDENTIALS", "Use a username of at most 128 characters.", 400)
 	if not 1 <= len(password_bytes) <= 72 or b"\0" in password_bytes:
@@ -124,9 +135,7 @@ def register():
 
 @user_management.route('/login', methods=['POST'])
 def login():
-	_check_auth_limit("login-peer", request.remote_addr or "unknown", LOGINS_PER_PEER)
-	username, password, _ = _auth_credentials()
-	_check_auth_limit("login-username", username, LOGINS_PER_USERNAME)
+	username, password, _ = _limited_auth_credentials("login")
 	# Continue verifying existing hashes with the bcrypt behavior they were created with.
 	user_id = check_password(username, password)
 	if type(user_id) is not int:

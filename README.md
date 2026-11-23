@@ -218,7 +218,7 @@ mkdir -p wannadb_web/.env
 chmod 600 wannadb_web/.env/.prod
 ```
 
-Fill in `DATABASE_NAME`, `DATABASE_USER`, `DATABASE_PASSWORD`, `CACHE_PASSWORD`, and `WANNA_DB_JWT_SECRET`. Use a separate secret for each password or key. Generate random hexadecimal values with `openssl rand -hex 32`. Compose requires a Redis password of at least 32 hexadecimal characters. The backend signing secret must be at least 32 UTF-8 bytes. On upgrades keep the database name, its owning role and password, and the existing backend signing secret. Set `FLOWER_BASIC_AUTH` to `username:password` only to enable Flower.
+Fill in `DATABASE_NAME`, `DATABASE_USER`, `DATABASE_PASSWORD`, `CACHE_PASSWORD`, `WANNA_DB_JWT_SECRET` and `AUTH_PROXY_SECRET`. Use a separate secret for each password or key. Generate random hexadecimal values with `openssl rand -hex 32`. Compose requires a Redis password of at least 32 hexadecimal characters. The backend signing secret must be at least 32 UTF-8 bytes. On upgrades keep the database name, its owning role and password, and the existing backend signing secret. Copy the same `AUTH_PROXY_SECRET` into the frontend's environment file so it can authenticate client context for sign-in and registration. Set `FLOWER_BASIC_AUTH` to `username:password` only to enable Flower.
 
 In your deployment shell, define this helper and start the stack from the backend checkout. Use the same Compose file, environment file, project name, and volumes throughout operations.
 
@@ -250,9 +250,31 @@ CACHE_DB=0
 CELERY_BROKER_URL=redis://redis:6379/0
 CELERY_RESULT_BACKEND=redis://redis:6379/0
 WANNA_DB_JWT_SECRET=replace-with-a-unique-secret
+AUTH_PROXY_SECRET=replace-with-the-same-secret-as-the-frontend
 ```
 
 Run `docker compose up -d --build` from the backend checkout. The development file mounts the checkout. Rebuild if dependencies change. If the mounted checkout needs additional desktop or experimental models, see `scripts/prepare_models.py` and `scripts/prepare_glove.py`. Use the production file for deployments where you rely on the model assets baked into the image.
+
+### Authentication request limits
+
+The frontend authenticates client addresses for login and registration with a dedicated `AUTH_PROXY_SECRET`. Generate it once with `openssl rand -hex 32`, place the same value in the backend environment file and the frontend `.env`, and recreate the API and frontend services so they load it. Keep it separate from the backend JWT secret and `NEXTAUTH_SECRET`. Retain it on normal deployments. The API and frontend require at least 32 UTF-8 bytes for this shared secret when signing or verifying context.
+
+The backend verifies a short-lived HMAC signature bound to the client address, method and authentication route. Invalid or incomplete signed context returns `503`. Direct API clients that send no signed context use the connection peer. Ordinary forwarded-address headers never determine client identity at the backend.
+
+| Setting | Default |
+| --- | --- |
+| `AUTH_RATE_WINDOW_SECONDS` | 60 seconds |
+| `AUTH_REGISTRATIONS_PER_CLIENT` | 15 registrations per window |
+| `AUTH_LOGINS_PER_CLIENT` | 120 sign-in attempts per window |
+| `AUTH_LOGINS_PER_USERNAME` | 10 sign-in attempts per username per window |
+| `AUTH_REGISTRATIONS_GLOBAL` | 150 registrations per window across clients |
+| `AUTH_LOGINS_GLOBAL` | 1200 sign-in attempts per window across clients |
+
+Set positive integers in the backend environment file to override these defaults. Redis checks the applicable client, username and service budgets atomically. A request denied by one budget consumes none of the others. Malformed credentials also consume client and service admission. A limit returns `429` with `Retry-After`; a Redis outage returns `503`.
+
+Client identity normally comes from the frontend's socket peer. If a reverse proxy fronts Next.js, configure the frontend's `AUTH_TRUSTED_PROXY_CIDRS` only for exclusive, controlled ingress peers that append or overwrite the actual client address correctly. See the frontend README. Users behind the same NAT or SSH tunnel can share a client bucket. The username limit is intentionally shared across client addresses, and the service limit can throttle all clients during overload.
+
+For an upgrade, install these backend files and configure both environment files, then recreate the API with its usual Compose file. With development, run `docker compose up -d --force-recreate --no-deps wannadb` from the backend checkout. For production, use the production environment/file options with `up -d --build --no-deps wannadb`. Update and rebuild the frontend after the API loads the shared secret.
 
 ### Service recovery and queue health
 
