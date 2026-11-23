@@ -5,7 +5,7 @@ from celery import Celery
 
 from wannadb_web.worker.health import QueueHeartbeat
 
-from wannadb_web.worker.tasks import BaseTask, DocumentBaseAddDocument, DocumentBaseConfirmMultipleNuggets, DocumentBaseConfirmNugget, DocumentBaseForgetMatches, DocumentBaseForgetMatchesForAttribute, DocumentBaseInteractiveTablePopulation, DocumentBaseLoad, DocumentBaseNoMatchForDocument, DocumentBaseRemoveDocument, DocumentBaseStartRanking, DocumentBaseStopMatching, DocumentBaseUpdateAttributes, DocumentBaseUpdateDocument, ReloadDocumentBaseTask, ReviewPublicSuggestion, TestTask, InitManager, CreateDocumentBase
+from wannadb_web.worker.tasks import BaseTask, DocumentBaseAddDocument, DocumentBaseConfirmMultipleNuggets, DocumentBaseConfirmNugget, DocumentBaseForgetMatches, DocumentBaseForgetMatchesForAttribute, DocumentBaseInteractiveTablePopulation, DocumentBaseLoad, DocumentBaseNoMatchForDocument, DocumentBaseRemoveDocument, DocumentBaseStartRanking, DocumentBaseStopMatching, DocumentBaseCloseFeedbackSession, DocumentBaseUpdateAttributes, DocumentBaseUpdateDocument, ReloadDocumentBaseTask, ReviewPublicSuggestion, TestTask, InitManager, CreateDocumentBase
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 
@@ -35,3 +35,4 @@ app.register_task(DocumentBaseStartRanking)
 app.register_task(ReloadDocumentBaseTask)
 app.register_task(DocumentBaseNoMatchForDocument)
 app.register_task(DocumentBaseStopMatching)
+app.register_task(DocumentBaseCloseFeedbackSession)

@@ -49,7 +49,7 @@ from wannadb_web.worker.data import Signals
 from wannadb_web.worker.payload import TABLE_PAGE_SIZE, legacy_payload, project_base
 
 from wannadb_web.worker.tasks import CreateDocumentBase, BaseTask, DocumentBaseConfirmMultipleNuggets, DocumentBaseConfirmNugget, DocumentBaseInteractiveTablePopulation, DocumentBaseLoad, DocumentBaseNoMatchForDocument, DocumentBaseStartRanking, DocumentBaseStopMatching, \
-	DocumentBaseUpdateAttributes, ReloadDocumentBaseTask, ReviewPublicSuggestion
+	DocumentBaseUpdateAttributes, ReloadDocumentBaseTask, ReviewPublicSuggestion, DocumentBaseCloseFeedbackSession
 
 core_routes = Blueprint('core_routes', __name__, url_prefix='/core')
 
@@ -156,7 +156,7 @@ def authorize_core_request():
 	data = request.get_json(silent=True) if request.is_json else {}
 	if not isinstance(data, dict):
 		return make_response({"error": "invalid request"}, 400)
-	feedback_endpoints = {"document_base_do_current_attribute", "reload_document_base", "stop_feedback",
+	feedback_endpoints = {"document_base_do_current_attribute", "reload_document_base", "stop_feedback", "close_feedback",
 		"confirm_nugget_custom", "confirm_nugget_match", "confirm_no_match_in_document", "confirm_nugget_multi_match"}
 	if endpoint in feedback_endpoints:
 		session_id = data.get("sessionId")
@@ -191,7 +191,7 @@ def authorize_core_request():
 		g.feedback_scope = scope
 		if outcome is not None:
 			g.feedback_options["durable_outcome"] = outcome
-		if endpoint in {"document_base_do_current_attribute", "reload_document_base", "stop_feedback"}:
+		if endpoint in {"document_base_do_current_attribute", "reload_document_base", "stop_feedback", "close_feedback"}:
 			return None
 		if endpoint == "confirm_nugget_multi_match" or outcome is not None:
 			if "organisationId" not in data or "baseName" not in data:
@@ -926,13 +926,10 @@ def confirm_no_match_in_document():
 
 @core_routes.route('/document_base/feedback/stop', methods=['POST'])
 def stop_feedback():
-	"""
-	Endpoint to stop feedback for a document.
+	"""Stop the current attribute and advance to the next attribute.
 
-	header: {
-		"Authorization": "your_authorization_token"
-	}
-	no payload is required
+	Requires the scoped sessionId, expectedVersion and commandId. Whole-session
+	closure, including during a conflict, uses feedback/close.
 	"""
 	authorization = request.headers.get("Authorization")
 
@@ -949,6 +946,14 @@ def stop_feedback():
 	task = DocumentBaseStopMatching().apply_async(args=(user_id,), **g.feedback_options)
 
 	return make_response({'task_id': task.id}, 202)
+
+@core_routes.route('/document_base/feedback/close', methods=['POST'])
+def close_feedback():
+	"""Close this user's session while preserving the saved canonical matches."""
+	task = DocumentBaseCloseFeedbackSession().apply_async(
+		args=(g.auth_token.id,), **g.feedback_options)
+	return make_response({"task_id": task.id}, 202)
+
 
 def _public_feedback_document(form):
 	base_id = _positive_id(form.get("baseId"))

@@ -346,7 +346,7 @@ if publication and publication.phase=='processing' and publication.lease_until a
  publication.phase=publication.waiting_phase
 end
 local message, attribute = ARGV[7], ARGV[8]
-local controls = message=='reload-document-base' or message=='stop-interactive-matching'
+local controls = message=='reload-document-base' or message=='stop-interactive-matching' or message=='close-feedback-session'
 local select_attribute = message=='start-ranking' or message=='skip-ranking'
 local rank = message=='custom-match' or message=='is-match' or message=='no-match-in-document' or message=='multi-match'
 local error_message = nil

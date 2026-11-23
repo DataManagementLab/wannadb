@@ -244,3 +244,62 @@ def save_session(user_id, session_id, base_id, snapshot_id, expected_snapshot,
                 if cursor.rowcount != 1:
                     raise FeedbackSessionConflict("This feedback command was already saved.")
     return version
+
+
+
+def close_session(user_id, session_id, base_id, expected_version, command):
+    """Close one review session against its version, retaining current saved matches."""
+    if (type(expected_version) is not int or expected_version < 1
+            or not isinstance(command, dict) or not command.get("command_id")
+            or not command.get("request_fingerprint") or command.get("session_id") != session_id
+            or command.get("expected_version") != expected_version):
+        raise ValueError("A scoped feedback command is required to close a session.")
+    with closing(connectPG()) as connection, connection, connection.cursor() as cursor:
+        # Keep the account/base/snapshot/session lock order used by feedback commits.
+        cursor.execute("SELECT id FROM public.users WHERE id = %s FOR KEY SHARE", (user_id,))
+        if cursor.fetchone() is None:
+            raise PermissionError("Feedback session access denied.")
+        cursor.execute("""
+            SELECT b.attribute_schema_version::text
+            FROM public.document_bases b
+            WHERE b.id = %s AND EXISTS (
+                SELECT 1 FROM public.membership m
+                WHERE m.userid = %s AND m.organisationid = b.organisation_id
+                    AND m.authorisation IN (0, 1, 10)
+            ) FOR UPDATE OF b
+        """, (base_id, user_id))
+        base = cursor.fetchone()
+        if base is None:
+            raise PermissionError("Feedback session access denied.")
+        cursor.execute(sql.SQL("""
+            SELECT d.id, encode(sha256(d.content_byte), 'hex')
+            FROM public.document_bases b JOIN public.documents d ON {scope}
+            WHERE b.id = %s LIMIT 2 FOR UPDATE OF d
+        """).format(scope=document_base_snapshot_scope()), (base_id,))
+        snapshots = cursor.fetchall()
+        if len(snapshots) != 1:
+            raise FeedbackSessionConflict("The saved document base is unavailable. Refresh the session.")
+        snapshot_id, snapshot_hash = snapshots[0]
+        version = expected_version + 1
+        cursor.execute("""
+            UPDATE public.feedback_sessions
+            SET snapshot_id = %s, snapshot_hash = %s, attribute_schema_version = %s,
+                version = %s, phase = 'finished', attribute = NULL, checkpoint = NULL,
+                expires_at = clock_timestamp() + %s * interval '1 second'
+            WHERE user_id = %s AND session_id = %s AND base_id = %s
+                AND version = %s AND phase IN ('selection', 'ranking')
+                AND expires_at > clock_timestamp()
+        """, (snapshot_id, snapshot_hash, base[0], version, _FINISHED_SECONDS,
+              user_id, session_id, base_id, expected_version))
+        if cursor.rowcount != 1:
+            raise FeedbackSessionConflict("This feedback session changed or expired. Reload its current state.")
+        cursor.execute("""
+            INSERT INTO public.feedback_outcomes
+                (user_id, command_id, session_id, base_id, expected_version, request_fingerprint, snapshot_version)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (user_id, command_id) DO NOTHING
+        """, (user_id, command["command_id"], session_id, base_id, expected_version,
+              command["request_fingerprint"], snapshot_hash))
+        if cursor.rowcount != 1:
+            raise FeedbackSessionConflict("This feedback command was already saved.")
+    return version

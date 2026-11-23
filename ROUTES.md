@@ -73,7 +73,7 @@ Post `organisationId`, `baseName`, `baseId`, and `sqlQuery` to `/core/document_b
 1. Post `organisationId`, `baseName` and `baseId` to `/core/document_base/interactive`. Use the returned `task_id` as `sessionId`. Read it with `feedbackSession=1`, `organisationId` and `baseName` on the status URL. The parent publication moves from `loading` to `selection`.
 2. In `selection`, post `attribute` and `doAttribute` to `/core/document_base/do_current_attribute` along with the command fields below and the base scope. Use `doAttribute: true` to start ranking, or `false` to skip the waiting attribute. `reset: true` with `doAttribute: true` repopulates it. The session moves through `processing`, then publishes a new version in `ranking`, `selection`, or `finished`.
 3. In `ranking`, use a match, custom span, batch submission, or no-match decision. Poll the command's returned task ID. A command is confirmed when `command.state` is `published` and the session version reaches `command.published_version`. The Celery state alone is insufficient. A conflict may be published for review without accepting the proposed change. The UI can keep the saved decision or explicitly replace it.
-4. Close a session through `/core/document_base/feedback/stop`. `finished` represents a closed publication. A failed or expired session can be reopened from the base with its saved matches.
+4. Use `/core/document_base/feedback/stop` to stop the current attribute and advance to the next. Use `/core/document_base/feedback/close` to close the whole session from selection, ranking or an unresolved conflict. A successful close preserves the current saved matches and releases that session's active capacity. `finished` represents a closed publication. A failed or expired session can be reopened from the base with its saved matches.
 
 Every command below is a JSON POST under `/core/document_base` and carries `sessionId` (UUID), `expectedVersion` (the last published version), and a fresh `commandId` (UUID) for each new decision. Single-document and batch match requests include `organisationId` and `baseName` as scope.
 
@@ -84,9 +84,12 @@ Every command below is a JSON POST under `/core/document_base` and carries `sess
 | `/confirm/nugget/multiple` | `nuggets` list, one per document, each with `documentName`, `documentContent`, `text`, `startIndex` and `endIndex`. |
 | `/confirm/nugget/none` | `documentName`, `documentContent` and the span fields. For a whole-document no match, use empty `nuggetText` and both offsets zero. |
 | `/reload` | Optional `conflictResolution`, either `keep` or `replace` when resolving a conflict. |
-| `/feedback/stop` | Command fields alone. |
+| `/feedback/stop` | Command fields alone. Stops the current attribute and advances. Resolve any pending decision conflict first. |
+| `/feedback/close` | Command fields alone. Closes the whole session, including an unresolved conflict, and discards its uncommitted proposal. |
 
 Offsets count Unicode code points and use an exclusive end. Text fields must match the selected span of the current stored document exactly.
+
+Whole-session close is a lightweight command on the dedicated feedback queue. It validates the submitting user's membership and the displayed session version, then atomically clears the checkpoint, records the durable command receipt and marks that session finished. It can close a checkpoint whose source or attribute schema changed. It preserves the current canonical document base and other reviewers' sessions. A failed Redis publication after the commit can recover the receipt through normal status polling. Closing requires an available task queue to submit the command.
 
 If a reply is lost, poll by the original command ID before retrying. For an exact replay, reuse the same command ID, expected version, and payload. Changed data or a new decision requires a new command ID after checking the live version. If a saved receipt is recovered from PostgreSQL, `command.recovered` is true and the result confirms the saved decision. Reopen the base to continue because the live publication is unavailable. If there is no saved outcome and the session is gone, reopen the base and inspect current state before sending another decision.
 

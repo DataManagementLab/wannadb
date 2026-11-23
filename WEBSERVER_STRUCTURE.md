@@ -17,6 +17,8 @@ See [deployment and database recovery](README.md#web-backend-deployment) and the
 
 The `worker` service consumes the `celery` queue for general document-base work. The `feedback-worker` service consumes the `feedback` queue for opening interactive sessions and applying feedback commands. It releases its slot when a session waits for input. Separate users can have open sessions on the same base.
 
+Stopping an attribute advances the current session to its next attribute. The explicit whole-session close command can run while a proposal is in conflict, clears that reviewer's durable checkpoint and releases their session capacity. It preserves committed matches and uses the same durable receipt and publication recovery as other feedback commands. The close task does not restore the matcher or load model resources.
+
 Tasks have independent queue and execution deadlines. `QUEUE_SECONDS` defaults to 900. Both queues share an admission limit of 32 waiting or running tasks and 8 per user by default, controlled by `MAX_COMPUTE_TASKS` and `MAX_COMPUTE_TASKS_PER_USER`. Interactive sessions waiting for user input do not consume a compute slot. Do not change queue routing by restarting a consumer on a different queue while jobs are in flight.
 
 ## Worker recovery and health

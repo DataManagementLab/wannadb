@@ -21,7 +21,7 @@ from wannadb_web.limits import (
 	validate_attribute_count, validate_corpus,
 )
 from wannadb_web.postgres.attribute_schema import AttributeSchemaConflict, edit_attribute_schema
-from wannadb_web.postgres.feedback_sessions import FeedbackSessionConflict, extend_session_step, load_session
+from wannadb_web.postgres.feedback_sessions import FeedbackSessionConflict, close_session, extend_session_step, load_session
 from wannadb_web.postgres.queries import get_creation_documents, get_base_id, get_feedback_outcome
 from wannadb_web.worker.data import DoAttributeRanking, MultiNuggetsMatchFeedback, ReloadDocumentBase, Signals, NoMatchFeedback, NuggetMatchFeedback, CustomMatchFeedback, SkipAttributeRanking, StopMatching
 from wannadb_web.worker.util import State
@@ -526,9 +526,11 @@ class FeedbackTask(BaseTask):
 		scope = TaskAccess(user_id).task(command_id)
 		if scope is None:
 			raise PermissionError("The feedback command scope is no longer available.")
+		payload = feedback if isinstance(feedback, dict) else feedback.to_json()
+		closing_session = payload["message"] == "close-feedback-session"
 		conflict = None
 		try:
-			current = load_session(user_id, context["session_id"], include_checkpoint=True)
+			current = load_session(user_id, context["session_id"], include_checkpoint=not closing_session)
 		except FeedbackSessionConflict as error:
 			conflict, current = error, None
 		if (current is None or current["closed"] or current["version"] != context["expected_version"] or
@@ -542,7 +544,6 @@ class FeedbackTask(BaseTask):
 				raise conflict
 			raise FeedbackSessionConflict("Feedback has changed or the session expired. Reopen the attribute.")
 		session = SessionState.current(user_id)
-		payload = feedback if isinstance(feedback, dict) else feedback.to_json()
 		lease = str(uuid4())
 		lease_seconds = self.time_limit + 30
 		record = session.begin_step(command_id, current["version"], payload, lease, lease_seconds)
@@ -553,15 +554,25 @@ class FeedbackTask(BaseTask):
 			return
 
 		api = None
+		closed = False
 		try:
-			if not extend_session_step(user_id, context["session_id"], current["version"], lease_seconds):
+			if not closing_session and not extend_session_step(
+				user_id, context["session_id"], current["version"], lease_seconds):
 				raise FeedbackSessionConflict("Feedback has changed or the session expired. Reopen the attribute.")
 			self.update(State.STARTED)
+			if closing_session:
+				version = close_session(user_id, context["session_id"], current["base_id"],
+					current["version"], scope)
+				closed = True
+				if not session.publish_step(version, "finished", None, b"{}", None,
+					command_id=command_id, lease=lease):
+					raise RuntimeError("The closed feedback session could not be published.")
+				return
 			self.load()
 			api = self._create_api(user_id, scope["base_name"], scope["organisation_id"], build_query_cache=False)
 			api.advance_interactive_table_population(current, scope, payload, lease)
 		except Exception as error:
-			if api is None or not api.matching_step_saved:
+			if not closed and (api is None or not api.matching_step_saved):
 				message = "Feedback could not be applied. Try the action again."
 				if isinstance(error, FeedbackSessionConflict):
 					message = str(error)
@@ -593,6 +604,14 @@ class DocumentBaseStopMatching(FeedbackTask):
 	def run(self, user_id: int):
 
 		self.apply_decision(StopMatching())
+		return {"ok": True}
+
+
+class DocumentBaseCloseFeedbackSession(FeedbackTask):
+	name = "DocumentBaseCloseFeedbackSession"
+
+	def run(self, user_id: int):
+		self.apply_decision({"message": "close-feedback-session"})
 		return {"ok": True}
 
 
