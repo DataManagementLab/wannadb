@@ -4,6 +4,8 @@
 /.pytest_cache/
 .DS_Store
 .python-version
+**/.env/**
+!**/.gitkeep
 
 /models/
 
