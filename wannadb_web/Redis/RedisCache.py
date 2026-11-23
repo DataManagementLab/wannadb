@@ -463,7 +463,8 @@ return publication.version
 
 	def store_table_result(self, result):
 		rows = result["rows"]
-		meta = {"columns": result["columns"], "truncated": result["truncated"], "totalRows": len(rows)}
+		meta = {"columns": result["columns"], "truncated": result["truncated"], "totalRows": len(rows),
+			"includesAutomaticMatches": result.get("includesAutomaticMatches")}
 		meta_key, rows_key = f"{self.prefix}:table-meta", f"{self.prefix}:table-rows"
 		with self.redis.pipeline() as pipe:
 			pipe.set(meta_key, json.dumps(meta), ex=self.TABLE_TTL)

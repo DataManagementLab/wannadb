@@ -106,3 +106,11 @@ The historical path name `public` refers to votes shared with the organization. 
 The owner-review item version covers the displayed group members and their revisions. Replacing, adding or removing an agreeing suggestion can invalidate an open dialog. A conflict found after queueing is returned by task polling as HTTP `409` with `code: CONFLICT`. Refresh suggestions to make a new decision.
 
 `POST /core/status/<task_id>` is retired and returns `410` to authenticated callers. The former `POST /core/document_base/order/nugget` endpoint has been removed. The browser proxy rejects it with `404`, and Flask rejects direct POST requests with `405`. Use `view=review` on task status for ranked feedback candidates, or `view=document` to inspect a document’s nuggets. The former development route inventory and debug endpoints are unavailable.
+
+## SQL review modes
+
+SQL queries accept boolean `includeAutomaticMatches` (default true). Automatic preview retains predicted values. Confirmed-only mode excludes provisional mappings before SQL filtering, grouping and aggregation. Both modes use the same source documents and retain confirmed explicit No Match as an empty value.
+
+Each stored result, page and export includes `includesAutomaticMatches`. Older cached results may omit it or return null; their mode is unknown. The frontend labels the saved result's mode independently of the next query's checkbox, and CSV filenames identify automatic-preview or confirmed-only mode. CSV columns and rows follow the SQL result, including arbitrary projections and aggregates.
+
+Catalog and feedback overview share confirmed/provisional/missing document counts. Explicit confirmed No Match counts as reviewed, while provisional mappings do not count toward completion.

@@ -27,6 +27,8 @@ Example:
 
 Author: Leon Wenderoth
 """
+from wannadb_web.worker.progress import attribute_progress
+
 import logging
 import re
 from uuid import UUID
@@ -35,7 +37,7 @@ from typing import Optional
 from bson import decode as decode_bson
 from redis.exceptions import RedisError
 from wannadb_web.postgres.queries import get_base_reference, get_document, get_document_base_data, get_document_by_name_and_content, get_feedbacks_for_document, get_document_by_name, get_base_id, get_organisation_authorisation, documents_available_for_base, get_document_ids_for_snapshot, get_document_base_snapshot
-from wannadb_web.postgres.attribute_schema import SUGGESTED_ATTRIBUTE_MAPPINGS, attribute_ids_for_snapshot, get_attribute_schema_version, parse_attribute_edit
+from wannadb_web.postgres.attribute_schema import attribute_ids_for_snapshot, get_attribute_schema_version, parse_attribute_edit
 from wannadb_web.postgres.queries import FeedbackOutcomeUnavailable, get_feedback_outcome, get_public_feedback_suggestions
 from wannadb_web.postgres.feedback_sessions import FeedbackSessionUnavailable, load_session
 from wannadb_web.postgres.transactions import add_feedback, delete_document_base_data
@@ -392,12 +394,15 @@ def query_document_base():
 	base_name = form.get("baseName")
 	if not base_name:
 		return make_response({"error": "a document base is required"}, 400)
+	include_automatic = form.get("includeAutomaticMatches", True)
+	if type(include_automatic) is not bool:
+		return make_response({"error": "includeAutomaticMatches must be a boolean"}, 400)
 	try:
 		query = validate_table_query(form.get("sqlQuery"))
 	except TableQueryError as error:
 		return make_response({"error": str(error)}, 400)
 	task = DocumentBaseLoad().apply_async(
-		args=(g.auth_token.id, base_name, g.organisation_id), kwargs={"sql_query": query}, expected_base_id=g.requested_base_id)
+		args=(g.auth_token.id, base_name, g.organisation_id), kwargs={"sql_query": query, "confirmed_only": not include_automatic}, expected_base_id=g.requested_base_id)
 	return make_response({"task_id": task.id}, 202)
 
 
@@ -456,18 +461,8 @@ def feedback_overview():
 	ids = attribute_ids_for_snapshot(base, version, stored_ids)
 	documents = base["documents"]
 	document_count = len(documents)
-	attributes = []
-	for attribute in base["attributes"]:
-		name = attribute["name"]
-		mapped_documents = [document for document in documents if name in document["attribute_mappings"]]
-		confirmed = sum(name not in document.get("signals", {}).get(SUGGESTED_ATTRIBUTE_MAPPINGS, ())
-			for document in mapped_documents)
-		populated = bool(document_count) and confirmed == document_count
-		attributes.append({
-			"id": ids[name], "name": name, "signals": {}, "populated": populated,
-			"partial": bool(mapped_documents) and not populated,
-			"nrOfNuggets": sum(len(document["attribute_mappings"][name]) for document in mapped_documents),
-		})
+	attributes = [dict(progress, id=ids[progress["name"]])
+		for progress in attribute_progress(documents, [item["name"] for item in base["attributes"]])]
 	return make_response({
 		"id": base_id, "name": base_name, "attributes": attributes, "attributeVersion": version, "documentCount": document_count,
 		"nuggetCount": sum(len(document["nuggets"]) for document in documents),

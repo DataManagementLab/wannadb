@@ -131,8 +131,9 @@ def _read_results(cursor):
     return {"columns": columns, "rows": rows, "truncated": True}
 
 
-def query_document_table(document_base, query):
+def query_document_table(document_base, query, *, include_automatic_matches=True):
     from wannadb_parsql.cache_db import SQLiteCacheDB
+    from wannadb_web.worker.progress import provisional_attributes
 
     query = _with_document_source(validate_table_query(query))
 
@@ -144,7 +145,8 @@ def query_document_table(document_base, query):
         conn.execute(f"CREATE TABLE documents ({schema})")
         conn.executemany(f"INSERT INTO documents VALUES ({placeholders})", (
             [document.name, *(
-                ", ".join(nugget.text for nugget in document.attribute_mappings.get(attribute.name, ())) or None
+                (", ".join(nugget.text for nugget in document.attribute_mappings.get(attribute.name, ())) or None)
+                if include_automatic_matches or attribute.name not in provisional_attributes(document.signals) else None
                 for attribute in document_base.attributes
             )] for document in document_base.documents
         ))
@@ -164,7 +166,7 @@ def query_document_table(document_base, query):
             cursor = conn.execute(query)
             if cursor.description is None:
                 raise TableQueryError("Enter a read-only query that returns rows.")
-            return _read_results(cursor)
+            return dict(_read_results(cursor), includesAutomaticMatches=include_automatic_matches)
         except sqlite3.ProgrammingError:
             raise TableQueryError("Enter one SQL statement without parameters.") from None
         except sqlite3.Error as error:
