@@ -184,7 +184,8 @@ class WannaDB_WebAPI:
 				return
 
 			document_id, document, self._attribute_schema_version, _ = snapshot
-			document_base = DocumentBase.from_bson(document)
+			# Saved mappings and checkpoint indices refer to the original candidate list.
+			document_base = DocumentBase.from_bson(document, deduplicate_nuggets=False)
 			if self.sqLiteCacheDBWrapper is not None:
 				for attribute in document_base.attributes:
 					self.sqLiteCacheDBWrapper.create_attribute_table(attribute.name)

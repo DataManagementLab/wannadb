@@ -693,7 +693,8 @@ def mutate_base_documents(base_name, base_id, organisation_id, user_id, *,
 		if len(snapshots) != 1:
 			raise RuntimeError("The document base has no unique saved snapshot.")
 		snapshot_id, content_byte = snapshots[0]
-		base = DocumentBase.from_bson(bytes(content_byte))
+		# Unrelated document edits must preserve saved candidate identities and indices.
+		base = DocumentBase.from_bson(bytes(content_byte), deduplicate_nuggets=False)
 
 		if additions:
 			cur.execute("SELECT name FROM documents WHERE organisationid = %s AND content IS NOT NULL;", (organisation_id,))
