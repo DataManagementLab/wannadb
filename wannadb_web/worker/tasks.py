@@ -2,7 +2,6 @@ import logging
 import inspect
 import hashlib
 import json
-import pickle
 import time
 from datetime import datetime, timezone
 from uuid import uuid4
@@ -14,7 +13,7 @@ from celery.signals import task_failure, task_revoked
 
 from wannadb.data.data import Document, Attribute, InformationNugget
 from wannadb.statistics import Statistics
-from wannadb_web.Redis.RedisCache import RedisCache, TaskAccess, TaskAdmission, SessionState, set_signal_scope, get_signal_scope
+from wannadb_web.Redis.RedisCache import TaskAccess, TaskAdmission, SessionState, set_signal_scope, get_signal_scope
 from wannadb_web.SQLite.table_query import TableQueryError, query_document_table
 from wannadb_web.limits import (
 	COMPUTE_SECONDS, MAX_BASE_DOCUMENTS, MAX_COMPUTE_TASKS, MAX_COMPUTE_TASKS_PER_USER, QUEUE_SECONDS, WorkLimitError,
@@ -41,19 +40,6 @@ def _request_fingerprint(task_name, parameters):
 	return hashlib.sha256(json.dumps([task_name, parameters], sort_keys=True).encode()).hexdigest()
 
 
-class InitManager(Task):
-	name = "InitManager"
-
-	def run(self, *args, **kwargs):
-		from wannadb import resources
-
-		resources.ResourceManager()
-		if resources.MANAGER is None:
-			raise RuntimeError("Resource_Manager is None!")
-		manager = pickle.dumps(resources.MANAGER)
-		RedisCache("0").set("manager", manager)
-
-
 class BaseTask(Task):
 	name = "BaseTask"
 	soft_time_limit = COMPUTE_SECONDS
@@ -65,12 +51,6 @@ class BaseTask(Task):
 			raise PermissionError("No task session selected")
 		return Signals(str(scope["user_id"]))
 
-	@property
-	def _redis_client(self):
-		scope = get_signal_scope()
-		if scope is None:
-			raise PermissionError("No task session selected")
-		return RedisCache(str(scope["user_id"]))
 
 	def __init__(self):
 		super().__init__()
@@ -264,15 +244,6 @@ class BaseTask(Task):
 		api.complete_session()
 		return {"ok": True}
 
-	def get_new_input(self):
-		if self._redis_client is None:
-			raise RuntimeError("self._redis_client is None!")
-		_input = self._redis_client.get("input")
-		if _input is not None:
-			pass
-
-		return _input
-
 
 @task_revoked.connect
 def _release_revoked_task(sender, request, terminated, expired, **kwargs):
@@ -291,21 +262,6 @@ def _release_lost_task(sender, task_id, exception, args, kwargs, **extra):
 		user_id = _task_user_id(args, kwargs)
 		if user_id is not None:
 			TaskAdmission("celery", user_id, task_id).finish("FAILURE")
-
-
-class TestTask(BaseTask):
-	name = "TestTask"
-
-	def run(self, *args, **kwargs):
-		super().run()
-		self.update(state=State.PENDING)
-		while True:
-			_input = self.get_new_input()
-			if _input is not None:
-				self.update(state=State.SUCCESS, meta={"msg": _input})
-				time.sleep(2)
-			self.update(state=State.WAITING, meta={"msg": "waiting"})
-			time.sleep(2)
 
 
 class CreateDocumentBase(BaseTask):
@@ -438,44 +394,6 @@ class ReviewPublicSuggestion(BaseTask):
 			self._signals.error.emit(error)
 			raise
 		return {"ok": True}
-
-
-class DocumentBaseForgetMatches(BaseTask):
-	name = "DocumentBaseForgetMatches"
-
-	def run(self, user_id: int, attributes_strings: list[str], base_name: str, organisation_id: int):
-		self.load()
-		attributes: list[Attribute] = []
-
-		for attribute_string in attributes_strings:
-			if attribute_string == "":
-				logger.error("Attribute names cannot be empty!")
-				raise Exception("Attribute names cannot be empty!")
-			if attribute_string in [attribute.name for attribute in attributes]:
-				logger.error("Attribute names must be unique!")
-				raise Exception("Attribute names must be unique!")
-			attributes.append(Attribute(attribute_string))
-
-		api = self._create_api(user_id, base_name, organisation_id)
-		api.load_document_base_from_bson()
-		self.check_api_error(api)
-		api.forget_matches()
-		return self.finish(api, persist=True)
-
-
-class DocumentBaseForgetMatchesForAttribute(BaseTask):
-	name = "DocumentBaseForgetMatchesForAttribute"
-
-	def run(self, user_id: int, attribute_string: str, base_name: str, organisation_id: int):
-		self.load()
-
-		attribute = (Attribute(attribute_string))
-
-		api = self._create_api(user_id, base_name, organisation_id)
-		api.load_document_base_from_bson()
-		self.check_api_error(api)
-		api.forget_matches_for_attribute(attribute)
-		return self.finish(api, persist=True)
 
 
 class DocumentBaseInteractiveTablePopulation(BaseTask):
@@ -713,7 +631,6 @@ class DocumentBaseNoMatchForDocument(FeedbackTask):
 			nugget_exist(nugget, document, start_index, end_index)
 			self.apply_decision(no_match(nugget, document, start_index, end_index))
 		return {"ok": True}
-
 
 
 def _validate_feedback_span(document: Document, start_index: int, end_index: int):

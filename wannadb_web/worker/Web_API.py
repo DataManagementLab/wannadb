@@ -1,6 +1,3 @@
-import csv
-import io
-import json
 import logging
 import time
 from typing import Optional, Any
@@ -227,41 +224,6 @@ class WannaDB_WebAPI:
 		self._stage_document_base(self.document_base)
 		self.session.close()
 
-	# todo: below not implemented yet
-	def save_table_to_csv(self):
-		logger.debug("Called function 'save_table_to_csv'.")
-
-		try:
-			buffer = io.StringIO()
-
-			# check that the table is complete
-			for attribute in self.document_base.attributes:
-				for document in self.document_base.documents:
-					if attribute.name not in document.attribute_mappings.keys():
-						logger.error("Cannot save a table with unpopulated attributes!")
-						self.signals.error.emit(
-							Exception("Cannot save a table with unpopulated attributes!"))
-
-			# TODO: currently stores the text of the first matching nugget (if there is one)
-			table_dict = self.document_base.to_table_dict("text")
-			headers = list(table_dict.keys())
-			rows = []
-			for ix in range(len(table_dict[headers[0]])):
-				row = []
-				for header in headers:
-					if header == "document-name":
-						row.append(table_dict[header][ix])
-					elif not table_dict[header][ix]:
-						row.append(None)
-					else:
-						row.append(table_dict[header][ix][0])  # type: ignore
-				rows.append(row)
-				writer = csv.writer(buffer, delimiter=",", quotechar='"', quoting=csv.QUOTE_ALL)
-				writer.writerow(headers)
-				writer.writerows(rows)
-		except Exception as error:
-			self._report_error("TABLE_EXPORT_FAILED", error)
-			raise
 
 	def mutate_documents(self, *, additions=(), replacement=None, removal=None):
 		documents = list(additions)
@@ -281,69 +243,6 @@ class WannaDB_WebAPI:
 			raise
 		self.signals.status.emit("Changes saved.")
 
-	def add_attributes(self, attributes: list[Attribute]):
-		existing = {attribute.name for attribute in self.document_base.attributes}
-		self.update_attributes(self.document_base.attributes + [
-			attribute for attribute in attributes if attribute.name not in existing
-		])
-
-	def remove_attributes(self, attributes: list[Attribute]):
-		names = {attribute.name for attribute in attributes}
-		remaining = [attribute for attribute in self.document_base.attributes if attribute.name not in names]
-		if len(self.document_base.attributes) - len(remaining) != len(names):
-			raise ValueError("Attribute name does not exist!")
-		self.update_attributes(remaining)
-
-	def update_attributes(self, attributes: list[Attribute]):
-		validate_attribute_count(len(attributes))
-		existing = {attribute.name: attribute for attribute in self.document_base.attributes}
-		names = {attribute.name for attribute in attributes}
-		for document in self.document_base.documents:
-			for removed in document.attribute_mappings.keys() - names:
-				del document.attribute_mappings[removed]
-		self.document_base.attributes[:] = [existing.get(attribute.name, attribute) for attribute in attributes]
-
-	def forget_matches_for_attribute(self, attribute: Attribute):
-		logger.debug("Called function 'forget_matches_for_attribute'.")
-
-		self.sqLiteCacheDBWrapper.delete_attribute_table(attribute.name)
-		try:
-			if attribute in self.document_base.attributes:
-				for document in self.document_base.documents:
-					if attribute.name in document.attribute_mappings.keys():
-						del document.attribute_mappings[attribute.name]
-				self.signals.status.emit("Matches forgotten.")
-				self._stage_document_base(self.document_base)
-			else:
-				logger.error("Attribute name does not exist!")
-				self.signals.error.emit(Exception("Attribute name does not exist!"))
-		except Exception as error:
-			self._report_error("RESET_FAILED", error)
-			raise
-
-	def forget_matches(self):
-		logger.debug("Called function 'forget_matches'.")
-		for attribute in self.document_base.attributes:
-			self.sqLiteCacheDBWrapper.delete_attribute_table(attribute.name)
-			self.sqLiteCacheDBWrapper.create_attribute_table(attribute.name)
-		try:
-			for document in self.document_base.documents:
-				document.attribute_mappings.clear()
-			self._stage_document_base(self.document_base)
-			self.signals.finished.emit(1)
-		except Exception as error:
-			self._report_error("RESET_FAILED", error)
-			raise
-
-	## todo: below not implemented yet
-
-	def save_statistics_to_json(self):
-		logger.debug("Called function 'save_statistics_to_json'.")
-		try:
-			return json.dumps(self.signals.statistics.to_json(), indent=2)
-		except Exception as error:
-			self._report_error("STATISTICS_EXPORT_FAILED", error)
-			raise
 
 	@staticmethod
 	def _matcher(propagation=None):
