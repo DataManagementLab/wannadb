@@ -13,6 +13,21 @@ See [deployment and database recovery](README.md#web-backend-deployment) and the
 | SQLite | In-memory read-only SQL query projection inside the worker. |
 | Flower | Optional monitoring. Production enables it with the `monitoring` profile, authentication, and the loopback listener. |
 
+## Image roles
+
+All backend Docker stages use Python 3.11. `backend-requirements.txt` constrains the lightweight roles; it is not installed wholesale in every image.
+
+| Service | Development / production target | Installed role |
+| --- | --- | --- |
+| API (`wannadb`) | `dev` / `prod`, both based on `api` | Flask/PostgreSQL, auth, Celery/Redis submission and lightweight BSON/NumPy document support. No Torch, model downloads or desktop UI dependencies. |
+| Migration (`migrate`) | `migrate` / `migrate` | Flask and psycopg2 plus the migration runner and SQL files. No worker or model imports. |
+| Monitor (`flower`) | `flower` / `flower` | Celery, Flower and Redis. Monitors the broker without importing `celery_app` or loading models. |
+| Both workers | `worker` / `worker-prod` | Torch 2.4.1, core and backend requirements, extraction/matching libraries and model assets. |
+
+The development worker image also prepares desktop/experimental models, and Compose mounts the host checkout over `/home/wannadb`; ensure that checkout's model paths are populated. Production workers bake in the web spaCy, Stanza, BERT and sentence-transformer assets and set `HF_HUB_OFFLINE=1`. This flag only controls Hugging Face access. The shared extractor still requests NLTK `punkt_tab` at import time; provision its cache or allow that request until the separate shared-core issue is resolved. Avoid describing worker startup as fully network-independent.
+
+API startup registers task classes for submission without loading their model resources. Workers initialize those resources lazily when needed. `BaseTask` remains the common lifecycle/status helper and is not registered as a standalone runnable task. The obsolete demo/setup/reset tasks and backend CSV stub are removed; CSV is built by the frontend from the bounded query result.
+
 ## Queue ownership
 
 The `worker` service consumes the `celery` queue for general document-base work. The `feedback-worker` service consumes the `feedback` queue for opening interactive sessions and applying feedback commands. It releases its slot when a session waits for input. Separate users can have open sessions on the same base.

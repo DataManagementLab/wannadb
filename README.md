@@ -31,7 +31,7 @@ See [EXTRACTORS.md](EXTRACTORS.md) for more information on the interactive extra
 
 ## Installation
 
-The steps below install the desktop and core components. The web deployment uses Python 3.11 and installs both dependency files in Docker.
+The steps below install the desktop and core components. For the web application, use [Web backend deployment](#web-backend-deployment) and the [frontend README](https://github.com/DataManagementLab/wannadbDemo#readme). The web images use Python 3.11 with role-specific dependencies: only the workers install Torch, the core requirements and model assets. See [image roles](WEBSERVER_STRUCTURE.md#image-roles).
 
 ##### 1. Create a virtual environment
 
@@ -234,6 +234,8 @@ A successful migration container exits with code 0. The web service and both wor
 
 Start the [frontend](https://github.com/DataManagementLab/wannadbDemo) on the same host. For SSH use the forwarded frontend at `http://localhost:3000`. For public access terminate TLS at a reverse proxy that targets loopback port 3000 and set the frontend's `NEXTAUTH_URL` to the public HTTPS origin. The production backend listens on host loopback port 8000. PostgreSQL and Redis stay inside the Compose network. Flower is optional through the `monitoring` profile and requires authentication on loopback port 5555. Expose only the HTTPS reverse proxy publicly.
 
+Deploy the backend and frontend as a compatible pair from the same web release. This checkout requires migrations 0001–0009, versioned feedback commands and mapping-bound public review requests. The current frontend uses Next.js 15.5.29, Node 26.13.1 in Docker and bundled Yarn 4.0.1; PostgreSQL uses version 16. Use the dependency pins and images in each checkout when rebuilding. An older frontend without these request fields is not compatible with the current backend. For upgrades, stop writers, migrate and start the API and both workers before deploying the matching frontend.
+
 ### Local backend development
 
 The development Compose file uses Flask debug and development database credentials. Run it on a trusted machine because it publishes backend port 8000 on all interfaces. Create `wannadb_web/.env/.dev` locally with mode 600 and the settings below. Replace the signing-secret placeholder with a fresh random value and keep this file out of version control.
@@ -254,6 +256,8 @@ AUTH_PROXY_SECRET=replace-with-the-same-secret-as-the-frontend
 ```
 
 Run `docker compose up -d --build` from the backend checkout. The development file mounts the checkout. Rebuild if dependencies change. If the mounted checkout needs additional desktop or experimental models, see `scripts/prepare_models.py` and `scripts/prepare_glove.py`. Use the production file for deployments where you rely on the model assets baked into the image.
+
+Upload/corpus, task, session, SQL and propagation budgets are described under [Limits and expiry](ROUTES.md#limits-and-expiry). Upload request size must fit the frontend proxy, reverse proxy and API limits, including multipart overhead. Change environment settings consistently in the API and workers and recreate the affected services; changing a local environment file alone does not update a running container.
 
 ### Authentication request limits
 
@@ -354,7 +358,48 @@ compose exec -T postgres sh -ec 'exec createdb -U "${POSTGRES_USER:-postgres}" w
 compose exec -T postgres sh -ec 'exec pg_restore --exit-on-error --single-transaction -U "${POSTGRES_USER:-postgres}" -d wannadb_restore' < "$backup"
 ```
 
-Verify the restored data before switching `DATABASE_NAME` to the restored database in the deployment environment. With the intended code version and environment, recreate the migration job and start the services using the upgrade sequence above. The old database remains available for recovery. PostgreSQL contains committed document data and feedback receipts. Use a fresh Redis cache before starting the app and workers so queued jobs and cached results from the old database cannot be used. Development can renew the Redis container’s anonymous volume. Production can attach a fresh named volume using a Compose override for the `redisdata` volume. Keep that override active for later deploys. Preserve the PostgreSQL volume.
+Verify account, membership, base, document and feedback rows in the restored database before switching `DATABASE_NAME` to `wannadb_restore` in the backend environment. Keep the current signing secrets. PostgreSQL contains committed document data and feedback receipts; Redis contains temporary publications and queued work. Starting the restored database against the old Redis contents can replay jobs from the old database.
+
+While the API and both workers remain stopped, stop Redis and create an empty cache volume. Run these commands from the backend checkout using the same Compose project as before. `docker volume create` returns a new volume name; the override records it for future deployments.
+
+```sh
+compose stop redis
+restore_cache="$(docker volume create)"
+cat > restore-cache.yaml <<EOF
+services:
+  redis:
+    volumes:
+      - restorecache:/data
+volumes:
+  restorecache:
+    external: true
+    name: $restore_cache
+EOF
+```
+
+For production, redefine the helper to keep the new cache attached:
+
+```sh
+compose() { docker compose --env-file wannadb_web/.env/.prod -f docker-compose-prod.yaml -f restore-cache.yaml "$@"; }
+```
+
+For development, use this helper instead:
+
+```sh
+compose() { docker compose -f docker-compose.yaml -f restore-cache.yaml "$@"; }
+```
+
+Retain `restore-cache.yaml` and the same Compose project name on every later deployment. Its `/data` mount replaces the old Redis mount in production and adds an explicit cache mount in development. It does not replace the PostgreSQL volume. Recreate the migration job and resume with the intended code and updated database setting:
+
+```sh
+compose rm -f migrate
+compose up -d --build
+compose logs --tail=100 migrate
+compose ps -a
+curl -fsS http://127.0.0.1:8000/health/ready
+```
+
+Proceed only when the migration exits 0 and both queues become ready. Sign in, inspect restored bases and complete a small creation job and feedback step. Rerun SQL queries and open fresh feedback sessions; old cached publications and uncommitted queued work are unavailable. Check the saved result before retrying a decision whose response was lost. Keep the old database and cache volumes until the restore is verified. This is an operator-run deployment rehearsal; a source check alone does not establish a successful restore on the target host.
 
 ### Operate and troubleshoot
 

@@ -1,29 +1,9 @@
-"""
-core_routes Module
+"""Scoped document-base, task-status and feedback HTTP routes under /core.
 
-This module defines Flask routes for the 'core' functionality of the Wannadb UI.
-
-It includes a Blueprint named 'core_routes' with routes related to creating document bases.
-
-Routes:
-    - /core/create_document_base (POST): Endpoint for creating a document base.
-
-
-Dependencies:
-    - Flask: Web framework for handling HTTP requests and responses.
-    - config.tokenDecode: Function for decoding authorization tokens.
-    - wannadb_ui.wannadb_api.WannaDBAPI: API for interacting with Wannadb.
-
-Example:
-    To create a Flask app and register the 'core_routes' Blueprint:
-
-    ```python
-    from flask import Flask
-    from core_routes import core_routes
-
-    app = Flask(__name__)
-    app.register_blueprint(core_routes)
-    ```
+ROUTES.md is the wire contract, including field types, required command IDs,
+versions and recovery. All non-OPTIONS requests require a valid backend Bearer
+credential. Task submission imports lightweight task definitions; workers load
+model resources only when processing a job.
 
 Author: Leon Wenderoth
 """
@@ -348,22 +328,12 @@ def delete_document_base(organisation_id, base_name):
 
 @core_routes.route('/document_base/load', methods=['POST'])
 def load_document_base():
+	"""Queue a scoped catalog/document load, returning 202 with task_id.
+
+	JSON requires organisationId and baseName; baseId guards the selected base.
+	includeAutomaticMatches is an optional boolean, default false for this route.
+	Read the resulting task with a GET status view as documented in ROUTES.md.
 	"""
-    Endpoint for loading a document base.
-
-	This endpoint is used to load a document base from a name and an organisation id.
-
-	Header:
-    {
-        "Authorization": "your_authorization_token"
-    }
-
-    Example Form Payload:
-    {
-        "organisationId": "your_organisation_id",
-        "baseName": "your_document_base_name",
-    }
-    """
 	form = request.get_json()
 	authorization = request.headers.get("Authorization")
 	organisation_id: Optional[int] = form.get("organisationId")
@@ -408,22 +378,12 @@ def query_document_base():
 
 @core_routes.route('/document_base/interactive', methods=['POST'])
 def interactive_document_base():
+	"""Open a separate feedback session and return 202 with its task_id.
+
+	JSON requires organisationId and baseName; include baseId to guard the base.
+	Use the returned task_id as sessionId, then read its published phase/version.
+	Starting an attribute is a separate command; see ROUTES.md.
 	"""
-    Endpoint for interactive document population
-
-	This endpoint is used to load a document base from a name and an organisation id.
-
-	Header:
-	{
-		"Authorization": "your_authorization_token"
-	}
-
-    Example Form Payload:
-    {
-        "organisationId": "your_organisation_id",
-        "baseName": "your_document_base_name",
-    }
-    """
 	form = request.get_json()
 	authorization = request.headers.get("Authorization")
 	organisation_id: Optional[int] = form.get("organisationId")
@@ -696,7 +656,12 @@ def task_update(task_id: str):
 
 @core_routes.route('/document_base/do_current_attribute', methods=['POST'])
 def document_base_do_current_attribute():
-	"""Start, reset, or skip the exact attribute waiting in this session."""
+	"""Start, reset or skip the exact attribute waiting in this session.
+
+	JSON requires sessionId, expectedVersion, commandId, organisationId, baseName,
+	attribute and boolean doAttribute. Optional reset is boolean and requires
+	doAttribute=true. Return 202 with the command task_id; poll its publication.
+	"""
 	form = request.get_json()
 	scope = g.feedback_scope
 	if _positive_id(form.get("organisationId")) is None or not isinstance(form.get("baseName"), str):
@@ -726,15 +691,12 @@ def document_base_do_current_attribute():
 
 @core_routes.route('/document_base/reload', methods=['POST'])
 def reload_document_base():
-	"""
-    Endpoint for reloading the document base.
+	"""Refresh a feedback step or resolve a pending decision conflict.
 
-    Header:
-    {
-        "Authorization": "your_authorization_token"
-    }
-	No Body Parameters
-    """
+	JSON requires sessionId, expectedVersion and commandId. Optional
+	conflictResolution is "keep" or "replace". Return 202 with task_id; poll that
+	command before using its new version. See ROUTES.md for replay semantics.
+	"""
 	authorization = request.headers.get("Authorization")
 	if authorization is None:
 		return make_response({"error": "missing parameters"}, 400)
@@ -757,27 +719,14 @@ def reload_document_base():
 
 @core_routes.route('/document_base/confirm/nugget/custom', methods=['POST'])
 def confirm_nugget_custom():
-	"""
-    Endpoint to confirm a custom nugget.
+	"""Confirm an exact custom span for the current ranked attribute.
 
-	Header:
-    {
-        "Authorization": "your_authorization_token"
-    }
-    Example Form Payload:
-    {
-        "organisationId": "your_organisation_id",
-        "baseName": "your_document_base_name",
-        "documentName": "your_document_name",
-        "documentContent": "your_document_content",
-        "nuggetText": "nugget_as_text",
-        "startIndex": "start_index_of_nugget",
-        "endIndex": "end_index_of_nugget",
-        "noMatchText": "no_match_nugget_as_text",
-        "noMatchStartIndex": "start_index_of_no_match_nugget",
-        "noMatchEndIndex": "end_index_of_no_match_nugget"
-    }
-    """
+	JSON requires sessionId, expectedVersion, commandId, organisationId, baseName,
+	documentName, documentContent, nuggetText, startIndex and endIndex. Optional
+	noMatchText/noMatchStartIndex/noMatchEndIndex identify a different negative span.
+	Offsets are integer Unicode code points with an exclusive end; text must match.
+	Return 202 with task_id and poll that command as described in ROUTES.md.
+	"""
 	form = request.get_json()
 	name, content, start, end, negative_text, negative_start, negative_end = _feedback_selection(form)
 	task = DocumentBaseConfirmNugget().apply_async(args=(
@@ -787,24 +736,13 @@ def confirm_nugget_custom():
 
 @core_routes.route('/document_base/confirm/nugget/match', methods=['POST'])
 def confirm_nugget_match():
-	"""
-    Endpoint to confirm a match nugget.
+	"""Confirm an existing candidate at an exact span for this session.
 
-	Header:
-    {
-        "Authorization": "your_authorization_token"
-    }
-    Example Form Payload:
-    {
-        "organisationId": "your_organisation_id",
-        "baseName": "your_document_base_name",
-        "documentName": "your_document_name",
-        "documentContent": "your_document_content",
-        "nuggetText": "nugget_as_text",
-        "startIndex": "start_index_of_nugget",
-        "endIndex": "end_index_of_nugget"
-    }
-    """
+	JSON requires sessionId, expectedVersion, commandId, organisationId, baseName,
+	documentName, documentContent, nuggetText, startIndex and endIndex. Optional
+	negative-span fields follow the custom route. Offsets count Unicode code points.
+	Return 202 with task_id; wait for the matching command's published receipt.
+	"""
 	form = request.get_json()
 	name, content, start, end, negative_text, negative_start, negative_end = _feedback_selection(form)
 	task = DocumentBaseConfirmNugget().apply_async(args=(
@@ -814,34 +752,13 @@ def confirm_nugget_match():
 
 @core_routes.route('/document_base/confirm/nugget/multiple', methods=['POST'])
 def confirm_nugget_multi_match():
-	"""
-	Endpoint to confirm one match per selected document.
+	"""Confirm one selected match per document in a single scoped command.
 
-	Header:
-    {
-        "Authorization": "your_authorization_token"
-    }
-    Example Form Payload:
-    {
-        "organisationId": "your_organisation_id",
-        "baseName": "your_document_base_name",
-        "nuggets": [
-            {
-                "documentName": "your_document_name_1",
-				"documentContent": "your_document_content_1",
-                "text": "nugget_as_text_1",
-                "startIndex": "start_index_of_nugget_1",
-                "endIndex": "end_index_of_nugget_1",
-            },
-            {
-                "documentName": "your_document_name_2",
-                "documentContent": "your_document_content_2",
-                "text": "nugget_as_text_2",
-                "startIndex": "start_index_of_nugget_2",
-                "endIndex": "end_index_of_nugget_2",
-            }
-        ]
-    }
+	JSON requires sessionId, expectedVersion, commandId, organisationId, baseName
+	and a nonempty nuggets list. Each item has documentName, documentContent, text,
+	startIndex and endIndex. Names must be distinct; spans use integer Unicode
+	code points and exactly match stored text. Return 202 with task_id.
+	See ROUTES.md for publication, replay and conflict behavior.
 	"""
 	nuggets = request.get_json().get("nuggets")
 	if not isinstance(nuggets, list) or not nuggets:
@@ -887,24 +804,13 @@ def confirm_nugget_multi_match():
 
 @core_routes.route('/document_base/confirm/nugget/none', methods=['POST'])
 def confirm_no_match_in_document():
-	"""
-    Endpoint to confirm no match for a nugget in a document.
+	"""Reject a candidate or record whole-document No Match in this session.
 
-	Header:
-    {
-        "Authorization": "your_authorization_token"
-    }
-    Example Form Payload:
-    {
-        "organisationId": "your_organisation_id",
-        "baseName": "your_document_base_name",
-        "documentName": "your_document_name",
-        "documentContent": "your_document_content",
-        "nuggetText": "nugget_as_text",
-        "startIndex": "start_index_of_nugget",
-        "endIndex": "end_index_of_nugget"
-    }
-    """
+	JSON requires sessionId, expectedVersion, commandId, organisationId, baseName,
+	documentName, documentContent, nuggetText, startIndex and endIndex. For a whole
+	document use empty nuggetText and integer zero for both offsets; otherwise the
+	selected code-point span must match the text. Return 202 with task_id.
+	"""
 	form = request.get_json()
 	name, content = form.get("documentName"), form.get("documentContent")
 	base_name = form.get("baseName")
@@ -944,7 +850,12 @@ def stop_feedback():
 
 @core_routes.route('/document_base/feedback/close', methods=['POST'])
 def close_feedback():
-	"""Close this user's session while preserving the saved canonical matches."""
+	"""Close this user's session while preserving saved canonical matches.
+
+	JSON requires sessionId, expectedVersion and commandId. This can close an
+	unresolved conflict. Return 202 with task_id, then poll the command publication.
+	See ROUTES.md for capacity release and durable receipt recovery.
+	"""
 	task = DocumentBaseCloseFeedbackSession().apply_async(
 		args=(g.auth_token.id,), **g.feedback_options)
 	return make_response({"task_id": task.id}, 202)
