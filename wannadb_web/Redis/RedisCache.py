@@ -1,3 +1,4 @@
+"""Scoped Redis signals, shared task admission and atomic feedback publications."""
 from typing import Optional, Union
 import logging
 import json
@@ -14,6 +15,20 @@ _signal_scope = ContextVar("signal_scope", default=None)
 
 
 def set_signal_scope(user_id=None, base_id=None, session_id=None, command_id=None, expected_version=None):
+	"""Set task-local publication identity, or clear it when base/session identity is absent.
+
+	:param user_id: The authenticated account ID selecting the authorized scope.
+	:type user_id: int | None
+	:param base_id: The selected document-base database ID.
+	:type base_id: int | None
+	:param session_id: The parent feedback-session UUID.
+	:type session_id: str | None
+	:param command_id: The unique decision UUID used for exact replay.
+	:type command_id: str | None
+	:param expected_version: The displayed session integer version or schema UUID required by
+	    this operation.
+	:type expected_version: int | str | None
+	"""
 	if base_id is None or session_id is None:
 		_signal_scope.set(None)
 		return
@@ -22,12 +37,22 @@ def set_signal_scope(user_id=None, base_id=None, session_id=None, command_id=Non
 
 
 def get_signal_scope():
+	"""Read the current task-local publication identity without changing it.
+
+	:returns: The signal scope mapping.
+	:rtype: dict[str, object] | None
+	"""
 	return _signal_scope.get()
 
 
 class RedisCache:
+	"""User/base/session-prefixed Redis key access with expiring cached values."""
 	def __init__(self, user_id: str) -> None:
-		"""Initialize the RedisCache instance for a specific user."""
+		"""Initialize the RedisCache instance for a specific user.
+
+		:param user_id: The authenticated account ID selecting the authorized scope.
+		:type user_id: str
+		"""
 		self.redis_client = util.connectRedis()
 		self.user_space_key = f"user:{user_id}"
 		scope = _signal_scope.get()
@@ -35,32 +60,61 @@ class RedisCache:
 			self.user_space_key += f':base:{scope["base_id"]}:session:{scope["session_id"]}'
 
 	def set(self, key: str, value: Union[str, bytes, int, float]) -> None:
-		"""Set a key-value pair in the user-specific space."""
+		"""Set a key-value pair in the user-specific space.
+
+		:param key: The cache key within the already selected namespace.
+		:type key: str
+		:param value: The value to validate, store or convert as described above.
+		:type value: Union[str, bytes, int, float]
+		"""
 		user_key = f"{self.user_space_key}:{key}"
 		self.redis_client.set(name=user_key, value=value, ex=86400)
 
 	def sadd(self, key: str, *values: Union[str, bytes, int, float]) -> None:
-		"""Set a key-value pair in the user-specific space."""
+		"""Add values to the namespaced Redis set.
+
+		:param key: The cache key within the already selected namespace.
+		:type key: str
+		:param values: The values supplied to the scoped cache operation.
+		:type values: tuple[Union[str, bytes, int, float], ...]
+		"""
 		user_key = f"{self.user_space_key}:{key}"
 		self.redis_client.sadd(name=user_key, value=values)
 
 	def spop(self, key: str) -> Optional[set]:
-		"""Set a key-value pair in the user-specific space."""
+		"""Read every member of the namespaced set without removing members.
+
+		:param key: The cache key within the already selected namespace.
+		:type key: str
+		:returns: The spop result.
+		:rtype: Optional[set]
+		"""
 		user_key = f"{self.user_space_key}:{key}"
 		return self.redis_client.smembers(name=user_key)
 
 	def get(self, key: str) -> Optional[Union[str, bytes, int, float]]:
-		"""Get the value associated with a key in the user-specific space."""
+		"""Get the value associated with a key in the user-specific space.
+
+		:param key: The cache key within the already selected namespace.
+		:type key: str
+		:returns: The get result.
+		:rtype: Optional[Union[str, bytes, int, float]]
+		"""
 		user_key = f"{self.user_space_key}:{key}"
 		return self.redis_client.get(user_key)
 
 	def delete(self, key: str) -> None:
-		"""Delete the key-value pair associated with a key in the user-specific space."""
+		"""Delete the key-value pair associated with a key in the user-specific space.
+
+		:param key: The cache key within the already selected namespace.
+		:type key: str
+		"""
 		user_key = f"{self.user_space_key}:{key}"
 		self.redis_client.delete(user_key)
 
 	def delete_user_space(self) -> None:
-		"""Delete all entries associated with the user-specific space."""
+		"""Delete all entries associated with the user-specific space.
+		"""
 		user_space_pattern = f"{self.user_space_key}:*"
 
 		# Use SCAN to get all keys matching the pattern
@@ -75,7 +129,8 @@ class RedisCache:
 			self.redis_client.delete(*keys_to_delete)
 
 	def close(self) -> None:
-		"""Close the Redis connection for the user-specific space."""
+		"""Close the Redis connection for the user-specific space.
+		"""
 		self.redis_client.close()
 		self.redis_client = None
 
@@ -160,6 +215,15 @@ return broker
 """
 
 	def __init__(self, queue: str, user_id: int, task_id: str):
+		"""Initialize TaskAdmission with its supplied dependencies and scope.
+
+		:param queue: The logical queue/admission namespace.
+		:type queue: str
+		:param user_id: The authenticated account ID selecting the authorized scope.
+		:type user_id: int
+		:param task_id: The scoped Celery task/command UUID.
+		:type task_id: str
+		"""
 		self.key = f"wannadb:task-admission:{queue}"
 		self.user_key = f"{self.key}:user:{user_id}"
 		self.member = f"{user_id}:{task_id}"
@@ -167,11 +231,35 @@ return broker
 		self.access_key = TaskAccess.task_key(user_id, task_id)
 
 	def _execute(self, operation, *args):
+		"""Execute an atomic admission operation using Redis server time.
+
+		:param operation: The operation selector or callable invoked by this helper.
+		:type operation: str | Callable[..., object]
+		:param args: Positional task/callback arguments.
+		:type args: tuple[object, ...]
+		:returns: The raw Redis Lua result for the selected admission operation.
+		:rtype: object
+		"""
 		with util.connectRedis() as redis:
 			return redis.eval(self._SCRIPT, 4, self.key, self.user_key, self.job_key, self.access_key,
 				operation, self.member, *args)
 
 	def reserve(self, scope, maximum: int, per_user: int, queue_seconds: int) -> int:
+		"""Reserve shared capacity or return the existing exact submission deadline.
+
+		:param scope: The authorized user, base, organization and session/task identity.
+		:type scope: dict[str, object]
+		:param maximum: The shared admitted-task budget.
+		:type maximum: int
+		:param per_user: The submitting account's admitted-task budget.
+		:type per_user: int
+		:param queue_seconds: The admitted queue-wait deadline in seconds.
+		:type queue_seconds: int
+		:returns: The admitted queue deadline, or the exact existing reservation deadline.
+		:rtype: int
+		:raises QueueFullError: Shared task or active-session admission has no remaining capacity.
+		:raises ValueError: If an input fails validation for this operation.
+		"""
 		encoded = json.dumps(scope, sort_keys=True, separators=(",", ":"))
 		result = self._execute("reserve", encoded, maximum, per_user, queue_seconds)
 		if result == -1:
@@ -183,12 +271,35 @@ return broker
 		return result
 
 	def start(self, running_seconds: int) -> bool:
+		"""Claim an admitted job for a bounded running lease.
+
+		:param running_seconds: The admitted execution-lease lifetime in seconds.
+		:type running_seconds: int
+		:returns: True when the operation or predicate succeeds; otherwise False.
+		:rtype: bool
+		"""
 		return bool(self._execute("start", running_seconds))
 
 	def status(self, broker_status: str) -> str:
+		"""Reconcile broker state with independent queue/running deadlines.
+
+		:param broker_status: The current Celery result state before admission reconciliation.
+		:type broker_status: str
+		:returns: The broker state after reconciling expired queue and execution leases.
+		:rtype: str
+		"""
 		return self._execute("status", broker_status).decode()
 
 	def finish(self, status: str, *, expected_state: str = "", legacy: bool = False):
+		"""Release admission only for the expected current state when supplied.
+
+		:param status: The state, HTTP status or emitted value required here.
+		:type status: str
+		:param expected_state: The admission state required before releasing the task reservation.
+		:type expected_state: str
+		:param legacy: Whether finalization is handling a legacy admission record.
+		:type legacy: bool
+		"""
 		try:
 			if legacy:
 				self._execute("legacy_release")
@@ -201,10 +312,22 @@ return broker
 class TaskAccess:
 	"""Keep authorization metadata separate from resettable worker signals."""
 	def __init__(self, user_id: int):
+		"""Initialize TaskAccess with its supplied dependencies and scope.
+
+		:param user_id: The authenticated account ID selecting the authorized scope.
+		:type user_id: int
+		"""
 		self.cache = RedisCache(f"access:{user_id}")
 		self.user_id = user_id
 
 	def _get(self, key):
+		"""Read and decode one expiring access scope, rejecting malformed cached state.
+
+		:param key: The cache key within the already selected namespace.
+		:type key: str
+		:returns: The get mapping.
+		:rtype: dict[str, object] | None
+		"""
 		value = self.cache.get(key)
 		try:
 			return json.loads(value) if value is not None else None
@@ -212,14 +335,38 @@ class TaskAccess:
 			return None
 
 	def _set(self, key, scope):
+		"""Store an expiring task/access scope in this user namespace.
+
+		:param key: The cache key within the already selected namespace.
+		:type key: str
+		:param scope: The authorized user, base, organization and session/task identity.
+		:type scope: dict[str, object]
+		"""
 		self.cache.redis_client.set(
 			name=f"{self.cache.user_space_key}:{key}", value=json.dumps(scope), ex=86400)
 
 	@staticmethod
 	def task_key(user_id, task_id):
+		"""Construct the user/task access-record key used by admission.
+
+		:param user_id: The authenticated account ID selecting the authorized scope.
+		:type user_id: int
+		:param task_id: The scoped Celery task/command UUID.
+		:type task_id: str
+		:returns: The task key text or identifier.
+		:rtype: str
+		"""
 		return f"user:access:{user_id}:task:{task_id}"
 
 	def register(self, task_id, scope):
+		"""Register this task's authorized base/session scope.
+
+		:param task_id: The scoped Celery task/command UUID.
+		:type task_id: str
+		:param scope: The authorized user, base, organization and session/task identity.
+		:type scope: dict[str, object]
+		:raises ValueError: If an input fails validation for this operation.
+		"""
 		key = self.task_key(self.user_id, task_id)
 		encoded = json.dumps(scope, sort_keys=True, separators=(",", ":"))
 		result = self.cache.redis_client.eval("local old=redis.call('GET',KEYS[1]); if old then if old~=ARGV[1] then return -1 end; return 0 end; redis.call('SET',KEYS[1],ARGV[1],'EX',86400); return 1", 1, key, encoded)
@@ -227,15 +374,39 @@ class TaskAccess:
 			raise ValueError("Task ID belongs to different request parameters")
 
 	def task(self, task_id):
+		"""Read the selected task's cached access scope.
+
+		:param task_id: The scoped Celery task/command UUID.
+		:type task_id: str
+		:returns: The task mapping.
+		:rtype: dict[str, object] | None
+		"""
 		return self._get(f"task:{task_id}")
 
 	def active(self):
+		"""Read the user's active base/session reference.
+
+		:returns: The active mapping.
+		:rtype: dict[str, object] | None
+		"""
 		return self._get("active")
 
 	def activate(self, scope):
+		"""Store the current active base/session reference.
+
+		:param scope: The authorized user, base, organization and session/task identity.
+		:type scope: dict[str, object]
+		"""
 		self._set("active", scope)
 
 	def poll_access(self, scope):
+		"""Check current membership/base/session access without trusting cache alone.
+
+		:param scope: The authorized user, base, organization and session/task identity.
+		:type scope: dict[str, object]
+		:returns: Whether access is currently permitted and whether its session remains active.
+		:rtype: tuple[bool, bool]
+		"""
 		from wannadb_web.postgres.queries import task_scope_access
 		if not isinstance(scope, dict):
 			return False, False
@@ -244,6 +415,13 @@ class TaskAccess:
 		return task_scope_access(self.user_id, scope)
 
 	def permitted(self, scope):
+		"""Return whether the current user may access the cached task scope.
+
+		:param scope: The authorized user, base, organization and session/task identity.
+		:type scope: dict[str, object]
+		:returns: True when the operation or predicate succeeds; otherwise False.
+		:rtype: bool
+		"""
 		return self.poll_access(scope)[0]
 
 
@@ -256,6 +434,16 @@ class SessionState:
 		"feedback_request_to_ui", "cache_db_to_ui")
 
 	def __init__(self, user_id, base_id, session_id):
+		"""Initialize SessionState with its supplied dependencies and scope.
+
+		:param user_id: The authenticated account ID selecting the authorized scope.
+		:type user_id: int
+		:param base_id: The selected document-base database ID.
+		:type base_id: int
+		:param session_id: The parent feedback-session UUID.
+		:type session_id: str
+		:raises ValueError: If an input fails validation for this operation.
+		"""
 		if base_id is None or not isinstance(session_id, str) or not session_id:
 			raise ValueError("A base and session are required")
 		self.user_id = user_id
@@ -267,29 +455,66 @@ class SessionState:
 
 	@classmethod
 	def current(cls, user_id):
+		"""Construct the session store selected by the current task-local scope.
+
+		:param user_id: The authenticated account ID selecting the authorized scope.
+		:type user_id: int
+		:returns: The current result.
+		:rtype: SessionState
+		:raises ValueError: If an input fails validation for this operation.
+		"""
 		scope = get_signal_scope()
 		if scope is None or scope["user_id"] != str(user_id):
 			raise ValueError("No task session is selected")
 		return cls(user_id, scope["base_id"], scope["session_id"])
 
 	def _keys(self):
+		"""Return the atomic publication/staging keys for this session.
+
+		:returns: The keys result.
+		:rtype: list[str]
+		"""
 		return [f"{self.prefix}:{name}" for name in (
 			"publication", "document_base_to_ui", "feedback_request_to_ui", "published_document", "published_feedback",
 			"commands")]
 
 	def _empty(self):
+		"""Construct the initial loading publication before the first saved version.
+
+		:returns: The empty mapping.
+		:rtype: dict[str, object]
+		"""
 		return {"session_id": self.session_id, "version": 0, "phase": "loading", "attribute": None,
 			"closed": False, "error": None}
 
 	def claim_execution(self, execution_id):
+		"""Fence a one-off task against duplicate execution using an expiring claim.
+
+		:param execution_id: The unique one-off task execution claim.
+		:type execution_id: str
+		:returns: True when the operation or predicate succeeds; otherwise False.
+		:rtype: bool
+		"""
 		return bool(self.redis.set(f"{self.prefix}:execution", execution_id, nx=True, ex=self.TTL))
 
 	def initialize(self):
+		"""Create initial publication metadata without overwriting an existing session.
+
+		:returns: The initialize mapping.
+		:rtype: dict[str, object]
+		"""
 		self.redis.set(self._keys()[0], json.dumps(self._empty()), nx=True, ex=self.TTL)
 		return self.metadata()
 
 	@staticmethod
 	def _visible_publication(publication):
+		"""Hide transient processing internals from public session metadata.
+
+		:param publication: The decoded atomic session publication.
+		:type publication: dict[str, object]
+		:returns: The visible publication mapping.
+		:rtype: dict[str, object]
+		"""
 		if publication.get("phase") == "processing" and publication.get("lease_until", float("inf")) <= time.time():
 			publication["phase"] = publication["waiting_phase"]
 		for key in ("lease", "waiting_phase", "lease_until", "processing_command"):
@@ -297,13 +522,32 @@ class SessionState:
 		return publication
 
 	def metadata(self):
+		"""Read the public session metadata or an initial loading publication.
+
+		:returns: The metadata mapping.
+		:rtype: dict[str, object]
+		"""
 		value = self.redis.get(self._keys()[0])
 		return self._visible_publication(json.loads(value)) if value is not None else self._empty()
 
 	def _command_key(self, command_id):
+		"""Construct the separately expiring command-record key.
+
+		:param command_id: The unique decision UUID used for exact replay.
+		:type command_id: str
+		:returns: The command key text or identifier.
+		:rtype: str
+		"""
 		return f"{self.prefix}:command:{command_id}"
 
 	def command(self, command_id):
+		"""Read a retained command record, if its identity/version data is usable.
+
+		:param command_id: The unique decision UUID used for exact replay.
+		:type command_id: str
+		:returns: The command mapping.
+		:rtype: dict[str, object] | None
+		"""
 		value = self.redis.get(self._command_key(command_id))
 		if value is None:
 			value = self.redis.hget(self._keys()[5], command_id)
@@ -315,7 +559,22 @@ class SessionState:
 		return record
 
 	def begin_step(self, command_id, expected_version, payload, lease, lease_seconds):
-		"""Admit this exact command once and fence publication to its processing lease."""
+		"""Admit this exact command once and fence publication to its processing lease.
+
+		:param command_id: The unique decision UUID used for exact replay.
+		:type command_id: str
+		:param expected_version: The displayed session integer version or schema UUID required by
+		    this operation.
+		:type expected_version: int | str
+		:param payload: The exact serialized feedback action being processed.
+		:type payload: dict[str, object]
+		:param lease: The unique worker-step lease fencing publication.
+		:type lease: str
+		:param lease_seconds: The maximum execution lease duration in seconds.
+		:type lease_seconds: int
+		:returns: The admission/replay result for the command and its execution lease.
+		:rtype: dict[str, object]
+		"""
 		fingerprint = sha256(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 		script = r'''
 local command_id, expected_version, fingerprint, lease = ARGV[1], tonumber(ARGV[2]), ARGV[3], ARGV[4]
@@ -380,7 +639,17 @@ return encoded
 			payload.get("attribute", ""), self.COMMAND_TTL, self._command_key("")))
 
 	def fail_step(self, command_id, lease, error):
-		"""Release an uncommitted step's lease without closing the waiting session."""
+		"""Release an uncommitted step's lease without closing the waiting session.
+
+		:param command_id: The unique decision UUID used for exact replay.
+		:type command_id: str
+		:param lease: The unique worker-step lease fencing publication.
+		:type lease: str
+		:param error: The failure object or safe error text/code handled here.
+		:type error: BaseException | str
+		:returns: True when the operation or predicate succeeds; otherwise False.
+		:rtype: bool
+		"""
 		script = r'''
 local raw = redis.call('GET',KEYS[1]); if not raw then return 0 end
 local publication = cjson.decode(raw)
@@ -405,7 +674,28 @@ return 1
 
 	def publish_step(self, version, phase, attribute, document, feedback, *, command_id=None, lease=None,
 			propagation_limited=False):
-		"""Publish the committed checkpoint's payload only from its owning step."""
+		"""Publish the committed checkpoint's payload only from its owning step.
+
+		:param version: The publication version or schema UUID required by this layer.
+		:type version: int | str
+		:param phase: The feedback checkpoint phase to persist or publish.
+		:type phase: str
+		:param attribute: The selected attribute name or domain attribute, as required here.
+		:type attribute: str | Attribute
+		:param document: The selected domain document or serialized source record.
+		:type document: Document | dict[str, object]
+		:param feedback: The feedback payload or adapter used by this step.
+		:type feedback: dict[str, object] | object
+		:param command_id: The unique decision UUID used for exact replay.
+		:type command_id: str | None
+		:param lease: The unique worker-step lease fencing publication.
+		:type lease: str | None
+		:param propagation_limited: Whether custom-hit propagation reached its configured web
+		    budget.
+		:type propagation_limited: bool
+		:returns: True when the operation or predicate succeeds; otherwise False.
+		:rtype: bool
+		"""
 		script = r'''
 local raw = redis.call('GET', KEYS[1]); if not raw then return 0 end
 local publication = cjson.decode(raw)
@@ -438,7 +728,13 @@ return 1
 			self.TTL, int(propagation_limited), self.COMMAND_TTL))
 
 	def close(self, error=None):
-		"""Close a one-off task, promoting its staged payload on success."""
+		"""Close a one-off task, promoting its staged payload on success.
+
+		:param error: The failure object or safe error text/code handled here.
+		:type error: BaseException | str | None
+		:returns: The resulting count, version, identifier or status code for this operation.
+		:rtype: int
+		"""
 		script = r'''
 local raw = redis.call('GET',KEYS[1])
 local prior = raw and cjson.decode(raw) or {version=0}
@@ -462,6 +758,11 @@ return publication.version
 		return int(self.redis.eval(script, 6, *self._keys(), self.session_id, json.dumps(error), self.TTL))
 
 	def store_table_result(self, result):
+		"""Store bounded SQL metadata and rows with the query-result lifetime.
+
+		:param result: The result metadata and retained rows being published.
+		:type result: dict[str, object]
+		"""
 		rows = result["rows"]
 		meta = {"columns": result["columns"], "truncated": result["truncated"], "totalRows": len(rows),
 			"includesAutomaticMatches": result.get("includesAutomaticMatches")}
@@ -475,6 +776,15 @@ return publication.version
 			pipe.execute()
 
 	def table_page(self, offset=0, size=None):
+		"""Read a retained SQL page or all retained rows for an export.
+
+		:param offset: The zero-based retained-result or suggestion offset.
+		:type offset: int
+		:param size: The maximum page size, or None to read all retained rows.
+		:type size: int | None
+		:returns: Column metadata, retained rows and offset, or None after result expiry.
+		:rtype: dict[str, object] | None
+		"""
 		meta_key, rows_key = f"{self.prefix}:table-meta", f"{self.prefix}:table-rows"
 		with self.redis.pipeline() as pipe:
 			pipe.get(meta_key)
@@ -485,6 +795,15 @@ return publication.version
 		return dict(json.loads(meta), rows=[json.loads(row) for row in rows], offset=offset)
 
 	def snapshot(self, include_payload=True, include_feedback=True):
+		"""Read publication metadata and the requested payloads in one atomic snapshot.
+
+		:param include_payload: Whether to include the document-base publication.
+		:type include_payload: bool
+		:param include_feedback: Whether to include the feedback-request publication.
+		:type include_feedback: bool
+		:returns: The snapshot mapping.
+		:rtype: dict[str, object]
+		"""
 		keys = self._keys()
 		names = [name for name in self.SIGNALS if name not in ("document_base_to_ui", "feedback_request_to_ui")
 			and (include_payload or name != "cache_db_to_ui")]

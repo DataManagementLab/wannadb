@@ -1,3 +1,4 @@
+"""Bounded, read-only SQL evaluation over a document-base projection."""
 import json
 import re
 import sqlite3
@@ -24,10 +25,19 @@ _FUNCTIONS = frozenset("""
 
 
 class TableQueryError(ValueError):
+    """A rejected, invalid or over-budget read-only web query."""
     pass
 
 
 def validate_table_query(query):
+    """Validate nonempty SQL text and its UTF-8 request-size budget.
+
+    :param query: The SQL statement validated by the calling layer.
+    :type query: str | psycopg2.sql.Composable
+    :returns: The validate table query text or identifier.
+    :rtype: str
+    :raises TableQueryError: A rejected, invalid or over-budget read-only web query.
+    """
     if not isinstance(query, str) or not query.strip() or "\0" in query:
         raise TableQueryError("Enter a SQL query.")
     try:
@@ -40,7 +50,13 @@ def validate_table_query(query):
 
 
 def _with_document_source(query):
-    """Add the default source to a simple SELECT while leaving explicit sources intact."""
+    """Add the default source to a simple SELECT while leaving explicit sources intact.
+
+    :param query: The SQL statement validated by the calling layer.
+    :type query: str | psycopg2.sql.Composable
+    :returns: The with document source text or identifier.
+    :rtype: str
+    """
     tokens = []
     depth = last_end = 0
     for token in _SQLITE_TOKEN.finditer(query):
@@ -81,6 +97,21 @@ def _with_document_source(query):
 
 
 def _authorize(action, first, second, database, _source):
+    """Authorize SQLite SELECT/read/function operations against the restricted web projection.
+
+    :param action: The authentication action or SQLite authorization action code.
+    :type action: str | int
+    :param first: The first SQLite authorizer operand.
+    :type first: str | None
+    :param second: The second SQLite authorizer operand.
+    :type second: str | None
+    :param database: The SQLite database name supplied to the authorizer.
+    :type database: str | None
+    :param _source: The SQLite trigger/view source supplied to the authorizer.
+    :type _source: str | None
+    :returns: The resulting count, version, identifier or status code for this operation.
+    :rtype: int
+    """
     if action in (sqlite3.SQLITE_SELECT, sqlite3.SQLITE_RECURSIVE):
         return sqlite3.SQLITE_OK
     if action == sqlite3.SQLITE_READ and first == "documents" and database in ("main", None):
@@ -91,6 +122,13 @@ def _authorize(action, first, second, database, _source):
 
 
 def _column_names(attributes):
+    """Build unique, case-insensitive SQL column names while reserving Document.
+
+    :param attributes: The attributes or names used by the operation.
+    :type attributes: list[Attribute] | list[str]
+    :returns: The column names result.
+    :rtype: list[str]
+    """
     names = ["Document"]
     original_names = {attribute.name.casefold() for attribute in attributes}
     used = {"document"}
@@ -109,12 +147,26 @@ def _column_names(attributes):
 
 
 def _text(value):
+    """Convert a SQL result cell into transport text while preserving null values.
+
+    :param value: The value to validate, store or convert as described above.
+    :type value: object
+    :returns: The text result.
+    :rtype: str | None
+    """
     if value is None or isinstance(value, str):
         return value
     return value.hex() if isinstance(value, bytes) else str(value)
 
 
 def _read_results(cursor):
+    """Read rows until the retained-row/serialized-result budget is reached.
+
+    :param cursor: The transaction/query cursor owned by the caller.
+    :type cursor: psycopg2.extensions.cursor | sqlite3.Cursor
+    :returns: The read results mapping.
+    :rtype: dict[str, object]
+    """
     columns = [column[0] for column in cursor.description]
     rows = []
     size = len(json.dumps(columns))
@@ -132,6 +184,19 @@ def _read_results(cursor):
 
 
 def query_document_table(document_base, query, *, include_automatic_matches=True):
+    """Evaluate one bounded read-only statement over the selected review mode.
+
+    :param document_base: The worker-local domain base.
+    :type document_base: DocumentBase
+    :param query: The SQL statement validated by the calling layer.
+    :type query: str | psycopg2.sql.Composable
+    :param include_automatic_matches: Whether provisional automatic matches are included in the
+        projection.
+    :type include_automatic_matches: bool
+    :returns: Column names, retained rows, truncation status and automatic-match mode.
+    :rtype: dict[str, object]
+    :raises TableQueryError: A rejected, invalid or over-budget read-only web query.
+    """
     from wannadb_parsql.cache_db import SQLiteCacheDB
     from wannadb_web.worker.progress import provisional_attributes
 
@@ -157,6 +222,11 @@ def query_document_table(document_base, query, *, include_automatic_matches=True
         steps = 0
 
         def interrupt_expensive_query():
+            """Stop SQLite execution when the VM-step or elapsed-time budget is reached.
+
+            :returns: True when the operation or predicate succeeds; otherwise False.
+            :rtype: bool
+            """
             nonlocal steps
             steps += 1_000
             return steps >= MAX_QUERY_STEPS or time.monotonic() >= deadline

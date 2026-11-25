@@ -41,11 +41,25 @@ _TASK_FAILURE_STATES = ("FAILURE", "ERROR", "REVOKED", "EXPIRED")
 
 @core_routes.errorhandler(ValueError)
 def invalid_feedback_request(error):
+	"""Map a feedback-state conflict to an HTTP 409 response.
+
+	:param error: The failure object or safe error text/code handled here.
+	:type error: BaseException | str
+	:returns: The HTTP response containing the scoped result or a safe request error.
+	:rtype: flask.Response
+	"""
 	return make_response({"error": str(error)}, 409)
 
 
 @core_routes.errorhandler(PermissionError)
 def feedback_access_denied(error):
+	"""Map a scoped feedback permission failure to HTTP 403.
+
+	:param error: The failure object or safe error text/code handled here.
+	:type error: BaseException | str
+	:returns: The HTTP response containing the scoped result or a safe request error.
+	:rtype: flask.Response
+	"""
 	return make_response({"error": str(error)}, 403)
 
 
@@ -53,17 +67,44 @@ def feedback_access_denied(error):
 @core_routes.errorhandler(FeedbackSessionUnavailable)
 @core_routes.errorhandler(RedisError)
 def feedback_status_unavailable(error):
+	"""Return retryable HTTP 503 when feedback publication/receipt state is unavailable.
+
+	:param error: The failure object or safe error text/code handled here.
+	:type error: BaseException | str
+	:returns: The HTTP response containing the scoped result or a safe request error.
+	:rtype: flask.Response
+	"""
 	return make_response({"error": "Feedback status is temporarily unavailable. Check the result again shortly."},
 		503, {"Cache-Control": "no-store"})
 
 
 def _positive_id(value):
+	"""Validate a positive database identifier before using it for scoped access.
+
+	:param value: The value to validate, store or convert as described above.
+	:type value: object
+	:returns: The positive id result.
+	:rtype: int | None
+	"""
 	if isinstance(value, str) and value.isascii() and value.isdigit():
 		value = int(value) if len(value) <= 19 else None
 	return value if type(value) is int and 0 < value <= 9223372036854775807 else None
 
 
 def _selection_span(content, start, end, selected_text):
+	"""Require an exact, nonempty Unicode code-point selection in the displayed source.
+
+	:param content: The complete source text or snapshot payload for this operation.
+	:type content: str | bytes
+	:param start: The inclusive Unicode code-point offset.
+	:type start: int
+	:param end: The exclusive Unicode code-point offset.
+	:type end: int
+	:param selected_text: The text that must exactly match the selected span.
+	:type selected_text: str
+	:returns: The selection span result.
+	:rtype: tuple[int, int]
+	"""
 	if (not isinstance(content, str) or type(start) is not int or type(end) is not int or
 		not 0 <= start < end <= len(content) or not content[start:end].strip() or
 		not isinstance(selected_text, str) or content[start:end] != selected_text):
@@ -72,6 +113,13 @@ def _selection_span(content, start, end, selected_text):
 
 
 def _feedback_selection(form):
+	"""Validate positive and optional distinct negative selections in a feedback request.
+
+	:param form: The parsed JSON submission containing the scoped mutation parameters.
+	:type form: dict[str, object]
+	:returns: The feedback selection result.
+	:rtype: tuple[str, str, int, int, str | None, int | None, int | None]
+	"""
 	name, content = form.get("documentName"), form.get("documentContent")
 	if not isinstance(name, str) or not name:
 		abort(make_response({"error": "a document name is required"}, 400))
@@ -89,6 +137,12 @@ def _feedback_selection(form):
 
 @core_routes.before_request
 def authorize_core_request():
+	"""Authenticate and validate live task/base/session scope before dispatching a core route.
+
+	:returns: The HTTP response containing the scoped result or a safe request error.
+	:rtype: flask.Response | None
+	:raises ValueError: If an input fails validation for this operation.
+	"""
 	if request.method == "OPTIONS":
 		return None
 	view = request.view_args or {}
@@ -220,7 +274,14 @@ def authorize_core_request():
 
 @core_routes.route('/document_base', methods=['POST'])
 def create_document_base():
-	"""Queue preprocessing. The worker creates the base only when all data is ready."""
+	"""Queue preprocessing. The worker creates the base only when all data is ready.
+
+	JSON contains the organization/base scope, document IDs and attributes.
+
+	:returns: The scoped JSON response or HTTP error; see ``ROUTES.md``.
+	:rtype: flask.Response
+	:raises WorkLimitError: A source-document, corpus or other web work budget was exceeded.
+	"""
 	form = request.get_json()
 	base_name = form.get("baseName")
 	document_ids = form.get("document_ids")
@@ -263,6 +324,15 @@ def create_document_base():
 
 
 def _base_reference(*, base_id=None, name=None):
+	"""Resolve the selected stable ID or exact name inside the authorized organization.
+
+	:param base_id: The selected document-base database ID.
+	:type base_id: int | None
+	:param name: The selected display name or operation identifier.
+	:type name: str | None
+	:returns: The base reference result.
+	:rtype: tuple[object, ...]
+	"""
 	try:
 		base = get_base_reference(g.organisation_id, base_id=base_id, name=name)
 	except RuntimeError:
@@ -273,6 +343,13 @@ def _base_reference(*, base_id=None, name=None):
 
 
 def _base_reference_response(base):
+	"""Encode a base reference with stable attribute identities for the browser.
+
+	:param base: The authorized domain base or decoded snapshot record.
+	:type base: DocumentBase | dict[str, object]
+	:returns: The HTTP response containing the scoped result or a safe request error.
+	:rtype: flask.Response
+	"""
 	base_id, name, version, stored_ids, names = base
 	attribute_ids = attribute_ids_for_snapshot({"attributes": [{"name": name} for name in names]}, version, stored_ids)
 	return make_response({"id": base_id, "name": name, "attributeIds": attribute_ids}, 200)
@@ -280,6 +357,15 @@ def _base_reference_response(base):
 
 @core_routes.route('/document_base/by-id/<organisation_id>/<base_id>', methods=['GET'])
 def get_document_base_by_id(organisation_id, base_id):
+	"""Read a stable document-base reference under organization membership checks.
+
+	:param organisation_id: The organization database ID used to scope access.
+	:type organisation_id: int
+	:param base_id: The selected document-base database ID.
+	:type base_id: int
+	:returns: The HTTP response containing the scoped result or a safe request error.
+	:rtype: flask.Response
+	"""
 	base_id = _positive_id(base_id)
 	if base_id is None:
 		return make_response({"error": "invalid document base ID"}, 400)
@@ -288,6 +374,13 @@ def get_document_base_by_id(organisation_id, base_id):
 
 @core_routes.route('/document_base/resolve/<organisation_id>', methods=['GET'])
 def resolve_document_base(organisation_id):
+	"""Resolve an exact base name inside the authorized organization.
+
+	:param organisation_id: The organization database ID used to scope access.
+	:type organisation_id: int
+	:returns: The HTTP response containing the scoped result or a safe request error.
+	:rtype: flask.Response
+	"""
 	name = request.args.get("name")
 	if not name or not name.strip() or "\0" in name:
 		return make_response({"error": "invalid document base name"}, 400)
@@ -296,6 +389,15 @@ def resolve_document_base(organisation_id):
 
 @core_routes.route('/document_base/<organisation_id>/<path:base_name>', methods=['GET'])
 def get_document_base(organisation_id, base_name):
+	"""Return the scoped document-base catalog or HTTP 404.
+
+	:param organisation_id: The organization database ID used to scope access.
+	:type organisation_id: int
+	:param base_name: The exact document-base display name.
+	:type base_name: str
+	:returns: The HTTP response containing the scoped result or a safe request error.
+	:rtype: flask.Response
+	"""
 	document_base = get_document_base_data(base_name, g.organisation_id)
 	if document_base is None:
 		return make_response({"error": "document base not found"}, 404)
@@ -303,6 +405,15 @@ def get_document_base(organisation_id, base_name):
 
 
 def _delete_base(name, base_id=None):
+	"""Delete the selected base and encode a safe scoped result.
+
+	:param name: The selected display name or operation identifier.
+	:type name: str
+	:param base_id: The selected document-base database ID.
+	:type base_id: int | None
+	:returns: The HTTP response containing the scoped result or a safe request error.
+	:rtype: flask.Response
+	"""
 	try:
 		deleted = delete_document_base_data(name, g.organisation_id, g.auth_token.id, base_id=base_id)
 	except RuntimeError:
@@ -314,6 +425,15 @@ def _delete_base(name, base_id=None):
 
 @core_routes.route('/document_base/by-id/<organisation_id>/<base_id>', methods=['DELETE'])
 def delete_document_base_by_id(organisation_id, base_id):
+	"""Delete a stable-ID-selected base under backend role checks.
+
+	:param organisation_id: The organization database ID used to scope access.
+	:type organisation_id: int
+	:param base_id: The selected document-base database ID.
+	:type base_id: int
+	:returns: The HTTP response containing the scoped result or a safe request error.
+	:rtype: flask.Response
+	"""
 	base_id = _positive_id(base_id)
 	if base_id is None:
 		return make_response({"error": "invalid document base ID"}, 400)
@@ -323,6 +443,15 @@ def delete_document_base_by_id(organisation_id, base_id):
 
 @core_routes.route('/document_base/<organisation_id>/<path:base_name>', methods=['DELETE'])
 def delete_document_base(organisation_id, base_name):
+	"""Delete an exact-name-selected base under backend role checks.
+
+	:param organisation_id: The organization database ID used to scope access.
+	:type organisation_id: int
+	:param base_name: The exact document-base display name.
+	:type base_name: str
+	:returns: The HTTP response containing the scoped result or a safe request error.
+	:rtype: flask.Response
+	"""
 	return _delete_base(base_name)
 
 
@@ -330,9 +459,10 @@ def delete_document_base(organisation_id, base_name):
 def load_document_base():
 	"""Queue a scoped catalog/document load, returning 202 with task_id.
 
-	JSON requires organisationId and baseName; baseId guards the selected base.
-	includeAutomaticMatches is an optional boolean, default false for this route.
-	Read the resulting task with a GET status view as documented in ROUTES.md.
+	JSON selects the organization/base, optional base ID and automatic-match mode.
+
+	:returns: The scoped JSON response or HTTP error; see ``ROUTES.md``.
+	:rtype: flask.Response
 	"""
 	form = request.get_json()
 	authorization = request.headers.get("Authorization")
@@ -360,6 +490,11 @@ def load_document_base():
 
 @core_routes.route('/document_base/query', methods=['POST'])
 def query_document_base():
+	"""Validate and enqueue one bounded read-only SQL query for the selected base.
+
+	:returns: The HTTP response containing the scoped result or a safe request error.
+	:rtype: flask.Response
+	"""
 	form = request.get_json()
 	base_name = form.get("baseName")
 	if not base_name:
@@ -380,9 +515,10 @@ def query_document_base():
 def interactive_document_base():
 	"""Open a separate feedback session and return 202 with its task_id.
 
-	JSON requires organisationId and baseName; include baseId to guard the base.
-	Use the returned task_id as sessionId, then read its published phase/version.
-	Starting an attribute is a separate command; see ROUTES.md.
+	JSON selects the organization/base; use task_id as the new sessionId.
+
+	:returns: The scoped JSON response or HTTP error; see ``ROUTES.md``.
+	:rtype: flask.Response
 	"""
 	form = request.get_json()
 	authorization = request.headers.get("Authorization")
@@ -407,7 +543,13 @@ def interactive_document_base():
 
 @core_routes.route('/document_base/feedback/overview', methods=['GET'])
 def feedback_overview():
-	"""Return saved attribute progress without starting a worker task."""
+	"""Return saved attribute progress without starting a worker task.
+
+	Read-only progress; no worker task starts. See ROUTES.md for scope fields.
+
+	:returns: The scoped JSON response or HTTP error; see ``ROUTES.md``.
+	:rtype: flask.Response
+	"""
 	scope = getattr(g, "feedback_overview_scope", None)
 	if scope is None:
 		return make_response({"error": "a document base is required"}, 400)
@@ -431,12 +573,24 @@ def feedback_overview():
 
 @core_routes.route('/document_base/attributes/add', methods=['POST'])
 def document_base_attribute_add():
+	"""Queue explicit attribute additions against the displayed schema version.
+
+	:returns: The HTTP response containing the scoped result or a safe request error.
+	:rtype: flask.Response
+	"""
 	form = request.get_json()
 	attributes = _attribute_names(form.get("attributes"))
 	return _queue_attribute_edit(form, [{"op": "add", "name": name} for name in attributes])
 
 
 def _attribute_names(value):
+	"""Normalize submitted attribute names and reject empty, duplicate or oversized lists.
+
+	:param value: The value to validate, store or convert as described above.
+	:type value: object
+	:returns: The attribute names result.
+	:rtype: list[str]
+	"""
 	if isinstance(value, str):
 		value = value.split(",") if value else []
 	if (not isinstance(value, list) or any(
@@ -449,11 +603,25 @@ def _attribute_names(value):
 
 @core_routes.route('/document_base/attributes/update', methods=['POST'])
 def document_base_attribute_update():
+	"""Queue explicit add/remove/rename operations against the schema version.
+
+	:returns: The HTTP response containing the scoped result or a safe request error.
+	:rtype: flask.Response
+	"""
 	form = request.get_json()
 	return _queue_attribute_edit(form, form.get("operations"))
 
 
 def _queue_attribute_edit(form, operations):
+	"""Validate the displayed schema UUID and enqueue the exact scoped attribute edit.
+
+	:param form: The parsed JSON submission containing the scoped mutation parameters.
+	:type form: dict[str, object]
+	:param operations: Validated explicit attribute add/remove/rename operations.
+	:type operations: list[dict[str, object]]
+	:returns: The HTTP response containing the scoped result or a safe request error.
+	:rtype: flask.Response
+	"""
 	base_name = form.get("baseName")
 	if not base_name:
 		return make_response({"error": "A document base is required."}, 400)
@@ -480,6 +648,13 @@ def _queue_attribute_edit(form, operations):
 
 
 def _recovered_feedback_status(outcome):
+	"""Expose a committed receipt when its live Redis publication cannot be used.
+
+	:param outcome: The saved command receipt used for recovery/replay.
+	:type outcome: dict[str, object]
+	:returns: The HTTP response containing the scoped result or a safe request error.
+	:rtype: flask.Response
+	"""
 	version = outcome["published_version"]
 	return make_response({
 		"state": "SUCCESS", "meta": {},
@@ -492,6 +667,11 @@ def _recovered_feedback_status(outcome):
 
 
 def _lost_feedback_publication():
+	"""Return a closed failure publication that directs the reviewer to reopen the base.
+
+	:returns: The HTTP response containing the scoped result or a safe request error.
+	:rtype: flask.Response
+	"""
 	return make_response({
 		"state": "FAILURE",
 		"meta": {"error": "This feedback session is unavailable. Reopen the base to continue from saved matches."},
@@ -500,6 +680,15 @@ def _lost_feedback_publication():
 
 @core_routes.route('/status/<task_id>', methods=['GET'])
 def task_status(task_id: str):
+	"""Read authorized task state, live publication and any recoverable committed receipt.
+
+	:param task_id: The scoped Celery task/command UUID.
+	:type task_id: str
+	:returns: The HTTP response containing the scoped result or a safe request error.
+	:rtype: flask.Response
+	:raises FeedbackOutcomeUnavailable: A durable command receipt cannot currently be read or
+	    confirmed.
+	"""
 	user_id = g.auth_token.id
 	scope = g.task_scope
 	if getattr(g, "feedback_publication_missing", False):
@@ -520,6 +709,19 @@ def task_status(task_id: str):
 
 
 def _read_task_status(task_id, user_id, scope):
+	"""Project scoped task/session data and classify terminal/review-conflict results.
+
+	:param task_id: The scoped Celery task/command UUID.
+	:type task_id: str
+	:param user_id: The authenticated account ID selecting the authorized scope.
+	:type user_id: int
+	:param scope: The authorized user, base, organization and session/task identity.
+	:type scope: dict[str, object]
+	:returns: The HTTP response containing the scoped result or a safe request error.
+	:rtype: flask.Response
+	:raises FeedbackOutcomeUnavailable: A durable command receipt cannot currently be read or
+	    confirmed.
+	"""
 	task = BaseTask().AsyncResult(task_id=task_id)
 	status = TaskAdmission("celery", user_id, task_id).status(task.status)
 	created_base_id = None
@@ -652,15 +854,23 @@ def _read_task_status(task_id, user_id, scope):
 @core_routes.route('/status/<task_id>', methods=['POST'])
 def task_update(task_id: str):
 	# Legacy raw signal injection is replaced by the scoped feedback endpoints.
+	"""Reject legacy raw signal injection with HTTP 410.
+
+	:param task_id: The scoped Celery task/command UUID.
+	:type task_id: str
+	:returns: The HTTP response containing the scoped result or a safe request error.
+	:rtype: flask.Response
+	"""
 	return make_response({"error": "use the document-base feedback endpoints"}, 410)
 
 @core_routes.route('/document_base/do_current_attribute', methods=['POST'])
 def document_base_do_current_attribute():
 	"""Start, reset or skip the exact attribute waiting in this session.
 
-	JSON requires sessionId, expectedVersion, commandId, organisationId, baseName,
-	attribute and boolean doAttribute. Optional reset is boolean and requires
-	doAttribute=true. Return 202 with the command task_id; poll its publication.
+	JSON needs sessionId, expectedVersion, commandId and the scoped ranking options.
+
+	:returns: The scoped JSON response or HTTP error; see ``ROUTES.md``.
+	:rtype: flask.Response
 	"""
 	form = request.get_json()
 	scope = g.feedback_scope
@@ -693,9 +903,10 @@ def document_base_do_current_attribute():
 def reload_document_base():
 	"""Refresh a feedback step or resolve a pending decision conflict.
 
-	JSON requires sessionId, expectedVersion and commandId. Optional
-	conflictResolution is "keep" or "replace". Return 202 with task_id; poll that
-	command before using its new version. See ROUTES.md for replay semantics.
+	JSON needs sessionId, expectedVersion, commandId and optional conflictResolution.
+
+	:returns: The scoped JSON response or HTTP error; see ``ROUTES.md``.
+	:rtype: flask.Response
 	"""
 	authorization = request.headers.get("Authorization")
 	if authorization is None:
@@ -721,11 +932,10 @@ def reload_document_base():
 def confirm_nugget_custom():
 	"""Confirm an exact custom span for the current ranked attribute.
 
-	JSON requires sessionId, expectedVersion, commandId, organisationId, baseName,
-	documentName, documentContent, nuggetText, startIndex and endIndex. Optional
-	noMatchText/noMatchStartIndex/noMatchEndIndex identify a different negative span.
-	Offsets are integer Unicode code points with an exclusive end; text must match.
-	Return 202 with task_id and poll that command as described in ROUTES.md.
+	JSON needs sessionId, expectedVersion, commandId, scope and exact code-point spans.
+
+	:returns: The scoped JSON response or HTTP error; see ``ROUTES.md``.
+	:rtype: flask.Response
 	"""
 	form = request.get_json()
 	name, content, start, end, negative_text, negative_start, negative_end = _feedback_selection(form)
@@ -738,10 +948,10 @@ def confirm_nugget_custom():
 def confirm_nugget_match():
 	"""Confirm an existing candidate at an exact span for this session.
 
-	JSON requires sessionId, expectedVersion, commandId, organisationId, baseName,
-	documentName, documentContent, nuggetText, startIndex and endIndex. Optional
-	negative-span fields follow the custom route. Offsets count Unicode code points.
-	Return 202 with task_id; wait for the matching command's published receipt.
+	JSON needs sessionId, expectedVersion, commandId, scope and the exact candidate span.
+
+	:returns: The scoped JSON response or HTTP error; see ``ROUTES.md``.
+	:rtype: flask.Response
 	"""
 	form = request.get_json()
 	name, content, start, end, negative_text, negative_start, negative_end = _feedback_selection(form)
@@ -754,11 +964,11 @@ def confirm_nugget_match():
 def confirm_nugget_multi_match():
 	"""Confirm one selected match per document in a single scoped command.
 
-	JSON requires sessionId, expectedVersion, commandId, organisationId, baseName
-	and a nonempty nuggets list. Each item has documentName, documentContent, text,
-	startIndex and endIndex. Names must be distinct; spans use integer Unicode
-	code points and exactly match stored text. Return 202 with task_id.
-	See ROUTES.md for publication, replay and conflict behavior.
+	JSON needs sessionId, expectedVersion, commandId, scope and one match per document.
+
+	:returns: The scoped JSON response or HTTP error; see ``ROUTES.md``.
+	:rtype: flask.Response
+	:raises WorkLimitError: A source-document, corpus or other web work budget was exceeded.
 	"""
 	nuggets = request.get_json().get("nuggets")
 	if not isinstance(nuggets, list) or not nuggets:
@@ -806,10 +1016,10 @@ def confirm_nugget_multi_match():
 def confirm_no_match_in_document():
 	"""Reject a candidate or record whole-document No Match in this session.
 
-	JSON requires sessionId, expectedVersion, commandId, organisationId, baseName,
-	documentName, documentContent, nuggetText, startIndex and endIndex. For a whole
-	document use empty nuggetText and integer zero for both offsets; otherwise the
-	selected code-point span must match the text. Return 202 with task_id.
+	JSON needs command identity/scope; empty text and zero offsets mean whole-document No Match.
+
+	:returns: The scoped JSON response or HTTP error; see ``ROUTES.md``.
+	:rtype: flask.Response
 	"""
 	form = request.get_json()
 	name, content = form.get("documentName"), form.get("documentContent")
@@ -829,8 +1039,11 @@ def confirm_no_match_in_document():
 def stop_feedback():
 	"""Stop the current attribute and advance to the next attribute.
 
-	Requires the scoped sessionId, expectedVersion and commandId. Whole-session
-	closure, including during a conflict, uses feedback/close.
+	JSON needs sessionId, expectedVersion and commandId; whole-session closure uses
+	feedback/close.
+
+	:returns: The scoped JSON response or HTTP error; see ``ROUTES.md``.
+	:rtype: flask.Response
 	"""
 	authorization = request.headers.get("Authorization")
 
@@ -852,9 +1065,10 @@ def stop_feedback():
 def close_feedback():
 	"""Close this user's session while preserving saved canonical matches.
 
-	JSON requires sessionId, expectedVersion and commandId. This can close an
-	unresolved conflict. Return 202 with task_id, then poll the command publication.
-	See ROUTES.md for capacity release and durable receipt recovery.
+	JSON needs sessionId, expectedVersion and commandId; unresolved proposals may be discarded.
+
+	:returns: The scoped JSON response or HTTP error; see ``ROUTES.md``.
+	:rtype: flask.Response
 	"""
 	task = DocumentBaseCloseFeedbackSession().apply_async(
 		args=(g.auth_token.id,), **g.feedback_options)
@@ -862,6 +1076,13 @@ def close_feedback():
 
 
 def _public_feedback_document(form):
+	"""Resolve an authorized source document and its canonical base scope.
+
+	:param form: The parsed JSON submission containing the scoped mutation parameters.
+	:type form: dict[str, object]
+	:returns: The public feedback document result.
+	:rtype: tuple[int, str, str, int | None]
+	"""
 	base_id = _positive_id(form.get("baseId"))
 	if "baseId" in form and base_id is None:
 		abort(make_response({"error": "invalid document base ID"}, 400))
@@ -883,7 +1104,13 @@ def _public_feedback_document(form):
 
 @core_routes.route('/document_base/feedback/public', methods=['POST'])
 def add_public_feedback():
-	"""Save feedback only for the source and canonical mapping displayed to the voter."""
+	"""Save feedback only for the source and canonical mapping displayed to the voter.
+
+	Validate the displayed source/mapping identity before saving a vote or correction.
+
+	:returns: The scoped JSON response or HTTP error; see ``ROUTES.md``.
+	:rtype: flask.Response
+	"""
 	form = request.get_json()
 	attribute, positive = form.get("attribute"), form.get("isPositive")
 	attribute_id = form.get("attributeId")
@@ -923,6 +1150,11 @@ def add_public_feedback():
 
 @core_routes.route('/document_base/feedback/public/get', methods=['POST'])
 def get_public_feedback():
+	"""Read version-bound counts or page exact-occurrence correction suggestions.
+
+	:returns: The HTTP response containing the scoped result or a safe request error.
+	:rtype: flask.Response
+	"""
 	form = request.get_json()
 	try:
 		if "suggestionsOffset" in form:
@@ -956,6 +1188,11 @@ def get_public_feedback():
 
 @core_routes.route('/document_base/feedback/public/review', methods=['POST'])
 def review_public_feedback():
+	"""Enqueue an owner decision using the full displayed suggestion identity.
+
+	:returns: The HTTP response containing the scoped result or a safe request error.
+	:rtype: flask.Response
+	"""
 	if g.organisation_role != 0:
 		return make_response({"error": "Organization owner access required."}, 403)
 	form = request.get_json()

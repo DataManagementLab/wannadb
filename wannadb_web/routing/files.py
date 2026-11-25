@@ -1,3 +1,4 @@
+"""Authenticated source-file upload, read and document-mutation HTTP routes."""
 from flask import Blueprint, request, make_response, abort, g
 from flask_cors import cross_origin
 
@@ -13,6 +14,11 @@ main_routes = Blueprint('main_routes', __name__, url_prefix='/data')
 
 @main_routes.before_request
 def authenticate_files():
+	"""Require a valid backend credential before source-file operations.
+
+	:returns: The HTTP response containing the scoped result or a safe request error.
+	:rtype: flask.Response | None
+	"""
 	if request.method == 'OPTIONS':
 		return None
 	g.auth_token = tokenDecode(request.headers.get('Authorization'))
@@ -21,6 +27,13 @@ def authenticate_files():
 
 
 def _positive_id(value):
+	"""Validate a positive database identifier before using it for scoped access.
+
+	:param value: The value to validate, store or convert as described above.
+	:type value: object
+	:returns: The positive id result.
+	:rtype: int | None
+	"""
 	if isinstance(value, bool) or not isinstance(value, (int, str)):
 		abort(make_response({'error': 'invalid ID'}, 400))
 	try:
@@ -33,6 +46,13 @@ def _positive_id(value):
 
 
 def _require_organisation(value):
+	"""Require organization membership and optional administrator privileges.
+
+	:param value: The value to validate, store or convert as described above.
+	:type value: object
+	:returns: The resulting count, version, identifier or status code for this operation.
+	:rtype: int
+	"""
 	organisation_id = _positive_id(value)
 	try:
 		role = get_organisation_authorisation(g.auth_token.id, organisation_id, raise_on_error=True)
@@ -47,6 +67,13 @@ def _require_organisation(value):
 @cross_origin(origins=["http://localhost:3000"])
 def upload_files():
     
+	"""Validate uploads and save new source rows or queue an existing-base addition.
+
+	:returns: The HTTP response containing the scoped result or a safe request error.
+	:rtype: flask.Response
+	:raises WorkLimitError: A source-document, corpus or other web work budget was exceeded.
+	:raises ValueError: If an input fails validation for this operation.
+	"""
 	files = request.files.getlist('file')
 	if len(files) > MAX_UPLOAD_FILES:
 		raise WorkLimitError(f"Upload at most {MAX_UPLOAD_FILES} files at once.")
@@ -124,6 +151,13 @@ def upload_files():
 
 @main_routes.route('/organization/get/files/<_id>', methods=['GET'])
 def get_files_for_organization(_id):
+	"""Return source files visible to the authorized organization member.
+
+	:param _id: The database ID supplied in this layer's expected representation.
+	:type _id: int | str
+	:returns: The HTTP response containing the scoped result or a safe request error.
+	:rtype: flask.Response
+	"""
 	authorization = request.headers.get("Authorization")
 	org_id = _require_organisation(_id)
 
@@ -138,6 +172,13 @@ def get_files_for_organization(_id):
 
 @main_routes.route('/organization/get/documentbase/<_id>', methods=['GET'])
 def get_documentbase_for_organization(_id):
+	"""Return the authorized organization's document-base catalog.
+
+	:param _id: The database ID supplied in this layer's expected representation.
+	:type _id: int | str
+	:returns: The HTTP response containing the scoped result or a safe request error.
+	:rtype: flask.Response
+	"""
 	authorization = request.headers.get("Authorization")
 	org_id = _require_organisation(_id)
 
@@ -155,6 +196,11 @@ def get_documentbase_for_organization(_id):
 
 @main_routes.route('/update/file/content', methods=['PUT'])
 def update_file_content():
+	"""Queue a source replacement guarded by its displayed original content.
+
+	:returns: The HTTP response containing the scoped result or a safe request error.
+	:rtype: flask.Response
+	"""
 	authorization = request.headers.get("Authorization")
  
 	token = tokenDecode(authorization)
@@ -210,6 +256,11 @@ def update_file_content():
 
 @main_routes.route('/file/delete', methods=['DELETE'])
 def delete_file():
+	"""Delete an authorized source or enqueue its document-base removal.
+
+	:returns: The HTTP response containing the scoped result or a safe request error.
+	:rtype: flask.Response
+	"""
 	authorization = request.headers.get("Authorization")
  
 	token = tokenDecode(authorization)
@@ -265,6 +316,13 @@ def delete_file():
 @main_routes.route('/get/file/<_id>', methods=['GET'])
 def get_file(_id):
  
+	"""Read one authorized document as text or a legacy binary response.
+
+	:param _id: The database ID supplied in this layer's expected representation.
+	:type _id: int | str
+	:returns: The HTTP response containing the scoped result or a safe request error.
+	:rtype: flask.Response
+	"""
 	authorization = request.headers.get("Authorization")
 	document_id = _positive_id(_id)
 

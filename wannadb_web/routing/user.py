@@ -1,3 +1,4 @@
+"""Account authentication and role-checked organization lifecycle HTTP routes."""
 import logging
 
 from flask import Blueprint, request, make_response, abort, g
@@ -22,15 +23,36 @@ logger = logging.getLogger(__name__)
 
 @user_management.errorhandler(OrganisationLifecycleConflict)
 def organisation_lifecycle_conflict(error):
+	"""Expose a safe organization lifecycle conflict as HTTP 409.
+
+	:param error: The failure object or safe error text/code handled here.
+	:type error: BaseException | str
+	:returns: The HTTP response containing the scoped result or a safe request error.
+	:rtype: flask.Response
+	"""
 	return make_response({'error': str(error)}, 409)
 
 
 @user_management.errorhandler(PermissionError)
 def organisation_lifecycle_permission(error):
+	"""Expose an organization lifecycle permission failure as HTTP 403.
+
+	:param error: The failure object or safe error text/code handled here.
+	:type error: BaseException | str
+	:returns: The HTTP response containing the scoped result or a safe request error.
+	:rtype: flask.Response
+	"""
 	return make_response({'error': str(error)}, 403)
 
 
 def _run_lifecycle_change(operation, *args):
+	"""Run a lifecycle transaction and convert database failures into safe HTTP 503.
+
+	:param operation: The operation selector or callable invoked by this helper.
+	:type operation: str | Callable[..., object]
+	:param args: Positional task/callback arguments.
+	:type args: tuple[object, ...]
+	"""
 	try:
 		operation(*args)
 	except PostgresError as error:
@@ -41,6 +63,11 @@ def _run_lifecycle_change(operation, *args):
 
 @user_management.before_request
 def authenticate_users():
+	"""Authenticate protected account routes while allowing public login/registration.
+
+	:returns: The HTTP response containing the scoped result or a safe request error.
+	:rtype: flask.Response | None
+	"""
 	if request.method == 'OPTIONS' or request.endpoint in ('user_management.login', 'user_management.register'):
 		return None
 	g.auth_token = tokenDecode(request.headers.get('Authorization'))
@@ -49,6 +76,15 @@ def authenticate_users():
 
 
 def _require_organisation(value, admin=False):
+	"""Require organization membership and optional administrator privileges.
+
+	:param value: The value to validate, store or convert as described above.
+	:type value: object
+	:param admin: Whether this request requires an administrator or owner role.
+	:type admin: bool
+	:returns: The resulting count, version, identifier or status code for this operation.
+	:rtype: int
+	"""
 	if isinstance(value, bool) or not isinstance(value, (int, str)):
 		abort(make_response({'error': 'invalid organization ID'}, 400))
 	try:
@@ -67,10 +103,30 @@ def _require_organisation(value, admin=False):
 
 
 def _auth_error(code, message, status):
+	"""Encode a typed authentication failure with private, noncacheable response headers.
+
+	:param code: The stable public error code.
+	:type code: str
+	:param message: The safe status or error message.
+	:type message: str
+	:param status: The state, HTTP status or emitted value required here.
+	:type status: str | int | object
+	:returns: The HTTP response containing the scoped result or a safe request error.
+	:rtype: flask.Response
+	"""
 	return make_response({"code": code, "error": message}, status, {"Cache-Control": "no-store"})
 
 
 def _check_auth_limit(action, identity, username=None):
+	"""Consume client/service/username admission or return the appropriate retryable error.
+
+	:param action: The authentication action or SQLite authorization action code.
+	:type action: str | int
+	:param identity: The verified client address identity used for admission.
+	:type identity: str
+	:param username: The account username used by this operation.
+	:type username: str | None
+	"""
 	try:
 		retry_after = auth_retry_after(action, identity, username)
 	except RedisError:
@@ -83,6 +139,11 @@ def _check_auth_limit(action, identity, username=None):
 
 def _auth_credentials():
 	# Auth requests contain only short JSON credentials, separate from upload limits.
+	"""Read bounded JSON credentials and validate their shape and Unicode encoding.
+
+	:returns: The auth credentials result.
+	:rtype: tuple[str, str, bytes]
+	"""
 	limit = 16 * 1024
 	request.max_content_length = min(request.max_content_length or limit, limit)
 	try:
@@ -103,6 +164,13 @@ def _auth_credentials():
 
 
 def _limited_auth_credentials(action):
+	"""Verify proxy/client identity and account for valid or malformed auth attempts.
+
+	:param action: The authentication action or SQLite authorization action code.
+	:type action: str | int
+	:returns: The limited auth credentials result.
+	:rtype: tuple[str, str, bytes]
+	"""
 	try:
 		identity = auth_client_identity(request.headers, request.method, request.path, request.remote_addr or "")
 	except AuthProxyError:
@@ -119,6 +187,11 @@ def _limited_auth_credentials(action):
 
 @user_management.route('/register', methods=['POST'])
 def register():
+	"""Create a validated account under atomic authentication admission budgets.
+
+	:returns: The HTTP response containing the scoped result or a safe request error.
+	:rtype: flask.Response
+	"""
 	username, password, password_bytes = _limited_auth_credentials("register")
 	if len(username) > 128:
 		return _auth_error("INVALID_CREDENTIALS", "Use a username of at most 128 characters.", 400)
@@ -135,6 +208,11 @@ def register():
 
 @user_management.route('/login', methods=['POST'])
 def login():
+	"""Verify credentials and return a fixed-lifetime private backend credential.
+
+	:returns: The HTTP response containing the scoped result or a safe request error.
+	:rtype: flask.Response
+	"""
 	username, password, _ = _limited_auth_credentials("login")
 	# Continue verifying existing hashes with the bcrypt behavior they were created with.
 	user_id = check_password(username, password)
@@ -147,6 +225,11 @@ def login():
 
 @user_management.route('/deleteUser', methods=['DELETE'])
 def delete_user():
+	"""Delete the verified current account while retaining protected shared organization data.
+
+	:returns: The HTTP response containing the scoped result or a safe request error.
+	:rtype: flask.Response
+	"""
 	data = request.get_json(silent=True)
 	if not isinstance(data, dict):
 		return make_response({'error': 'An account and password are required.'}, 400)
@@ -160,6 +243,11 @@ def delete_user():
 
 @user_management.route('/createOrganisation', methods=['POST'])
 def create_organisation():
+	"""Create an organization and assign its creator the owner role.
+
+	:returns: The HTTP response containing the scoped result or a safe request error.
+	:rtype: flask.Response
+	"""
 	data = request.get_json()
 	authorization = request.headers.get("Authorization")
 
@@ -177,6 +265,11 @@ def create_organisation():
 
 @user_management.route('/leaveOrganisation', methods=['DELETE'])
 def leave_organisation():
+	"""Remove the caller's membership subject to last-administrator safeguards.
+
+	:returns: The HTTP response containing the scoped result or a safe request error.
+	:rtype: flask.Response
+	"""
 	data = request.get_json(silent=True)
 	if not isinstance(data, dict):
 		return make_response({'error': 'An organization is required.'}, 400)
@@ -187,6 +280,11 @@ def leave_organisation():
 
 @user_management.route('/transferOrganisationOwnership', methods=['POST'])
 def transfer_ownership():
+	"""Transfer ownership to another existing member under live role checks.
+
+	:returns: The HTTP response containing the scoped result or a safe request error.
+	:rtype: flask.Response
+	"""
 	data = request.get_json(silent=True)
 	if not isinstance(data, dict):
 		return make_response({'error': 'An organization and replacement owner are required.'}, 400)
@@ -200,6 +298,11 @@ def transfer_ownership():
 
 @user_management.route('/deleteOrganisation', methods=['DELETE'])
 def delete_organisation():
+	"""Require explicit owner confirmation before deleting an organization and its data.
+
+	:returns: The HTTP response containing the scoped result or a safe request error.
+	:rtype: flask.Response
+	"""
 	data = request.get_json(silent=True)
 	if not isinstance(data, dict) or data.get("confirmDelete") is not True:
 		return make_response({'error': 'Explicit confirmation is required to delete an organization.'}, 400)
@@ -210,6 +313,11 @@ def delete_organisation():
 
 @user_management.route('/getOrganisations', methods=['GET'])
 def get_organisations():
+	"""Return organization IDs visible to the authenticated account.
+
+	:returns: The HTTP response containing the scoped result or a safe request error.
+	:rtype: flask.Response
+	"""
 	authorization = request.headers.get("Authorization")
 	token = tokenDecode(authorization)
 	if token is None:
@@ -225,6 +333,13 @@ def get_organisations():
 
 @user_management.route('/getOrganisationName/<_id>', methods=['GET'])
 def get_organisation_name_route(_id):
+	"""Return the selected organization name after live access checks.
+
+	:param _id: The database ID supplied in this layer's expected representation.
+	:type _id: int | str
+	:returns: The HTTP response containing the scoped result or a safe request error.
+	:rtype: flask.Response
+	"""
 	authorization = request.headers.get("Authorization")
 	token = tokenDecode(authorization)
 	if token is None:
@@ -245,6 +360,11 @@ def get_organisation_name_route(_id):
 
 @user_management.route('/getOrganisationNames', methods=['GET'])
 def get_organisation_names():
+	"""Return organization references for the authenticated account.
+
+	:returns: The HTTP response containing the scoped result or a safe request error.
+	:rtype: flask.Response
+	"""
 	authorization = request.headers.get("Authorization")
 	token = tokenDecode(authorization)
 	if token is None:
@@ -260,6 +380,12 @@ def get_organisation_names():
 
 @user_management.route('/addUserToOrganisation', methods=['POST'])
 def add_user_to_organisation():
+	"""Invite an existing account under organization-management checks.
+
+	:returns: The organization ID and no error on success; otherwise None and a safe error
+	    message.
+	:rtype: tuple[int | None, str | None]
+	"""
 	authorization = request.headers.get("Authorization")
 	token = tokenDecode(authorization)
 	if token is None:
@@ -280,6 +406,11 @@ def add_user_to_organisation():
 
 @user_management.route('/removeUserFromOrganisation', methods=['DELETE'])
 def remove_user_from_organisation():
+	"""Remove a non-owner member under current owner-only permission checks.
+
+	:returns: The HTTP response containing the scoped result or a safe request error.
+	:rtype: flask.Response
+	"""
 	data = request.get_json(silent=True)
 	if not isinstance(data, dict):
 		return make_response({'error': 'An organization and member are required.'}, 400)
@@ -293,6 +424,13 @@ def remove_user_from_organisation():
 
 @user_management.route('/getOrganisationMembers/<_id>', methods=['GET'])
 def get_organisation_members(_id):
+	"""Return members and the caller's current management capability flags.
+
+	:param _id: The database ID supplied in this layer's expected representation.
+	:type _id: int | str
+	:returns: The HTTP response containing the scoped result or a safe request error.
+	:rtype: flask.Response
+	"""
 	organisation_id = _require_organisation(_id)
 	members = get_members_of_organisation(organisation_id, include_roles=True)
 	if not isinstance(members, list):
@@ -312,6 +450,13 @@ def get_organisation_members(_id):
 @user_management.route('/get/user/suggestion', methods=['GET'])
 @user_management.route('/get/user/suggestion/<_prefix>', methods=['GET'])
 def get_user_suggestion(_prefix=None):
+	"""Suggest bounded username matches to an authorized owner or administrator.
+
+	:param _prefix: The legacy path-form username prefix, when supplied.
+	:type _prefix: str | None
+	:returns: The HTTP response containing the scoped result or a safe request error.
+	:rtype: flask.Response
+	"""
 	organisation_id = _require_organisation(request.args.get("organisationId"), admin=True)
 	prefix = request.args.get("prefix", _prefix)
 	if not isinstance(prefix, str) or not 1 <= len(prefix) <= 128 or "\0" in prefix or not prefix.strip():

@@ -1,3 +1,4 @@
+"""Redis connection settings for the web application and workers."""
 import os
 
 import redis
@@ -12,6 +13,15 @@ if CACHE_PASSWORD == "0":
 
 
 def connectRedis(*, timeout=5, **options):
+	"""Construct a configured Redis client with bounded connection and command timeouts.
+
+	:param timeout: The Redis connection and command timeout in seconds.
+	:type timeout: int
+	:param options: Additional client, task or worker options.
+	:type options: dict[str, object]
+	:returns: The connect redis result.
+	:rtype: redis.Redis
+	"""
 	return redis.Redis(
 		host=CACHE_HOST,
 		port=CACHE_PORT,

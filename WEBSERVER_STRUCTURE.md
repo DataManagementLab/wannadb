@@ -1,28 +1,28 @@
 # WannaDBWeb backend structure
 
-See [deployment and database recovery](README.md#web-backend-deployment) and the [web API contract](ROUTES.md).
+See [deployment and database recovery](DEPLOYMENT.md) and the [web API contract](ROUTES.md).
 
-| Layer | Responsibility |
-| --- | --- |
-| Next.js | Browser UI, NextAuth, and a same-origin proxy. Server-rendered pages also call Flask directly over the private backend connection. |
+| Layer             | Responsibility                                                                                                                                                  |
+| ----------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Next.js           | Browser UI, NextAuth, and a same-origin proxy. Server-rendered pages also call Flask directly over the private backend connection.                              |
 | Flask web service | `app.py` registers the organization/account, file, and core blueprints. Requests carry a correlation ID. PostgreSQL membership and task scope determine access. |
-| Compute worker | Processes document creation and mutations, loads bases, and runs read-only SQL previews. |
-| Feedback worker | Opens interactive sessions and advances feedback one step at a time. |
-| PostgreSQL | Authoritative source documents, saved BSON snapshots, attribute metadata, votes, checkpoints, and durable receipts for committed feedback. |
-| Redis | Celery broker/results, admissions, and temporary task, feedback, and SQL publications. |
-| SQLite | In-memory read-only SQL query projection inside the worker. |
-| Flower | Optional monitoring. Production enables it with the `monitoring` profile, authentication, and the loopback listener. |
+| Compute worker    | Processes document creation and mutations, loads bases, and runs read-only SQL previews.                                                                        |
+| Feedback worker   | Opens interactive sessions and advances feedback one step at a time.                                                                                            |
+| PostgreSQL        | Authoritative source documents, saved BSON snapshots, attribute metadata, votes, checkpoints, and durable receipts for committed feedback.                      |
+| Redis             | Celery broker/results, admissions, and temporary task, feedback, and SQL publications.                                                                          |
+| SQLite            | In-memory read-only SQL query projection inside the worker.                                                                                                     |
+| Flower            | Optional monitoring. Production enables it with the `monitoring` profile, authentication, and the loopback listener.                                            |
 
 ## Image roles
 
 All backend Docker stages use Python 3.11. `backend-requirements.txt` constrains the lightweight roles; it is not installed wholesale in every image.
 
-| Service | Development / production target | Installed role |
-| --- | --- | --- |
-| API (`wannadb`) | `dev` / `prod`, both based on `api` | Flask/PostgreSQL, auth, Celery/Redis submission and lightweight BSON/NumPy document support. No Torch, model downloads or desktop UI dependencies. |
-| Migration (`migrate`) | `migrate` / `migrate` | Flask and psycopg2 plus the migration runner and SQL files. No worker or model imports. |
-| Monitor (`flower`) | `flower` / `flower` | Celery, Flower and Redis. Monitors the broker without importing `celery_app` or loading models. |
-| Both workers | `worker` / `worker-prod` | Torch 2.4.1, core and backend requirements, extraction/matching libraries and model assets. |
+| Service               | Development / production target     | Installed role                                                                                                                                     |
+| --------------------- | ----------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| API (`wannadb`)       | `dev` / `prod`, both based on `api` | Flask/PostgreSQL, auth, Celery/Redis submission and lightweight BSON/NumPy document support. No Torch, model downloads or desktop UI dependencies. |
+| Migration (`migrate`) | `migrate` / `migrate`               | Flask and psycopg2 plus the migration runner and SQL files. No worker or model imports.                                                            |
+| Monitor (`flower`)    | `flower` / `flower`                 | Celery, Flower and Redis. Monitors the broker without importing `celery_app` or loading models.                                                    |
+| Both workers          | `worker` / `worker-prod`            | Torch 2.4.1, core and backend requirements, extraction/matching libraries and model assets.                                                        |
 
 The development worker image also prepares desktop/experimental models, and Compose mounts the host checkout over `/home/wannadb`; ensure that checkout's model paths are populated. Production workers bake in the web spaCy, Stanza, BERT and sentence-transformer assets and set `HF_HUB_OFFLINE=1`. This flag only controls Hugging Face access. The shared extractor still requests NLTK `punkt_tab` at import time; provision its cache or allow that request until the separate shared-core issue is resolved. Avoid describing worker startup as fully network-independent.
 
@@ -44,7 +44,7 @@ Each worker publishes a lease for the queues it actually consumes from its paren
 
 `/health/live` reports the API process. `/health/ready` also checks migrations, Redis and live consumers for both `celery` and `feedback`. It reports broker waiting depth, oldest waiting age and `ready`, `missing_consumer` or `delayed` for each queue. Missing consumers cause `503` after lease expiry. Waiting age of at least 60 seconds produces `delayed` and a log warning while readiness remains `200` with available consumers. Reserved/running tasks are excluded. Missing enqueue timestamps produce a null age and a warning.
 
-The API reads these metrics without importing worker models. See [service recovery and queue health](README.md#service-recovery-and-queue-health) for configuration and the operator's staging restart rehearsal.
+The API reads these metrics without importing worker models. See [service recovery and queue health](DEPLOYMENT.md#service-recovery-and-queue-health) for configuration and the operator's staging restart rehearsal.
 
 ## Artifacts
 

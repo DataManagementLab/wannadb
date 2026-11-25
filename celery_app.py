@@ -1,3 +1,4 @@
+"""Celery application configuration and registration of active web worker tasks."""
 import logging
 import os
 

@@ -9,6 +9,15 @@ _VISIBLE_SIGNALS = {"ExtractorNameSignal", "CachedDistanceSignal"}
 
 
 def compact_base(base, document_ids=None):
+	"""Encode each document's source once and reference candidates by their identity.
+
+	:param base: The authorized domain base or decoded snapshot record.
+	:type base: DocumentBase | dict[str, object]
+	:param document_ids: The selected source IDs or publication name-to-ID map.
+	:type document_ids: list[int] | dict[str, int] | None
+	:returns: The compact base mapping.
+	:rtype: dict[str, object]
+	"""
 	documents = []
 	names = [attribute.name for attribute in base.attributes]
 	progress_documents = []
@@ -41,10 +50,36 @@ def compact_base(base, document_ids=None):
 
 
 def encode_base(base, document_ids=None):
+	"""Serialize a compact base publication to UTF-8 JSON bytes.
+
+	:param base: The authorized domain base or decoded snapshot record.
+	:type base: DocumentBase | dict[str, object]
+	:param document_ids: The selected source IDs or publication name-to-ID map.
+	:type document_ids: list[int] | dict[str, int] | None
+	:returns: The encode base result.
+	:rtype: bytes
+	"""
 	return json.dumps(compact_base(base, document_ids), ensure_ascii=False, separators=(",", ":")).encode()
 
 
 def project_base(base, feedback, view, *, offset=0, document_id=None, document_name=None):
+	"""Select a catalog, document or bounded manual-review page from the publication.
+
+	:param base: The authorized domain base or decoded snapshot record.
+	:type base: DocumentBase | dict[str, object]
+	:param feedback: The feedback payload or adapter used by this step.
+	:type feedback: dict[str, object] | object
+	:param view: The requested catalog, document, review or full publication view.
+	:type view: str
+	:param offset: The zero-based retained-result or suggestion offset.
+	:type offset: int
+	:param document_id: The source-document database ID.
+	:type document_id: int | None
+	:param document_name: The exact source-document display name.
+	:type document_name: str | None
+	:returns: The projected base publication and matching feedback-request view.
+	:rtype: tuple[dict[str, object], dict[str, object]]
+	"""
 	documents = base["documents"]
 	if view == "catalog":
 		documents = [{"name": document["name"], "id": document["id"]} for document in documents]
@@ -63,7 +98,15 @@ def project_base(base, feedback, view, *, offset=0, document_id=None, document_n
 
 
 def legacy_payload(base, feedback):
-	"""Support existing clients and already queued tasks during a rolling update."""
+	"""Support existing clients and already queued tasks during a rolling update.
+
+	:param base: The authorized domain base or decoded snapshot record.
+	:type base: DocumentBase | dict[str, object]
+	:param feedback: The feedback payload or adapter used by this step.
+	:type feedback: dict[str, object] | object
+	:returns: The expanded compatibility base and feedback payloads.
+	:rtype: tuple[dict[str, object], dict[str, object]]
+	"""
 	documents = []
 	by_name = {}
 	for document in base["documents"]:

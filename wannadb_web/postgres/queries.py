@@ -1,3 +1,4 @@
+"""Organization-scoped web reads, snapshot access and guarded persistence helpers."""
 import logging
 from contextlib import closing
 from hashlib import sha256
@@ -14,7 +15,20 @@ logger = logging.getLogger(__name__)
 
 
 def get_organisation_authorisation(user_id: int, organisation_id: int, *, raise_on_error=False):
-	"""Return a recognized membership role, or None when access is not established."""
+	"""Return a recognized membership role, or None when access is not established.
+
+	:param user_id: The authenticated account ID selecting the authorized scope.
+	:type user_id: int
+	:param organisation_id: The organization database ID used to scope access.
+	:type organisation_id: int
+	:param raise_on_error: Whether database failures propagate instead of returning the legacy
+	    sentinel.
+	:type raise_on_error: bool
+	:returns: The organisation authorisation result.
+	:rtype: int | None
+	:raises RuntimeError: If the operation cannot satisfy its state or persistence
+	    preconditions.
+	"""
 	query = sql.SQL("SELECT authorisation FROM membership WHERE userid = %s AND organisationid = %s;")
 	result = execute_query(query, (user_id, organisation_id))
 	if result is False and raise_on_error:
@@ -27,7 +41,15 @@ def get_organisation_authorisation(user_id: int, organisation_id: int, *, raise_
 
 
 def get_document_scope(document_id: int, user_id: int):
-	"""Resolve the document's actual organization and base only for a current member."""
+	"""Resolve the document's actual organization and base only for a current member.
+
+	:param document_id: The source-document database ID.
+	:type document_id: int
+	:param user_id: The authenticated account ID selecting the authorized scope.
+	:type user_id: int
+	:returns: The document scope result.
+	:rtype: tuple[int, int | None] | None
+	"""
 	query = sql.SQL("""SELECT d.organisationid, d.documentbaseid, b.name
 		FROM documents d
 		JOIN membership m ON m.organisationid = d.organisationid
@@ -41,6 +63,13 @@ def get_document_scope(document_id: int, user_id: int):
 
 
 def _valid_document_ids(document_ids: list[int]) -> bool:
+	"""Check distinct, positive database IDs before reading creation inputs.
+
+	:param document_ids: The selected source IDs or publication name-to-ID map.
+	:type document_ids: list[int]
+	:returns: True when the operation or predicate succeeds; otherwise False.
+	:rtype: bool
+	"""
 	return (
 		isinstance(document_ids, list) and bool(document_ids)
 		and all(type(document_id) is int and 0 < document_id <= 9223372036854775807 for document_id in document_ids)
@@ -49,7 +78,19 @@ def _valid_document_ids(document_ids: list[int]) -> bool:
 
 
 def documents_available_for_base(document_ids: list[int], user_id: int, organisation_id: int):
-	"""Require every selected text document to be unassigned and in the authorized organization."""
+	"""Require every selected text document to be unassigned and in the authorized organization.
+
+	:param document_ids: The selected source IDs or publication name-to-ID map.
+	:type document_ids: list[int]
+	:param user_id: The authenticated account ID selecting the authorized scope.
+	:type user_id: int
+	:param organisation_id: The organization database ID used to scope access.
+	:type organisation_id: int
+	:returns: True when the operation or predicate succeeds; otherwise False.
+	:rtype: bool
+	:raises RuntimeError: If the operation cannot satisfy its state or persistence
+	    preconditions.
+	"""
 	if not _valid_document_ids(document_ids):
 		return False
 	query = sql.SQL("""SELECT d.id FROM documents d WHERE d.id = ANY(%s)
@@ -63,7 +104,20 @@ def documents_available_for_base(document_ids: list[int], user_id: int, organisa
 
 
 def get_creation_documents(document_ids: list[int], user_id: int, organisation_id: int):
-	"""Read the exact inputs to preprocess. The commit checks these same rows again."""
+	"""Read the exact inputs to preprocess. The commit checks these same rows again.
+
+	:param document_ids: The selected source IDs or publication name-to-ID map.
+	:type document_ids: list[int]
+	:param user_id: The authenticated account ID selecting the authorized scope.
+	:type user_id: int
+	:param organisation_id: The organization database ID used to scope access.
+	:type organisation_id: int
+	:returns: The creation documents result.
+	:rtype: list[tuple[int, str, str]] | None
+	:raises WorkLimitError: A source-document, corpus or other web work budget was exceeded.
+	:raises RuntimeError: If the operation cannot satisfy its state or persistence
+	    preconditions.
+	"""
 	if isinstance(document_ids, list) and len(document_ids) > MAX_BASE_DOCUMENTS:
 		raise WorkLimitError(f"Select at most {MAX_BASE_DOCUMENTS} documents.")
 	if not _valid_document_ids(document_ids):
@@ -87,13 +141,12 @@ def get_creation_documents(document_ids: list[int], user_id: int, organisation_i
 
 
 def get_user_id(user: str):
-	"""
-    Gets the user ID for a given username.
-    
-    :param user: The username to look up.
-    :type user: str
-    :return: The user ID if found, otherwise None.
-	:rtype: Union[int, None]
+	"""Gets the user ID for a given username.
+
+	:param user: The username to look up.
+	:type user: str
+	:returns: The user ID if found, otherwise None.
+	:rtype: int | None
 	"""
 	select_query = sql.SQL("SELECT id FROM users WHERE username = %s;")
 	result = execute_query(select_query, (user,))
@@ -103,25 +156,26 @@ def get_user_id(user: str):
 
 
 def get_organisation_id(organisation_name: str):
+	"""Gets the organization ID for a given organization name.
+
+	:param organisation_name: The name of the organisation to look up.
+	:type organisation_name: str
+	:returns: The organisation ID if found, otherwise None.
+	:rtype: list[tuple[object, ...]] | bool | None
 	"""
-    Gets the organisation ID for a given organisation name.
-    
-    :param organisation_name: The name of the organisation to look up.
-    :type organisation_name: str
-	:return: The organisation ID if found, otherwise None.
-	:rtype: Union[int, None]"""
 	select_query = sql.SQL("SELECT id FROM organisations WHERE name = %s;")
 	return execute_query(select_query, (organisation_name,))
 
 
 def get_organisation_name(organisation_id: int):
-	"""
-    Gets the organisation name for a given organisation ID.
-    
-    :param organisation_id: The ID of the organisation to look up.
+	"""Gets the organization name for a given organization ID.
+
+	:param organisation_id: The ID of the organisation to look up.
 	:type organisation_id: int
-	:return: The organisation name if found, otherwise -1.
-	:rtype: Union[str, int]
+	:returns: The organisation name if found, otherwise -1.
+	:rtype: str | int
+	:raises RuntimeError: If the operation cannot satisfy its state or persistence
+	    preconditions.
 	"""
 	select_query = sql.SQL("SELECT name FROM organisations WHERE id = %s;")
 	response = execute_query(select_query, (organisation_id,))
@@ -133,7 +187,15 @@ def get_organisation_name(organisation_id: int):
 
 
 def get_members_of_organisation(organisation_id: int, *, include_roles=False):
-	"""List usernames, or include the IDs and roles for ownership management."""
+	"""List usernames, or include the IDs and roles for ownership management.
+
+	:param organisation_id: The organization database ID used to scope access.
+	:type organisation_id: int
+	:param include_roles: Whether member results also contain IDs and role values.
+	:type include_roles: bool
+	:returns: The members of organisation result.
+	:rtype: list[tuple[object, ...]] | bool | None
+	"""
 	if include_roles:
 		query = sql.SQL("""SELECT u.username, m.userid, m.authorisation
 			FROM membership m JOIN users u ON u.id = m.userid
@@ -144,20 +206,29 @@ def get_members_of_organisation(organisation_id: int, *, include_roles=False):
 
 
 def get_member_ids_from_organisation_id(organisationID: int):
-	"""
-    Gets the user IDs of all members in a given organisation.
-    
-    :param organisationID: The ID of the organisation to look up.
+	"""Gets the user IDs of all members in a given organization.
+
+	:param organisationID: The ID of the organisation to look up.
 	:type organisationID: int
-	:return: A list of user IDs of members in the organisation.
-	:rtype: list[int]
+	:returns: A list of user IDs of members in the organisation.
+	:rtype: list[tuple[object, ...]] | bool | None
 	"""
 	select_query = sql.SQL("SELECT userid FROM membership WHERE organisationid = %s;")
 	return execute_query(select_query, (organisationID,))
 
 
 def get_username_suggestion(prefix: str, organisation_id: int, actor_id: int):
-	"""Find up to 20 users an administrator can invite to this organization."""
+	"""Find up to 20 users an administrator can invite to this organization.
+
+	:param prefix: The username prefix to search for.
+	:type prefix: str
+	:param organisation_id: The organization database ID used to scope access.
+	:type organisation_id: int
+	:param actor_id: The account requesting the management operation.
+	:type actor_id: int
+	:returns: The username suggestion result.
+	:rtype: list[tuple[str]] | bool | None
+	"""
 	# Use ! as the explicit escape character to avoid PostgreSQL backslash modes.
 	pattern = prefix.replace("!", "!!").replace("%", "!%").replace("_", "!_") + "%"
 	query = sql.SQL("""SELECT u.username FROM users u
@@ -171,13 +242,13 @@ def get_username_suggestion(prefix: str, organisation_id: int, actor_id: int):
 
 
 def get_organisation_ids_from_user_id(userID: int):
-	"""
-    Gets the organisation IDs associated with a given user ID.
-	
+	"""Gets the organization IDs associated with a given user ID.
+
 	:param userID: The ID of the user to look up.
 	:type userID: int
-	:return: A tuple containing a list of organisation IDs or None, and an error message or None.
-	:rtype: tuple[Union[list[int], None], Union[str, Exception, None]]
+	:returns: The legacy organization-ID result and error pair; absent or failed reads retain
+	    their sentinels.
+	:rtype: tuple[object, object]
 	"""
 	try:
 		select_query = sql.SQL("SELECT organisationid FROM membership WHERE userid = %s;")
@@ -194,13 +265,12 @@ def get_organisation_ids_from_user_id(userID: int):
 
 
 def get_organisation_from_user_id(user_id: int):
-	"""
-	Gets the organisations associated with a given user ID.
-	
+	"""Gets the organizations associated with a given user ID.
+
 	:param user_id: The ID of the user to look up.
 	:type user_id: int
-	:return: A tuple containing a list of organisations or None, and an error message or None.
-	:rtype: tuple[Union[list[dict[str, Union[str, int]]], None], Union[str, Exception, None]]
+	:returns: The organization list and error pair, retaining the legacy failure sentinel.
+	:rtype: tuple[object, object]
 	"""
 	try:
 		select_query = sql.SQL("""	SELECT organisationid, o.name
@@ -221,15 +291,14 @@ def get_organisation_from_user_id(user_id: int):
 
 
 def check_password(user: str, password: str):
-	"""
- 	Checks if the password is correct for the given user
+	"""Checks if the password is correct for the given user
 
 	:param user: the username to check
 	:type user: str
 	:param password: the password to check
 	:type password: str
-	:return: user ID if password is correct, False otherwise
-	:rtype: Union[int, bool]
+	:returns: The verified account ID, or False when verification fails.
+	:rtype: int | bool
 	:raises Exception: Exception (if something went wrong)
 	"""
 	if not isinstance(user, str) or not isinstance(password, str):
@@ -254,15 +323,14 @@ def check_password(user: str, password: str):
 
 
 def check_organisation_authorisation(organisationName: str, userName: str):
-	"""
-	Checks the authorisation level of a user in a given organisation.
- 
+	"""Checks the authorisation level of a user in a given organization.
+
 	:param organisationName: The name of the organisation.
 	:type organisationName: str
 	:param userName: The username of the user.
 	:type userName: str
-	:return: The authorisation level if found, otherwise None.
-	:rtype: Union[int, None]
+	:returns: The authorisation level if found, otherwise None.
+	:rtype: int | None
 	"""
 	select_query = sql.SQL("SELECT authorisation from membership "
 						   "where userid = (SELECT id from users where username = (%s)) "
@@ -277,15 +345,19 @@ def check_organisation_authorisation(organisationName: str, userName: str):
 
 
 def get_base_id(base_name: str, org_id: int, *, raise_on_error=False):
-	"""
-	Gets the document base ID for a given base name and organisation ID.
- 
+	"""Gets the document base ID for a given base name and organization ID.
+
 	:param base_name: The name of the document base.
 	:type base_name: str
 	:param org_id: The ID of the organisation.
 	:type org_id: int
-	:return: The document base ID if found, otherwise None.
-	:rtype: Union[int, None]
+	:param raise_on_error: Whether database failures propagate instead of returning the legacy
+	    sentinel.
+	:type raise_on_error: bool
+	:returns: The document base ID if found, otherwise None.
+	:rtype: int | None
+	:raises RuntimeError: If the operation cannot satisfy its state or persistence
+	    preconditions.
 	"""
 	select_query = sql.SQL("SELECT id FROM document_bases WHERE name = %s AND organisation_id = %s;")
 	result = execute_query(select_query, (base_name, org_id))
@@ -297,7 +369,19 @@ def get_base_id(base_name: str, org_id: int, *, raise_on_error=False):
 
 
 def get_base_reference(organisation_id: int, *, base_id=None, name=None):
-	"""Resolve an ID or exact legacy name within an already authorized organization."""
+	"""Resolve an ID or exact legacy name within an already authorized organization.
+
+	:param organisation_id: The organization database ID used to scope access.
+	:type organisation_id: int
+	:param base_id: The selected document-base database ID.
+	:type base_id: int | None
+	:param name: The selected display name or operation identifier.
+	:type name: str | None
+	:returns: The base reference result.
+	:rtype: tuple[object, ...] | None
+	:raises RuntimeError: If the operation cannot satisfy its state or persistence
+	    preconditions.
+	"""
 	query = sql.SQL("""SELECT id, name, attribute_schema_version::text, attribute_ids,
 		(CASE WHEN attributes::text = '[]' THEN '{}' ELSE attributes::text END)::text[]
 		FROM document_bases WHERE organisation_id = %s
@@ -309,6 +393,15 @@ def get_base_reference(organisation_id: int, *, base_id=None, name=None):
 
 
 def get_document_base_data(base_name: str, organisation_id: int):
+	"""Read the selected base catalog and its source-document metadata.
+
+	:param base_name: The exact document-base display name.
+	:type base_name: str
+	:param organisation_id: The organization database ID used to scope access.
+	:type organisation_id: int
+	:returns: The document base data mapping.
+	:rtype: dict[str, object] | None
+	"""
 	query = sql.SQL("""SELECT b.id, b.name,
 		(CASE WHEN b.attributes::text = '[]' THEN '{}' ELSE b.attributes::text END)::text[],
 		b.last_modified, d.id, d.name, d.content
@@ -330,7 +423,21 @@ def get_document_base_data(base_name: str, organisation_id: int):
 
 
 def get_document_ids_for_snapshot(base_id: int, organisation_id: int, user_id: int, documents: dict[str, str]):
-	"""Resolve IDs once per publication without returning source text from PostgreSQL."""
+	"""Resolve IDs once per publication without returning source text from PostgreSQL.
+
+	:param base_id: The selected document-base database ID.
+	:type base_id: int
+	:param organisation_id: The organization database ID used to scope access.
+	:type organisation_id: int
+	:param user_id: The authenticated account ID selecting the authorized scope.
+	:type user_id: int
+	:param documents: The document set or names/text references processed by this helper.
+	:type documents: dict[str, str]
+	:returns: The document ids for snapshot mapping.
+	:rtype: dict[str, int]
+	:raises RuntimeError: If the operation cannot satisfy its state or persistence
+	    preconditions.
+	"""
 	if not documents:
 		return {}
 	query = sql.SQL("""SELECT wanted.name, CASE WHEN count(*) = 1 THEN min(d.id) END
@@ -348,7 +455,17 @@ def get_document_ids_for_snapshot(base_id: int, organisation_id: int, user_id: i
 
 
 def task_scope_access(user_id, scope):
-	"""Check live membership, base identity and any saved session in one statement."""
+	"""Check live membership, base identity and any saved session in one statement.
+
+	:param user_id: The authenticated account ID selecting the authorized scope.
+	:type user_id: int
+	:param scope: The authorized user, base, organization and session/task identity.
+	:type scope: dict[str, object]
+	:returns: The task scope access result.
+	:rtype: tuple[bool, bool]
+	:raises FeedbackOutcomeUnavailable: A durable command receipt cannot currently be read or
+	    confirmed.
+	"""
 	query = sql.SQL("""SELECT
 		EXISTS (SELECT 1 FROM membership m WHERE m.userid = %(user)s
 			AND m.organisationid = %(org)s AND m.authorisation IN (0, 1, 10))
@@ -367,13 +484,12 @@ def task_scope_access(user_id, scope):
 
 @deprecated
 def _get_document(documentId: int):
-	"""
-	Get document content by document ID.
- 
+	"""Get document content by document ID.
+
 	:param documentId: The ID of the document to retrieve.
 	:type documentId: int
-	:return: The content of the document as a string or bytes, or None if not found.
-	:rtype: Union[str, bytes, None]
+	:returns: The content of the document as a string or bytes, or None if not found.
+	:rtype: str | bytes | None
 	"""
 	select_query = sql.SQL("""SELECT content,content_byte 
 								from documents 
@@ -393,7 +509,11 @@ def _get_document(documentId: int):
 
 
 def document_base_snapshot_scope():
-	"""Match a linked snapshot, or the exact legacy unlinked name if no linked snapshot exists."""
+	"""Match a linked snapshot, or the exact legacy unlinked name if no linked snapshot exists.
+
+	:returns: The document base snapshot scope result.
+	:rtype: psycopg2.sql.Composable
+	"""
 	return sql.SQL("""d.organisationid = b.organisation_id
 		AND d.content IS NULL AND d.content_byte IS NOT NULL
 		AND (d.documentbaseid = b.id OR (
@@ -407,6 +527,16 @@ def document_base_snapshot_scope():
 
 
 def document_base_snapshot_query(*, lock=False, include_attribute_schema=False):
+	"""Build the scoped snapshot SELECT with optional locking/schema metadata.
+
+	:param lock: Whether the selected snapshot row is locked for the transaction.
+	:type lock: bool
+	:param include_attribute_schema: Whether to include the stable schema version and attribute
+	    IDs.
+	:type include_attribute_schema: bool
+	:returns: The document base snapshot query result.
+	:rtype: psycopg2.sql.Composable
+	"""
 	columns = sql.SQL(", b.attribute_schema_version::text, b.attribute_ids") if include_attribute_schema else sql.SQL("")
 	query = sql.SQL("""SELECT d.id, d.content_byte{columns}
 		FROM document_bases b JOIN documents d ON {scope}
@@ -419,7 +549,25 @@ def document_base_snapshot_query(*, lock=False, include_attribute_schema=False):
 
 def get_document_base_snapshot(base_name: str, base_id: int, organisation_id: int, user_id: int,
 		*, include_attribute_schema=False):
-	"""Read the authorized base's unique snapshot, optionally with its schema."""
+	"""Read the authorized base's unique snapshot, optionally with its schema.
+
+	:param base_name: The exact document-base display name.
+	:type base_name: str
+	:param base_id: The selected document-base database ID.
+	:type base_id: int
+	:param organisation_id: The organization database ID used to scope access.
+	:type organisation_id: int
+	:param user_id: The authenticated account ID selecting the authorized scope.
+	:type user_id: int
+	:param include_attribute_schema: Whether to include the stable schema version and attribute
+	    IDs.
+	:type include_attribute_schema: bool
+	:returns: The snapshot row ID and BSON bytes, optionally followed by schema metadata; None
+	    if absent.
+	:rtype: tuple[object, ...] | None
+	:raises RuntimeError: If the operation cannot satisfy its state or persistence
+	    preconditions.
+	"""
 	result = execute_query(document_base_snapshot_query(include_attribute_schema=include_attribute_schema),
 		(base_name, base_id, organisation_id, user_id))
 	if result is False:
@@ -431,7 +579,20 @@ def get_document_base_snapshot(base_name: str, base_id: int, organisation_id: in
 
 
 def get_document_by_name(document_name: str, organisation_id: int, user_id: int, base_name: str = None) -> tuple[str, str]:
-	"""Get a raw text document by name, scoped to the organization and optional base."""
+	"""Get a raw text document by name, scoped to the organization and optional base.
+
+	:param document_name: The exact source-document display name.
+	:type document_name: str
+	:param organisation_id: The organization database ID used to scope access.
+	:type organisation_id: int
+	:param user_id: The authenticated account ID selecting the authorized scope.
+	:type user_id: int
+	:param base_name: The exact document-base display name.
+	:type base_name: str | None
+	:returns: The document by name result.
+	:rtype: tuple[str, str]
+	:raises LookupError: If the operation cannot satisfy its state or persistence preconditions.
+	"""
 	query = sql.SQL("""SELECT d.id, d.content FROM documents d
 		JOIN membership m ON d.organisationid = m.organisationid
 		WHERE d.name = %s AND m.userid = %s AND m.organisationid = %s
@@ -448,7 +609,19 @@ def get_document_by_name(document_name: str, organisation_id: int, user_id: int,
 
 
 def get_document(document_id: int, user_id: int, organisation_id: int = None, base_name: str = None):
-	"""Get a raw text document by ID for an authorized member."""
+	"""Get a raw text document by ID for an authorized member.
+
+	:param document_id: The source-document database ID.
+	:type document_id: int
+	:param user_id: The authenticated account ID selecting the authorized scope.
+	:type user_id: int
+	:param organisation_id: The organization database ID used to scope access.
+	:type organisation_id: int | None
+	:param base_name: The exact document-base display name.
+	:type base_name: str | None
+	:returns: The document result.
+	:rtype: tuple[int | None, str | None]
+	"""
 	query = sql.SQL("""SELECT d.name, d.content FROM documents d
 		JOIN membership m ON d.organisationid = m.organisationid
 		WHERE d.id = %s AND m.userid = %s AND m.authorisation IN (0, 1, 10)
@@ -460,7 +633,21 @@ def get_document(document_id: int, user_id: int, organisation_id: int = None, ba
 
 
 def get_document_by_name_and_content(doc_name: str, doc_content: str, user_id: int, organisation_id: int = None, base_name: str = None):
-	"""Find a raw text document that still has the supplied content."""
+	"""Find a raw text document that still has the supplied content.
+
+	:param doc_name: The exact source-document display name.
+	:type doc_name: str
+	:param doc_content: The exact original document text used to resolve a source row.
+	:type doc_content: str
+	:param user_id: The authenticated account ID selecting the authorized scope.
+	:type user_id: int
+	:param organisation_id: The organization database ID used to scope access.
+	:type organisation_id: int | None
+	:param base_name: The exact document-base display name.
+	:type base_name: str | None
+	:returns: The document by name and content result.
+	:rtype: tuple[object, object, object]
+	"""
 	query = sql.SQL("""SELECT d.id, d.name, d.content FROM documents d
 		JOIN membership m ON d.organisationid = m.organisationid
 		WHERE d.name = %s AND m.userid = %s AND m.authorisation IN (0, 1, 10)
@@ -476,7 +663,13 @@ def get_document_by_name_and_content(doc_name: str, doc_content: str, user_id: i
 
 
 def get_documents_for_organisation(organisation_id: int):
-	"""List text documents. Saved snapshots are internal artifacts."""
+	"""List text documents. Saved snapshots are internal artifacts.
+
+	:param organisation_id: The organization database ID used to scope access.
+	:type organisation_id: int
+	:returns: The documents for organisation result.
+	:rtype: list[dict[str, object]]
+	"""
 	query = sql.SQL("""SELECT id, name, content FROM documents
 		WHERE organisationid = %s AND content IS NOT NULL;""")
 	result = execute_query(query, (organisation_id,))
@@ -486,13 +679,14 @@ def get_documents_for_organisation(organisation_id: int):
 
 
 def get_document_bases_for_organisation(organisation_id: int):
-	"""
-	Gets all document bases for a specific organisation.
- 
+	"""Gets all document bases for a specific organization.
+
 	:param organisation_id: The ID of the organisation to retrieve document bases for.
 	:type organisation_id: int
-	:return: A list of dictionaries containing document base IDs, names, and attributes.
-	:rtype: list[dict[str, Union[int, str, list[str]]]]
+	:returns: A list of dictionaries containing document base IDs, names, and attributes.
+	:rtype: list[dict[str, object]]
+	:raises RuntimeError: If the operation cannot satisfy its state or persistence
+	    preconditions.
 	"""
 	select_query = sql.SQL("""SELECT id, name, attributes, last_modified
 						 FROM document_bases
@@ -511,7 +705,21 @@ def get_document_bases_for_organisation(organisation_id: int):
 
 
 def update_document_content(doc_id: int, new_content: str, organisation_id: int = None, base_id: int = None, user_id: int = None):
-	"""Update a raw text document, returning success only for an affected row."""
+	"""Update a raw text document, returning success only for an affected row.
+
+	:param doc_id: The source/snapshot database row ID.
+	:type doc_id: int
+	:param new_content: The proposed complete source text.
+	:type new_content: str
+	:param organisation_id: The organization database ID used to scope access.
+	:type organisation_id: int | None
+	:param base_id: The selected document-base database ID.
+	:type base_id: int | None
+	:param user_id: The authenticated account ID selecting the authorized scope.
+	:type user_id: int | None
+	:returns: True when the operation or predicate succeeds; otherwise False.
+	:rtype: bool
+	"""
 	if not isinstance(new_content, str):
 		return False
 	try:
@@ -534,7 +742,17 @@ class FeedbackOutcomeUnavailable(RuntimeError):
 
 
 def get_feedback_outcome(user_id: int, command_id: str):
-	"""Read the saved outcome only for its submitting user and a current base member."""
+	"""Read the saved outcome only for its submitting user and a current base member.
+
+	:param user_id: The authenticated account ID selecting the authorized scope.
+	:type user_id: int
+	:param command_id: The unique decision UUID used for exact replay.
+	:type command_id: str
+	:returns: The feedback outcome mapping.
+	:rtype: dict[str, object] | None
+	:raises FeedbackOutcomeUnavailable: A durable command receipt cannot currently be read or
+	    confirmed.
+	"""
 	query = sql.SQL("""SELECT f.base_id, b.organisation_id, b.name, f.session_id, f.expected_version,
 		f.request_fingerprint, f.snapshot_version, f.committed_at <= clock_timestamp() - interval '10 seconds'
 		FROM public.feedback_outcomes f JOIN public.document_bases b ON b.id = f.base_id
@@ -558,7 +776,31 @@ def get_feedback_outcome(user_id: int, command_id: str):
 def compare_and_swap_document_content(doc_id: int, new_bytes: bytes, expected_bytes: bytes,
 		organisation_id: int, user_id: int, base_id: int = None, attributes: list[str] = None, *, feedback=None,
 		expected_attribute_version=None) -> bool:
-	"""Replace the scoped snapshot if its bytes still match, updating metadata atomically."""
+	"""Replace the scoped snapshot if its bytes still match, updating metadata atomically.
+
+	:param doc_id: The source/snapshot database row ID.
+	:type doc_id: int
+	:param new_bytes: The proposed encoded BSON snapshot.
+	:type new_bytes: bytes
+	:param expected_bytes: The original snapshot bytes used by compare-and-swap.
+	:type expected_bytes: bytes
+	:param organisation_id: The organization database ID used to scope access.
+	:type organisation_id: int
+	:param user_id: The authenticated account ID selecting the authorized scope.
+	:type user_id: int
+	:param base_id: The selected document-base database ID.
+	:type base_id: int | None
+	:param attributes: The attributes or names used by the operation.
+	:type attributes: list[str] | None
+	:param feedback: The feedback payload or adapter used by this step.
+	:type feedback: dict[str, object] | object
+	:param expected_attribute_version: The displayed schema UUID required by the mutation.
+	:type expected_attribute_version: str | None
+	:returns: True when the operation or predicate succeeds; otherwise False.
+	:rtype: bool
+	:raises RuntimeError: If the operation cannot satisfy its state or persistence
+	    preconditions.
+	"""
 	if type(base_id) is not int or base_id <= 0 or not isinstance(new_bytes, bytes) or not isinstance(expected_bytes, bytes):
 		return False
 	try:
@@ -604,12 +846,17 @@ def compare_and_swap_document_content(doc_id: int, new_bytes: bytes, expected_by
 
 
 def delete_document_content(doc_id: int, organisation_id: int = None, base_id: int = None, user_id: int = None):
-	"""
-	Deletes a document by its ID.
- 
+	"""Deletes a document by its ID.
+
 	:param doc_id: The ID of the document to delete.
 	:type doc_id: int
-	:return: True if the deletion was successful, False otherwise.
+	:param organisation_id: The organization database ID used to scope access.
+	:type organisation_id: int | None
+	:param base_id: The selected document-base database ID.
+	:type base_id: int | None
+	:param user_id: The authenticated account ID selecting the authorized scope.
+	:type user_id: int | None
+	:returns: True if the deletion was successful, False otherwise.
 	:rtype: bool
 	"""
 	try:
@@ -628,15 +875,16 @@ def delete_document_content(doc_id: int, organisation_id: int = None, base_id: i
 
 
 def get_documents(document_ids: list[int], user_id: int, organisation_id: int = None):
-	"""
-	Gets multiple documents by their IDs for a specific user.
- 
+	"""Gets multiple documents by their IDs for a specific user.
+
 	:param document_ids: A list of document IDs to retrieve.
 	:type document_ids: list[int]
 	:param user_id: The ID of the user requesting the documents.
 	:type user_id: int
-	:return: A list of tuples containing document names and their contents (as str or bytes).
-	:rtype: list[tuple[str, Union[str, bytes]]]
+	:param organisation_id: The organization database ID used to scope access.
+	:type organisation_id: int | None
+	:returns: A list of tuples containing document names and their contents (as str or bytes).
+	:rtype: list[tuple[object, object]]
 	"""
 	if (not isinstance(document_ids, list) or not document_ids or
 		any(type(document_id) is not int or document_id <= 0 for document_id in document_ids)):
@@ -660,15 +908,14 @@ def get_documents(document_ids: list[int], user_id: int, organisation_id: int = 
 
 
 def get_document_ids(organisation_id: int, user_id: int):
-	"""
-	Gets all document IDs for a specific organisation and user.
- 
+	"""Gets all document IDs for a specific organization and user.
+
 	:param organisation_id: The ID of the organisation to retrieve documents for.
 	:type organisation_id: int
 	:param user_id: The ID of the user requesting the documents.
 	:type user_id: int
-	:return: A list of tuples containing document names and their contents (as str or bytes).
-	:rtype: list[tuple[str, Union[str, bytes]]]
+	:returns: A list of tuples containing document names and their contents (as str or bytes).
+	:rtype: list[object]
 	"""
 	select_query = sql.SQL("""SELECT name,content,content_byte 
 									from documents 
@@ -698,7 +945,22 @@ def get_document_ids(organisation_id: int, user_id: int):
 
 def get_feedbacks_for_document(document_id: int, user_id: int = None, *,
 		expected_content=None, expected_attribute_ids=None, expected_mappings=None):
-	"""Return ratings only for the exact canonical value shown by the reader."""
+	"""Return ratings only for the exact canonical value shown by the reader.
+
+	:param document_id: The source-document database ID.
+	:type document_id: int
+	:param user_id: The authenticated account ID selecting the authorized scope.
+	:type user_id: int | None
+	:param expected_content: The source text displayed when the review was submitted.
+	:type expected_content: str | None
+	:param expected_attribute_ids: The displayed name-to-UUID schema used to reject stale
+	    feedback.
+	:type expected_attribute_ids: dict[str, str] | None
+	:param expected_mappings: The displayed mapping revision for each attribute.
+	:type expected_mappings: dict[str, str] | None
+	:returns: The feedbacks for document mapping.
+	:rtype: dict[str, dict[str, object]]
+	"""
 	from wannadb_web.postgres.public_review import load_review_document, validate_displayed_document
 
 	with closing(connectPG()) as connection, connection.cursor() as cursor:
@@ -726,7 +988,25 @@ def get_feedbacks_for_document(document_id: int, user_id: int = None, *,
 
 
 def get_public_feedback_suggestions(organisation_id, base_id, document_id, offset, limit, *, user_id=None):
-	"""List source-anchored corrections with exact occurrence and group identities."""
+	"""List source-anchored corrections with exact occurrence and group identities.
+
+	:param organisation_id: The organization database ID used to scope access.
+	:type organisation_id: int
+	:param base_id: The selected document-base database ID.
+	:type base_id: int
+	:param document_id: The source-document database ID.
+	:type document_id: int
+	:param offset: The zero-based retained-result or suggestion offset.
+	:type offset: int
+	:param limit: The maximum number of rows/groups to read.
+	:type limit: int
+	:param user_id: The authenticated account ID selecting the authorized scope.
+	:type user_id: int | None
+	:returns: The public feedback suggestions result.
+	:rtype: list[dict[str, object]]
+	:raises PublicFeedbackConflict: The displayed source, stable attribute or canonical mapping
+	    changed.
+	"""
 	from wannadb_web.postgres.public_review import (
 		PublicFeedbackConflict, load_review_base, mapping_revisions, source_revision, suggestion_version,
 	)

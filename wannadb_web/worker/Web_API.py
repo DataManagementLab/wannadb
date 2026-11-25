@@ -1,3 +1,4 @@
+"""Web-worker orchestration of preprocessing, snapshots and resumable matching steps."""
 import logging
 import time
 from typing import Optional, Any
@@ -44,7 +45,20 @@ _MATCHING_COMMIT_ATTEMPTS = 3
 
 class WannaDB_WebAPI:
 
+	"""Worker-local coordination of an authorized base and its matching checkpoint."""
 	def __init__(self, user_id: int, document_base_name: str, organisation_id: int, build_query_cache: bool = True):
+		"""Initialize WannaDB_WebAPI with its supplied dependencies and scope.
+
+		:param user_id: The authenticated account ID selecting the authorized scope.
+		:type user_id: int
+		:param document_base_name: The exact document-base display name.
+		:type document_base_name: str
+		:param organisation_id: The organization database ID used to scope access.
+		:type organisation_id: int
+		:param build_query_cache: Whether to open the optional in-memory SQL projection.
+		:type build_query_cache: bool
+		:raises Exception: If required worker state or a dependency is unavailable.
+		"""
 		self._document_id: Optional[int] = None
 		self._document_base: Optional[DocumentBase] = None
 		self.user_id = user_id
@@ -60,6 +74,13 @@ class WannaDB_WebAPI:
 		self.organisation_id = organisation_id
 
 		def status_callback_fn(message, progress):
+			"""Publish a pipeline status message through this session's scoped signal.
+
+			:param message: The safe status or error message.
+			:type message: str
+			:param progress: The preprocessing progress value supplied by the shared callback.
+			:type progress: object
+			"""
 			self.signals.status.emit(str(message) + " " + str(progress))
 
 		self.status_callback = StatusCallback(status_callback_fn)
@@ -74,32 +95,66 @@ class WannaDB_WebAPI:
 
 	@property
 	def feedback(self):
+		"""Read the current feedback payload, raising if it has not been set.
+
+		:returns: The feedback mapping.
+		:rtype: dict[str, object]
+		:raises Exception: If required worker state or a dependency is unavailable.
+		"""
 		if self._feedback is None:
 			raise Exception("Feedback is not set!")
 		return self._feedback
 
 	@feedback.setter
 	def feedback(self, value: dict):
+		"""Replace the worker-local feedback value.
+
+		:param value: The value to validate, store or convert as described above.
+		:type value: dict
+		"""
 		self._feedback = value
 
 	@property
 	def document_id(self):
+		"""Read the current snapshot row ID, raising if it has not been set.
+
+		:returns: The resulting count, version, identifier or status code for this operation.
+		:rtype: int
+		:raises Exception: If required worker state or a dependency is unavailable.
+		"""
 		if self._document_id is None:
 			raise Exception("Document ID not set!")
 		return self._document_id
 
 	@document_id.setter
 	def document_id(self, value: int):
+		"""Replace the worker-local document id value.
+
+		:param value: The value to validate, store or convert as described above.
+		:type value: int
+		"""
 		self._document_id = value
 
 	@property
 	def document_base(self):
+		"""Read the worker-local base, raising if no snapshot has been loaded.
+
+		:returns: The document base result.
+		:rtype: DocumentBase
+		:raises Exception: If required worker state or a dependency is unavailable.
+		"""
 		if self._document_base is None:
 			raise Exception("Document base not loaded!")
 		return self._document_base
 
 	@document_base.setter
 	def document_base(self, value: DocumentBase):
+		"""Replace the worker-local document base value.
+
+		:param value: The value to validate, store or convert as described above.
+		:type value: DocumentBase
+		:raises TypeError: If a supplied value has an unsupported type.
+		"""
 		if not isinstance(value, DocumentBase):
 			raise TypeError("Document base must be of type DocumentBase!")
 		self._document_base = value
@@ -107,12 +162,31 @@ class WannaDB_WebAPI:
 		return
 
 	def _report_error(self, code: str, error: Exception) -> None:
+		"""Publish a stable error code while logging only the exception classification.
+
+		:param code: The stable public error code.
+		:type code: str
+		:param error: The failure object or safe error text/code handled here.
+		:type error: Exception
+		"""
 		logger.warning("Worker operation failed. code=%s error_type=%s", code, type(error).__name__)
 		if self.signals.error.msg is None:
 			self.signals.error.emit(RuntimeError(code))
 
 	def create_document_base(self, source_documents: list[tuple[int, str, str]],
 			attributes: list[Attribute], statistics: Statistics) -> int:
+		"""Preprocess selected sources and atomically commit their base snapshot and links.
+
+		:param source_documents: Selected source IDs, names and exact source text.
+		:type source_documents: list[tuple[int, str, str]]
+		:param attributes: The attributes or names used by the operation.
+		:type attributes: list[Attribute]
+		:param statistics: The shared pipeline statistics recorder.
+		:type statistics: Statistics
+		:returns: The resulting count, version, identifier or status code for this operation.
+		:rtype: int
+		:raises ValueError: If an input fails validation for this operation.
+		"""
 		started = time.monotonic()
 		try:
 			documents = [Document(name, content) for _, name, content in source_documents]
@@ -146,6 +220,13 @@ class WannaDB_WebAPI:
 		return base_id
 
 	def _preprocess(self, document_base: DocumentBase, statistics: Statistics):
+		"""Apply the bounded web extraction/embedding pipeline to the proposed base.
+
+		:param document_base: The worker-local domain base.
+		:type document_base: DocumentBase
+		:param statistics: The shared pipeline statistics recorder.
+		:type statistics: Statistics
+		"""
 		validate_corpus(document.text for document in document_base.documents)
 		validate_attribute_count(len(document_base.attributes))
 		# load default preprocessing phase
@@ -168,6 +249,11 @@ class WannaDB_WebAPI:
 		preprocessing_phase(document_base, EmptyInteractionCallback(), self.status_callback, statistics)
 
 	def load_document_base_from_bson(self, *, publish_to_ui=True):
+		"""Load the authorized snapshot without deduplicating nugget identity.
+
+		:param publish_to_ui: Whether loading also stages a compact base publication.
+		:type publish_to_ui: bool
+		"""
 		logger.debug("Loading document base snapshot.")
 		try:
 			if self.sqLiteCacheDBWrapper is not None:
@@ -198,6 +284,13 @@ class WannaDB_WebAPI:
 			raise
 
 	def update_document_base_to_bson(self, *, update_attributes=False):
+		"""Persist the staged snapshot with its concurrency and schema guards.
+
+		:param update_attributes: Whether saving also changes the persisted attribute catalog.
+		:type update_attributes: bool
+		:raises RuntimeError: If the operation cannot satisfy its state or persistence
+		    preconditions.
+		"""
 		if self._document_id is None or self._expected_bson is None:
 			self.signals.error.emit(RuntimeError("PERSISTENCE_FAILED"))
 			raise RuntimeError("Document base has no persistence snapshot")
@@ -214,18 +307,41 @@ class WannaDB_WebAPI:
 		self.signals.status.emit("Changes saved.")
 
 	def _document_ids(self, base):
+		"""Resolve raw document IDs without changing source or nugget identity.
+
+		:param base: The authorized domain base or decoded snapshot record.
+		:type base: DocumentBase | dict[str, object]
+		:returns: The document ids mapping.
+		:rtype: dict[str, int]
+		"""
 		return get_document_ids_for_snapshot(self.session.base_id, self.organisation_id, self.user_id,
 			{document.name: document.text for document in base.documents})
 
 	def _stage_document_base(self, base):
+		"""Stage a compact base publication for atomic session promotion.
+
+		:param base: The authorized domain base or decoded snapshot record.
+		:type base: DocumentBase | dict[str, object]
+		"""
 		self.signals.document_base_to_ui.emit(base, self._document_ids(base))
 
 	def complete_session(self):
+		"""Publish the staged base and finish this one-off task session.
+		"""
 		self._stage_document_base(self.document_base)
 		self.session.close()
 
 
 	def mutate_documents(self, *, additions=(), replacement=None, removal=None):
+		"""Commit processed source mutations against the latest authorized base.
+
+		:param additions: New document display names paired with source text.
+		:type additions: Iterable[tuple[str, str]]
+		:param replacement: The selected replacement owner or source mutation, as required here.
+		:type replacement: str | tuple[object, ...]
+		:param removal: The exact selected source document to remove when supplied.
+		:type removal: tuple[object, ...] | None
+		"""
 		documents = list(additions)
 		if replacement is not None:
 			documents.append(replacement[2])
@@ -246,6 +362,13 @@ class WannaDB_WebAPI:
 
 	@staticmethod
 	def _matcher(propagation=None):
+		"""Construct the shared ranking matcher with web-bounded custom propagation.
+
+		:param propagation: The per-job bounded custom-hit propagation policy.
+		:type propagation: WebMatchPropagation | None
+		:returns: The matcher result.
+		:rtype: RankingBasedMatcher
+		"""
 		return RankingBasedMatcher(
 			distance=SignalsMeanDistance(signal_identifiers=[
 				"LabelEmbeddingSignal", "TextEmbeddingSignal", "ContextSentenceEmbeddingSignal", "RelativePositionSignal",
@@ -264,6 +387,11 @@ class WannaDB_WebAPI:
 
 	@staticmethod
 	def _nugget_pipeline():
+		"""Construct the shared normalization/embedding pipeline for selected candidates.
+
+		:returns: The nugpipeline result.
+		:rtype: Pipeline
+		"""
 		return Pipeline([
 			ContextSentenceCacher(), CopyNormalizer(), OntoNotesLabelParaphraser(),
 			SplitAttributeNameLabelParaphraser(do_lowercase=True, splitters=[" ", "_"]),
@@ -274,6 +402,11 @@ class WannaDB_WebAPI:
 		])
 
 	def prepare_public_nugget(self, nugget):
+		"""Prepare a newly accepted public correction for canonical matching.
+
+		:param nugget: The exact selected candidate or custom candidate text.
+		:type nugget: InformationNugget | str
+		"""
 		statistics = Statistics(False)
 		interaction = EmptyInteractionCallback()
 		document = Document(nugget.document.name, nugget.document.text)
@@ -291,10 +424,19 @@ class WannaDB_WebAPI:
 		nugget.signals.update(temporary.signals)
 
 	def add_automatic_matches_for_preview(self):
+		"""Fill provisional SQL-preview values without persisting them as confirmations.
+		"""
 		self._matcher().add_automatic_matches_for_preview(self.document_base, Statistics(False))
 
 	def _prepare_matching_base(self, interaction, statistics):
 		# Older add/edit tasks could save raw documents without preprocessing.
+		"""Prepare a worker-local base with the supplied interaction/statistics adapters.
+
+		:param interaction: The matching interaction callback used to request a decision.
+		:type interaction: object
+		:param statistics: The shared pipeline statistics recorder.
+		:type statistics: Statistics
+		"""
 		raw_documents = [document for document in self.document_base.documents
 			if SentenceStartCharsSignal.identifier not in document.signals]
 		if raw_documents:
@@ -307,7 +449,11 @@ class WannaDB_WebAPI:
 		])(self.document_base, interaction, self.status_callback, statistics)
 
 	def start_interactive_table_population(self):
-		"""Prepare one session and return as soon as it needs a reviewer."""
+		"""Prepare one session and return as soon as it needs a reviewer.
+
+		:raises FeedbackSessionConflict: A feedback command no longer matches its durable
+		    checkpoint or source.
+		"""
 		try:
 			self.signals.status.emit("Preparing feedback session.")
 			for attempt in range(_MATCHING_COMMIT_ATTEMPTS):
@@ -332,7 +478,19 @@ class WannaDB_WebAPI:
 			raise
 
 	def advance_interactive_table_population(self, current, command, payload, lease):
-		"""Run one decision, retrying only a concurrent canonical snapshot commit."""
+		"""Run one decision, retrying only a concurrent canonical snapshot commit.
+
+		:param current: The durable checkpoint metadata loaded for this step.
+		:type current: dict[str, object]
+		:param command: The command identity, version and replay fingerprint.
+		:type command: dict[str, object]
+		:param payload: The exact serialized feedback action being processed.
+		:type payload: dict[str, object]
+		:param lease: The unique worker-step lease fencing publication.
+		:type lease: str
+		:raises FeedbackSessionConflict: A feedback command no longer matches its durable
+		    checkpoint or source.
+		"""
 		propagation = WebMatchPropagation()
 		for attempt in range(_MATCHING_COMMIT_ATTEMPTS):
 			try:
@@ -349,6 +507,19 @@ class WannaDB_WebAPI:
 		raise FeedbackSessionConflict("Other feedback is being saved. Try your action again.")
 
 	def _advance_matching_step(self, current, command, payload, lease, propagation):
+		"""Run one leased decision and prepare its durable checkpoint/publication.
+
+		:param current: The durable checkpoint metadata loaded for this step.
+		:type current: dict[str, object]
+		:param command: The command identity, version and replay fingerprint.
+		:type command: dict[str, object]
+		:param payload: The exact serialized feedback action being processed.
+		:type payload: dict[str, object]
+		:param lease: The unique worker-step lease fencing publication.
+		:type lease: str
+		:param propagation: The per-job bounded custom-hit propagation policy.
+		:type propagation: WebMatchPropagation
+		"""
 		state = decode(current["checkpoint"])
 		moved = current["snapshot_hash"] != current["live_snapshot_hash"]
 		base = current["snapshot"] if moved else state.get("base", current["snapshot"])
@@ -397,6 +568,21 @@ class WannaDB_WebAPI:
 			propagation_limited=propagation.limited)
 
 	def _reconcile_matching_step(self, state, current, payload, moved):
+		"""Merge unchanged decisions or construct an explicit concurrent-review conflict.
+
+		:param state: The current serialized/worker matching state.
+		:type state: object
+		:param current: The durable checkpoint metadata loaded for this step.
+		:type current: dict[str, object]
+		:param payload: The exact serialized feedback action being processed.
+		:type payload: dict[str, object]
+		:param moved: Whether the canonical snapshot changed since this reviewer last observed it.
+		:type moved: bool
+		:returns: The reconcile matching step result.
+		:rtype: tuple[dict[str, object] | None, dict[str, object] | None, bool]
+		:raises FeedbackSessionConflict: A feedback command no longer matches its durable
+		    checkpoint or source.
+		"""
 		attribute = current["attribute"]
 		latest = observe_documents(self.document_base, attribute)
 		baseline = state.get("observed")
@@ -436,6 +622,33 @@ class WannaDB_WebAPI:
 
 	def _save_matching_step(self, checkpoint, request, identifier, *, current=None, command=None, lease=None,
 			conflict=None, write_snapshot=False, record_receipt=True, propagation_limited=False):
+		"""Commit checkpoint/snapshot/receipt state before publishing the new version.
+
+		:param checkpoint: The encoded matching checkpoint to persist.
+		:type checkpoint: bytes
+		:param request: The Celery request describing the affected execution.
+		:type request: object
+		:param identifier: The selected component/checkpoint serialization identifier.
+		:type identifier: str
+		:param current: The durable checkpoint metadata loaded for this step.
+		:type current: dict[str, object]
+		:param command: The command identity, version and replay fingerprint.
+		:type command: dict[str, object]
+		:param lease: The unique worker-step lease fencing publication.
+		:type lease: str | None
+		:param conflict: Concurrent-review details published with the waiting checkpoint.
+		:type conflict: dict[str, object] | None
+		:param write_snapshot: Whether the matching step also commits canonical BSON changes.
+		:type write_snapshot: bool
+		:param record_receipt: Whether to retain a durable command outcome with the checkpoint
+		    update.
+		:type record_receipt: bool
+		:param propagation_limited: Whether custom-hit propagation reached its configured web
+		    budget.
+		:type propagation_limited: bool
+		:raises RuntimeError: If the operation cannot satisfy its state or persistence
+		    preconditions.
+		"""
 		if request is None:
 			phase, attribute, feedback_payload = "finished", None, None
 		else:

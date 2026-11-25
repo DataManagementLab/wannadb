@@ -1,3 +1,4 @@
+"""Transactional web account, organization, document and public-review mutations."""
 import logging
 from contextlib import closing
 from typing import Union
@@ -24,6 +25,13 @@ logger: logging.Logger = logging.getLogger(__name__)
 
 
 def _log_transaction_error(operation, error):
+	"""Log safe transaction classification without request content or credentials.
+
+	:param operation: The operation selector or callable invoked by this helper.
+	:type operation: str | Callable[..., object]
+	:param error: The failure object or safe error text/code handled here.
+	:type error: BaseException | str
+	"""
 	request_id = getattr(g, "request_id", "-") if has_request_context() else "-"
 	logger.error("Database operation failed. operation=%s error_type=%s sqlstate=%s request_id=%s",
 		operation, type(error).__name__, getattr(error, "pgcode", None) or "-", request_id)
@@ -31,18 +39,24 @@ def _log_transaction_error(operation, error):
 
 # Schema tooling is offline administration only, with an explicit schema allowlist.
 def _schema_identifier(schema):
+	"""Validate a schema name before constructing a quoted PostgreSQL identifier.
+
+	:param schema: The selected database schema or expected schema identity.
+	:type schema: str
+	:returns: The schema identifier result.
+	:rtype: psycopg2.sql.Identifier
+	:raises ValueError: If an input fails validation for this operation.
+	"""
 	if schema != "public":
 		raise ValueError("Schema is not allowed")
 	return sql.Identifier(schema)
 
 
 def create_schema(schema):
-	"""
-	Creates a new schema in the database if it does not already exist.
-	
+	"""Creates a new schema in the database if it does not already exist.
+
 	:param schema: The name of the schema to create.
 	:type schema: str
-	:return: None
 	"""
 	create_schema_query = sql.SQL("CREATE SCHEMA IF NOT EXISTS {schema};").format(schema=_schema_identifier(schema), schema_name=sql.Literal(schema))
 	execute_transaction(create_schema_query, commit=True, fetch=False)
@@ -50,12 +64,10 @@ def create_schema(schema):
 
 
 def drop_schema(schema):
-	"""
-	Drops a schema in the database if it exists.
-	
+	"""Drops a schema in the database if it exists.
+
 	:param schema: The name of the schema to drop.
 	:type schema: str
-	:return: None
 	"""
 	drop_schema_query = sql.SQL("DROP SCHEMA IF EXISTS {schema} CASCADE;").format(schema=_schema_identifier(schema), schema_name=sql.Literal(schema))
 	execute_transaction(drop_schema_query, commit=True, fetch=False)
@@ -63,12 +75,10 @@ def drop_schema(schema):
 
 
 def drop_tables(schema):
-	"""
-	Drops all tables in the specified schema.
- 
+	"""Legacy unregistered handler; its local name shadows the imported drop helper.
+
 	:param schema: The name of the schema containing the tables to drop.
 	:type schema: str
-	:return: None
 	"""
 	drop_table_query = sql.SQL("DROP TABLE IF EXISTS {schema}.users CASCADE;\n"
 		"DROP TABLE IF EXISTS {schema}.documents CASCADE;\n"
@@ -79,12 +89,10 @@ def drop_tables(schema):
 
 
 def create_user_table(schema):
-	"""
-	Creates the users table in the specified schema.
- 
+	"""Creates the users table in the specified schema.
+
 	:param schema: The name of the schema where the users table will be created.
 	:type schema: str
-	:return: None
 	"""
 	create_table_query = sql.SQL("""CREATE TABLE IF NOT EXISTS {schema}.users
 	(
@@ -101,12 +109,10 @@ def create_user_table(schema):
 
 
 def create_documents_table(schema):
-	"""
-	Creates the documents table in the specified schema.
- 
+	"""Creates the documents table in the specified schema.
+
 	:param schema: The name of the schema where the documents table will be created.
 	:type schema: str
-	:return: None
 	"""
 	create_table_query = sql.SQL("""CREATE TABLE IF NOT EXISTS  {schema}.documents
 	(
@@ -156,12 +162,10 @@ def create_documents_table(schema):
 
 
 def create_document_feedback_table(schema):
-	"""
-	Creates the document_feedback table in the specified schema.
- 
+	"""Creates the document_feedback table in the specified schema.
+
 	:param schema: The name of the schema where the document_feedback table will be created.
 	:type schema: str
-	:return: None
 	"""
 	create_table_query = sql.SQL("""CREATE TABLE IF NOT EXISTS {schema}.document_feedback
 	(
@@ -190,12 +194,10 @@ TABLESPACE pg_default;
 
 
 def create_membership_table(schema):
-	"""
-	Creates the membership table in the specified schema.
- 
+	"""Creates the membership table in the specified schema.
+
 	:param schema: The name of the schema where the membership table will be created.
 	:type schema: str
-	:return: None
 	"""
 	create_table_query = sql.SQL("""CREATE TABLE IF NOT EXISTS {schema}.membership
 (
@@ -231,12 +233,10 @@ CREATE INDEX IF NOT EXISTS fki_organisationid
 
 
 def create_document_base_table(schema):
-	"""
-	Creates the document_bases table in the specified schema.
- 
+	"""Creates the document_bases table in the specified schema.
+
 	:param schema: The name of the schema where the document_bases table will be created.
 	:type schema: str
-	:return: None
 	"""
 	create_table_query = sql.SQL("""CREATE TABLE IF NOT EXISTS {schema}.document_bases
 		(
@@ -294,12 +294,10 @@ def create_document_base_table(schema):
 
 
 def create_organisation_table(schema):
-	"""
-	Creates the organisations table in the specified schema.
- 
+	"""Creates the organizations table in the specified schema.
+
 	:param schema: The name of the schema where the organisations table will be created.
 	:type schema: str
-	:return: None
 	"""
 	create_table_query = sql.SQL("""CREATE TABLE IF NOT EXISTS {schema}.organisations
 (
@@ -316,7 +314,17 @@ TABLESPACE pg_default;
 
 
 def add_user(user: str, password: str) -> int | None:
-	"""Return the new ID, or None if the username was already taken."""
+	"""Return the new ID, or None if the username was already taken.
+
+	:param user: The account username.
+	:type user: str
+	:param password: The account password; it must not be logged.
+	:type password: str
+	:returns: The add user result.
+	:rtype: int | None
+	:raises RuntimeError: If the operation cannot satisfy its state or persistence
+	    preconditions.
+	"""
 	pw_hash = bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("ascii")
 	insert = sql.SQL("""
 		INSERT INTO users (username, password) VALUES (%s, %s)
@@ -329,17 +337,17 @@ def add_user(user: str, password: str) -> int | None:
 
 
 def change_password(user: str, old_password: str, new_password: str):
-	"""
-	Changes the password of an existing user.
- 
+	"""Changes the password of an existing user.
+
 	:param user: the username of the user
 	:type user: str
 	:param old_password: the current password of the user
 	:type old_password: str
 	:param new_password: the new password of the user
 	:type new_password: str
-	:return: bool
-	:raises: Exception if the password could not be changed
+	:returns: bool
+	:rtype: bool | None
+	:raises : Exception if the password could not be changed
 	"""
 	try:
 		if old_password == new_password:
@@ -369,12 +377,32 @@ class OrganisationLifecycleConflict(RuntimeError):
 
 
 def _lock_organisation(cursor, organisation_id: int):
+	"""Lock the organization row for a serialized lifecycle mutation.
+
+	:param cursor: The transaction/query cursor owned by the caller.
+	:type cursor: psycopg2.extensions.cursor | sqlite3.Cursor
+	:param organisation_id: The organization database ID used to scope access.
+	:type organisation_id: int
+	:raises PermissionError: If the operation cannot satisfy its state or persistence
+	    preconditions.
+	"""
 	cursor.execute("SELECT id FROM organisations WHERE id = %s FOR NO KEY UPDATE", (organisation_id,))
 	if cursor.fetchone() is None:
 		raise PermissionError("Organization access denied.")
 
 
 def _require_replacement_admin(cursor, user_id: int, organisation_ids: list[int]):
+	"""Reject changes that would remove an organization's last administrator.
+
+	:param cursor: The transaction/query cursor owned by the caller.
+	:type cursor: psycopg2.extensions.cursor | sqlite3.Cursor
+	:param user_id: The authenticated account ID selecting the authorized scope.
+	:type user_id: int
+	:param organisation_ids: The organization IDs to lock in a deterministic order.
+	:type organisation_ids: list[int]
+	:raises OrganisationLifecycleConflict: A requested membership change would violate
+	    organization lifecycle rules.
+	"""
 	cursor.execute("""SELECT o.name FROM organisations o JOIN membership m ON m.organisationid = o.id
 		WHERE m.userid = %s AND m.organisationid = ANY(%s) AND m.authorisation IN (0, 1)
 		AND NOT EXISTS (
@@ -390,7 +418,13 @@ def _require_replacement_admin(cursor, user_id: int, organisation_ids: list[int]
 
 
 def delete_user_transaction(user_id: int):
-	"""Delete a verified account after locking every organization it belongs to."""
+	"""Delete a verified account after locking every organization it belongs to.
+
+	:param user_id: The authenticated account ID selecting the authorized scope.
+	:type user_id: int
+	:raises PermissionError: If the operation cannot satisfy its state or persistence
+	    preconditions.
+	"""
 	with closing(connectPG()) as conn, conn, conn.cursor() as cur:
 		# Prevent new memberships referencing this account during the check and cascade.
 		cur.execute("SELECT id FROM users WHERE id = %s FOR UPDATE", (user_id,))
@@ -405,15 +439,14 @@ def delete_user_transaction(user_id: int):
 
 
 def add_organisation(organisationName: str, sessionToken: str):
-	"""
-	Adds a new organisation to the database.
- 
+	"""Adds a new organization to the database.
+
 	:param organisationName: Name of the organisation
 	:type organisationName: str
 	:param sessionToken: Session token of the user adding the organisation
 	:type sessionToken: str
-	:return: organisation id or error message
-	:rtype: Union[int, str]
+	:returns: The new organization ID and no error, or None and a safe error message.
+	:rtype: tuple[int | None, str | None]
 	"""
 	try:
 		token: Token = tokenDecode(sessionToken)
@@ -435,7 +468,15 @@ def add_organisation(organisationName: str, sessionToken: str):
 
 
 def leave_organisation_transaction(organisation_id: int, user_id: int):
-	"""Remove a membership while retaining the organization and its data."""
+	"""Remove a membership while retaining the organization and its data.
+
+	:param organisation_id: The organization database ID used to scope access.
+	:type organisation_id: int
+	:param user_id: The authenticated account ID selecting the authorized scope.
+	:type user_id: int
+	:raises PermissionError: If the operation cannot satisfy its state or persistence
+	    preconditions.
+	"""
 	with closing(connectPG()) as conn, conn, conn.cursor() as cur:
 		_lock_organisation(cur, organisation_id)
 		_require_replacement_admin(cur, user_id, [organisation_id])
@@ -446,11 +487,33 @@ def leave_organisation_transaction(organisation_id: int, user_id: int):
 
 
 def can_manage_organisation_ownership(actor_role, has_owner):
-	"""An administrator can recover an older organization without an owner."""
+	"""An administrator can recover an older organization without an owner.
+
+	:param actor_role: The current actor membership role read under the organization lock.
+	:type actor_role: int
+	:param has_owner: Whether the locked membership set contains an organization owner.
+	:type has_owner: bool
+	:returns: True when the operation or predicate succeeds; otherwise False.
+	:rtype: bool
+	"""
 	return actor_role == 0 or (actor_role == 1 and not has_owner)
 
 
 def _require_organisation_owner(cursor, organisation_id: int, user_id: int, *, allow_recovery=False):
+	"""Require current owner access, with explicit ownerless-recovery support where allowed.
+
+	:param cursor: The transaction/query cursor owned by the caller.
+	:type cursor: psycopg2.extensions.cursor | sqlite3.Cursor
+	:param organisation_id: The organization database ID used to scope access.
+	:type organisation_id: int
+	:param user_id: The authenticated account ID selecting the authorized scope.
+	:type user_id: int
+	:param allow_recovery: Whether a durable command receipt may recover expired live task
+	    metadata.
+	:type allow_recovery: bool
+	:raises PermissionError: If the operation cannot satisfy its state or persistence
+	    preconditions.
+	"""
 	cursor.execute("""SELECT m.authorisation, EXISTS (
 			SELECT 1 FROM membership owner WHERE owner.organisationid = m.organisationid
 				AND owner.authorisation = 0
@@ -463,7 +526,17 @@ def _require_organisation_owner(cursor, organisation_id: int, user_id: int, *, a
 
 
 def transfer_organisation_ownership(organisation_id: int, user_id: int, replacement: str):
-	"""Transfer ownership to an existing member and leave the former owner as an administrator."""
+	"""Transfer ownership to an existing member and leave the former owner as an administrator.
+
+	:param organisation_id: The organization database ID used to scope access.
+	:type organisation_id: int
+	:param user_id: The authenticated account ID selecting the authorized scope.
+	:type user_id: int
+	:param replacement: The selected replacement owner or source mutation, as required here.
+	:type replacement: str
+	:raises OrganisationLifecycleConflict: A requested membership change would violate
+	    organization lifecycle rules.
+	"""
 	with closing(connectPG()) as conn, conn, conn.cursor() as cur:
 		_lock_organisation(cur, organisation_id)
 		_require_organisation_owner(cur, organisation_id, user_id, allow_recovery=True)
@@ -477,7 +550,13 @@ def transfer_organisation_ownership(organisation_id: int, user_id: int, replacem
 
 
 def delete_organisation_transaction(organisation_id: int, user_id: int):
-	"""Delete an organization after explicit confirmation at the API boundary."""
+	"""Delete an organization after explicit confirmation at the API boundary.
+
+	:param organisation_id: The organization database ID used to scope access.
+	:type organisation_id: int
+	:param user_id: The authenticated account ID selecting the authorized scope.
+	:type user_id: int
+	"""
 	with closing(connectPG()) as conn, conn, conn.cursor() as cur:
 		_lock_organisation(cur, organisation_id)
 		_require_organisation_owner(cur, organisation_id, user_id)
@@ -486,17 +565,17 @@ def delete_organisation_transaction(organisation_id: int, user_id: int):
 
 @deprecated
 def add_user_to_organisation(organisationName: str, sessionToken: str, newUser: str):
-	"""
-	Add a user to an organisation.
- 
+	"""Invite an existing account under organization-management checks.
+
 	:param organisationName: Name of the organisation
 	:type organisationName: str
 	:param sessionToken: Session token of the admin user making the change
 	:type sessionToken: str
 	:param newUser: Username of the user to be added
 	:type newUser: str
-	:return: organisation id or error message
-	:rtype: Union[int, str]
+	:returns: The organization ID and no error on success; otherwise None and a safe error
+	    message.
+	:rtype: tuple[int | None, str | None]
 	"""
 	try:
 		token: Token = tokenDecode(sessionToken)
@@ -536,16 +615,18 @@ INSERT INTO membership (userid, organisationid)
 
 
 def add_user_to_organisation_new(organisationId: int, newUser: str, actor_user_id: int):
-	"""
-	Add a user to an organisation.
+	"""Add a user to an organization.
 	Reworked version without session token.
- 
+
 	:param organisationId: ID of the organisation
 	:type organisationId: int
 	:param newUser: Username of the user to be added
 	:type newUser: str
-	:return: organisation id or error message
-	:rtype: Union[int, str]
+	:param actor_user_id: The account performing the role-checked mutation.
+	:type actor_user_id: int
+	:returns: The organization ID and no error on success; otherwise None and a safe error
+	    message.
+	:rtype: tuple[int | None, str | None]
 	"""
 	try:
 		query = sql.SQL("""INSERT INTO membership (userid, organisationid, authorisation)
@@ -565,7 +646,15 @@ def add_user_to_organisation_new(organisationId: int, newUser: str, actor_user_i
 
 @deprecated
 def remove_user_from_organisation(organisationName: str, sessionToken: str, userToRemove: str):
-	"""Resolve the legacy name-based request through the owner-only removal."""
+	"""Remove a non-owner member under current owner-only permission checks.
+
+	:param organisationName: The exact organization display name.
+	:type organisationName: str
+	:param sessionToken: The private backend credential supplied by the caller.
+	:type sessionToken: str
+	:param userToRemove: The account whose membership is selected for removal.
+	:type userToRemove: str
+	"""
 	try:
 		token = tokenDecode(sessionToken)
 		if token is None:
@@ -578,7 +667,17 @@ def remove_user_from_organisation(organisationName: str, sessionToken: str, user
 
 
 def remove_user_from_organisation_new(organisationId: int, userToRemove: str, actor_user_id: int):
-	"""Allow only an owner to remove a non-owner under the organization lock."""
+	"""Allow only an owner to remove a non-owner under the organization lock.
+
+	:param organisationId: The organization database ID used to scope access.
+	:type organisationId: int
+	:param userToRemove: The account whose membership is selected for removal.
+	:type userToRemove: str
+	:param actor_user_id: The account performing the role-checked mutation.
+	:type actor_user_id: int
+	:raises PermissionError: If the operation cannot satisfy its state or persistence
+	    preconditions.
+	"""
 	with closing(connectPG()) as conn, conn, conn.cursor() as cur:
 		_lock_organisation(cur, organisationId)
 		cur.execute("""DELETE FROM membership target USING users u, membership actor
@@ -592,9 +691,8 @@ def remove_user_from_organisation_new(organisationId: int, userToRemove: str, ac
 
 
 def adjust_user_authorization(organisationName: str, sessionToken: str, userToAdjust: str, newAuthorisation: int):
-	"""
-	Adjust the authorization level of a user within an organisation.
- 
+	"""Adjust the authorization level of a user within an organization.
+
 	:param organisationName: Name of the organisation
 	:type organisationName: str
 	:param sessionToken: Session token of the admin user making the change
@@ -603,7 +701,6 @@ def adjust_user_authorization(organisationName: str, sessionToken: str, userToAd
 	:type userToAdjust: str
 	:param newAuthorisation: New authorization level to be set
 	:type newAuthorisation: int
-	:return: None
 	"""
 	try:
 		token: Token = tokenDecode(sessionToken)
@@ -634,6 +731,15 @@ def adjust_user_authorization(organisationName: str, sessionToken: str, userToAd
 
 
 def _available_document_name(original_name, used_names):
+	"""Choose a unique display filename within the already locked organization.
+
+	:param original_name: The requested display filename before collision allocation.
+	:type original_name: str
+	:param used_names: Names already allocated under the organization lock.
+	:type used_names: set[str]
+	:returns: The available document name text or identifier.
+	:rtype: str
+	"""
 	name = original_name
 	counter = 0
 	while name in used_names:
@@ -644,7 +750,21 @@ def _available_document_name(original_name, used_names):
 
 
 def add_document(name: str, content: Union[str, bytes], organisationId: int, userid: int, base_id: int = None):
-	"""Allocate and insert a display name under the organization lock."""
+	"""Allocate and insert a display name under the organization lock.
+
+	:param name: The selected display name or operation identifier.
+	:type name: str
+	:param content: The complete source text or snapshot payload for this operation.
+	:type content: Union[str, bytes]
+	:param organisationId: The organization database ID used to scope access.
+	:type organisationId: int
+	:param userid: The submitting account database ID.
+	:type userid: int
+	:param base_id: The selected document-base database ID.
+	:type base_id: int | None
+	:returns: The inserted source row ID and allocated display name, or (None, None) on failure.
+	:rtype: tuple[int | None, str | None]
+	"""
 	if not isinstance(content, (str, bytes)):
 		return None, None
 	try:
@@ -674,7 +794,30 @@ def add_document(name: str, content: Union[str, bytes], organisationId: int, use
 
 def mutate_base_documents(base_name, base_id, organisation_id, user_id, *,
 		additions=(), replacement=None, removal=None):
-	"""Commit preprocessed documents and their raw rows together against the latest base."""
+	"""Commit preprocessed documents and their raw rows together against the latest base.
+
+	:param base_name: The exact document-base display name.
+	:type base_name: str
+	:param base_id: The selected document-base database ID.
+	:type base_id: int
+	:param organisation_id: The organization database ID used to scope access.
+	:type organisation_id: int
+	:param user_id: The authenticated account ID selecting the authorized scope.
+	:type user_id: int
+	:param additions: New document display names paired with source text.
+	:type additions: Iterable[tuple[str, str]]
+	:param replacement: The selected replacement owner or source mutation, as required here.
+	:type replacement: str | tuple[object, ...]
+	:param removal: The exact selected source document to remove when supplied.
+	:type removal: tuple[object, ...] | None
+	:returns: The mutate base documents result.
+	:rtype: DocumentBase
+	:raises PermissionError: If the operation cannot satisfy its state or persistence
+	    preconditions.
+	:raises RuntimeError: If the operation cannot satisfy its state or persistence
+	    preconditions.
+	:raises ValueError: If an input fails validation for this operation.
+	"""
 	with closing(connectPG()) as conn, conn, conn.cursor() as cur:
 		if additions:
 			_lock_organisation(cur, organisation_id)
@@ -756,12 +899,36 @@ def mutate_base_documents(base_name, base_id, organisation_id, user_id, *,
 
 
 class DocumentBaseCreationConflict(ValueError):
+	"""Creation inputs, name or access changed before the base could be committed."""
 	pass
 
 
 def create_document_base_with_snapshot(name: str, attributes: list[str], organisation_id: int,
 		expected_docs: list[tuple[int, str, str]], user_id: int, snapshot: bytes) -> tuple[int, int]:
-	"""Publish a processed base, its source associations and its snapshot in one commit."""
+	"""Publish a processed base, its source associations and its snapshot in one commit.
+
+	:param name: The selected display name or operation identifier.
+	:type name: str
+	:param attributes: The attributes or names used by the operation.
+	:type attributes: list[str]
+	:param organisation_id: The organization database ID used to scope access.
+	:type organisation_id: int
+	:param expected_docs: The original source rows rechecked when creation commits.
+	:type expected_docs: list[tuple[int, str, str]]
+	:param user_id: The authenticated account ID selecting the authorized scope.
+	:type user_id: int
+	:param snapshot: The encoded canonical BSON snapshot.
+	:type snapshot: bytes
+	:returns: The new document-base ID and its canonical snapshot row ID.
+	:rtype: tuple[int, int]
+	:raises ValueError: If an input fails validation for this operation.
+	:raises RuntimeError: If the operation cannot satisfy its state or persistence
+	    preconditions.
+	:raises PermissionError: If the operation cannot satisfy its state or persistence
+	    preconditions.
+	:raises DocumentBaseCreationConflict: Creation inputs, name or access changed before the
+	    base could be committed.
+	"""
 	document_ids = [document_id for document_id, _, _ in expected_docs]
 	if not document_ids or len(document_ids) != len(set(document_ids)):
 		raise ValueError("Choose distinct source documents.")
@@ -804,7 +971,21 @@ def create_document_base_with_snapshot(name: str, attributes: list[str], organis
 
 
 def delete_document_base_data(base_name: str, organisation_id: int, user_id: int, *, base_id=None):
-	"""Delete the authorized base and its linked artifacts, including a unique legacy snapshot."""
+	"""Delete the authorized base and its linked artifacts, including a unique legacy snapshot.
+
+	:param base_name: The exact document-base display name.
+	:type base_name: str
+	:param organisation_id: The organization database ID used to scope access.
+	:type organisation_id: int
+	:param user_id: The authenticated account ID selecting the authorized scope.
+	:type user_id: int
+	:param base_id: The selected document-base database ID.
+	:type base_id: int | None
+	:returns: True when the operation or predicate succeeds; otherwise False.
+	:rtype: bool
+	:raises RuntimeError: If the operation cannot satisfy its state or persistence
+	    preconditions.
+	"""
 	try:
 		with closing(connectPG()) as conn, conn, conn.cursor() as cur:
 			cur.execute("""SELECT b.id FROM document_bases b WHERE b.name = %s AND b.organisation_id = %s
@@ -836,7 +1017,37 @@ def delete_document_base_data(base_name: str, organisation_id: int, user_id: int
 
 
 def add_feedback(document_id: int, user_id: int, positive: bool, attribute: str, feedback_start: int = None, feedback_end: int = None, organisation_id: int = None, *, expected_content: str = None, base_name: str = None, base_id=None, attribute_id=None, no_match: bool = False, mapping_revision=None):
-	"""Toggle a vote for the displayed value or save a source-anchored correction."""
+	"""Toggle a vote for the displayed value or save a source-anchored correction.
+
+	:param document_id: The source-document database ID.
+	:type document_id: int
+	:param user_id: The authenticated account ID selecting the authorized scope.
+	:type user_id: int
+	:param positive: The requested vote polarity; selecting the current polarity toggles it off.
+	:type positive: bool
+	:param attribute: The selected attribute name or domain attribute, as required here.
+	:type attribute: str
+	:param feedback_start: The inclusive code-point start of a suggested replacement.
+	:type feedback_start: int | None
+	:param feedback_end: The exclusive code-point end of a suggested replacement.
+	:type feedback_end: int | None
+	:param organisation_id: The organization database ID used to scope access.
+	:type organisation_id: int | None
+	:param expected_content: The source text displayed when the review was submitted.
+	:type expected_content: str | None
+	:param base_name: The exact document-base display name.
+	:type base_name: str | None
+	:param base_id: The selected document-base database ID.
+	:type base_id: int | None
+	:param attribute_id: The stable UUID of the displayed attribute.
+	:type attribute_id: str | None
+	:param no_match: Whether the correction explicitly proposes no matching span.
+	:type no_match: bool
+	:param mapping_revision: The opaque identity of the displayed canonical mapping.
+	:type mapping_revision: str | None
+	:returns: The add feedback mapping.
+	:rtype: dict[str, object] | int
+	"""
 	try:
 		with closing(connectPG()) as conn, conn, conn.cursor() as cur:
 			# All canonical writers take the base lock before source/snapshot writes.
@@ -908,6 +1119,37 @@ def add_feedback(document_id: int, user_id: int, positive: bool, attribute: str,
 
 def _pending_suggestion(cursor, user_id, organisation_id, base_id, document_id, *,
 		attribute_id, suggestion_id, suggestion_version, mapping_revision, source_revision, start, end):
+	"""Validate exact pending suggestion identity and return its current group membership.
+
+	:param cursor: The transaction/query cursor owned by the caller.
+	:type cursor: psycopg2.extensions.cursor | sqlite3.Cursor
+	:param user_id: The authenticated account ID selecting the authorized scope.
+	:type user_id: int
+	:param organisation_id: The organization database ID used to scope access.
+	:type organisation_id: int
+	:param base_id: The selected document-base database ID.
+	:type base_id: int
+	:param document_id: The source-document database ID.
+	:type document_id: int
+	:param attribute_id: The stable UUID of the displayed attribute.
+	:type attribute_id: str
+	:param suggestion_id: The selected public correction row/group identifier.
+	:type suggestion_id: int
+	:param suggestion_version: The opaque version of the displayed correction group.
+	:type suggestion_version: str
+	:param mapping_revision: The opaque identity of the displayed canonical mapping.
+	:type mapping_revision: str
+	:param source_revision: The digest of the displayed source text.
+	:type source_revision: str
+	:param start: The inclusive Unicode code-point offset.
+	:type start: int
+	:param end: The exclusive Unicode code-point offset.
+	:type end: int
+	:returns: The pending suggestion result.
+	:rtype: tuple[dict[str, object], str, list[int], list[int]]
+	:raises PublicSuggestionConflict: The selected correction group or its occurrence identity
+	    changed.
+	"""
 	try:
 		base = load_review_base(cursor, base_id, organisation_id, user_id)
 		context = load_review_document(cursor, document_id, user_id, base=base)
@@ -938,6 +1180,27 @@ def _pending_suggestion(cursor, user_id, organisation_id, base_id, document_id, 
 
 
 def _apply_public_match(snapshot, name, text, attribute, replacement, start, prepare_nugget):
+	"""Apply an accepted exact span or No Match to the web snapshot without nugget deduplication.
+
+	:param snapshot: The encoded canonical BSON snapshot.
+	:type snapshot: bytes
+	:param name: The selected display name or operation identifier.
+	:type name: str
+	:param text: The exact Unicode source text.
+	:type text: str
+	:param attribute: The selected attribute name or domain attribute, as required here.
+	:type attribute: str | Attribute
+	:param replacement: The selected replacement owner or source mutation, as required here.
+	:type replacement: str | tuple[object, ...]
+	:param start: The inclusive Unicode code-point offset.
+	:type start: int
+	:param prepare_nugget: Prepare the accepted candidate before committing the owner decision.
+	:type prepare_nugget: Callable[[InformationNugget], None]
+	:returns: The apply public match result.
+	:rtype: bytes
+	:raises PublicSuggestionConflict: The selected correction group or its occurrence identity
+	    changed.
+	"""
 	base = DocumentBase.from_bson(snapshot, deduplicate_nuggets=False)
 	document = next((document for document in base.documents if document.name == name and document.text == text), None)
 	if document is None or not any(item.name == attribute for item in base.attributes):
@@ -967,6 +1230,39 @@ def _apply_public_match(snapshot, name, text, attribute, replacement, start, pre
 def review_public_suggestion(user_id, organisation_id, base_id, base_name, document_id, *,
 		attribute_id, suggestion_id, suggestion_version, mapping_revision, source_revision,
 		start, end, accepted, prepare_nugget):
+	"""Commit an owner review after rechecking source, mapping and suggestion revisions.
+
+	:param user_id: The authenticated account ID selecting the authorized scope.
+	:type user_id: int
+	:param organisation_id: The organization database ID used to scope access.
+	:type organisation_id: int
+	:param base_id: The selected document-base database ID.
+	:type base_id: int
+	:param base_name: The exact document-base display name.
+	:type base_name: str
+	:param document_id: The source-document database ID.
+	:type document_id: int
+	:param attribute_id: The stable UUID of the displayed attribute.
+	:type attribute_id: str
+	:param suggestion_id: The selected public correction row/group identifier.
+	:type suggestion_id: int
+	:param suggestion_version: The opaque version of the displayed correction group.
+	:type suggestion_version: str
+	:param mapping_revision: The opaque identity of the displayed canonical mapping.
+	:type mapping_revision: str
+	:param source_revision: The digest of the displayed source text.
+	:type source_revision: str
+	:param start: The inclusive Unicode code-point offset.
+	:type start: int
+	:param end: The exclusive Unicode code-point offset.
+	:type end: int
+	:param accepted: Whether the owner accepts rather than rejects the correction.
+	:type accepted: bool
+	:param prepare_nugget: Prepare the accepted candidate before committing the owner decision.
+	:type prepare_nugget: Callable[[InformationNugget], None]
+	:raises PublicSuggestionConflict: The selected correction group or its occurrence identity
+	    changed.
+	"""
 	identity = dict(attribute_id=attribute_id, suggestion_id=suggestion_id,
 		suggestion_version=suggestion_version, mapping_revision=mapping_revision,
 		source_revision=source_revision, start=start, end=end)

@@ -36,7 +36,21 @@ class FeedbackSessionLimit(QueueFullError):
 
 
 def load_session(user_id, session_id, *, include_checkpoint=False):
-    """Read a current member's unexpired session. API callers only receive metadata."""
+    """Read a current member's unexpired session. API callers only receive metadata.
+
+    :param user_id: The authenticated account ID selecting the authorized scope.
+    :type user_id: int
+    :param session_id: The parent feedback-session UUID.
+    :type session_id: str
+    :param include_checkpoint: Whether worker callers also receive the private encoded
+        checkpoint.
+    :type include_checkpoint: bool
+    :returns: The session mapping.
+    :rtype: dict[str, object] | None
+    :raises FeedbackSessionUnavailable: The durable feedback-session store could not be read.
+    :raises FeedbackSessionConflict: A feedback command no longer matches its durable checkpoint
+        or source.
+    """
     payload = sql.SQL("")
     if include_checkpoint:
         payload = sql.SQL("""
@@ -83,7 +97,21 @@ def load_session(user_id, session_id, *, include_checkpoint=False):
 
 
 def extend_session_step(user_id, session_id, expected_version, lease_seconds):
-    """Keep a claimed checkpoint alive through the worker's bounded execution."""
+    """Keep a claimed checkpoint alive through the worker's bounded execution.
+
+    :param user_id: The authenticated account ID selecting the authorized scope.
+    :type user_id: int
+    :param session_id: The parent feedback-session UUID.
+    :type session_id: str
+    :param expected_version: The displayed session integer version or schema UUID required by
+        this operation.
+    :type expected_version: int | str
+    :param lease_seconds: The maximum execution lease duration in seconds.
+    :type lease_seconds: int
+    :returns: True when the operation or predicate succeeds; otherwise False.
+    :rtype: bool
+    :raises ValueError: If an input fails validation for this operation.
+    """
     if type(lease_seconds) is not int or lease_seconds <= 0:
         raise ValueError("A positive feedback step lease is required.")
     with closing(connectPG()) as connection, connection, connection.cursor() as cursor:
@@ -105,6 +133,11 @@ def extend_session_step(user_id, session_id, expected_version, lease_seconds):
 
 def _purge_expired(connection):
     # This short transaction only locks session rows, before any base lock is acquired.
+    """Remove a bounded set of expired checkpoints without waiting on locked sessions.
+
+    :param connection: The PostgreSQL connection owned by the caller.
+    :type connection: psycopg2.extensions.connection
+    """
     with connection, connection.cursor() as cursor:
         cursor.execute("""
             DELETE FROM public.feedback_sessions s USING (
@@ -117,6 +150,14 @@ def _purge_expired(connection):
 
 
 def _check_capacity(cursor, user_id):
+    """Serialize admission and reject an exceeded active-session budget.
+
+    :param cursor: The transaction/query cursor owned by the caller.
+    :type cursor: psycopg2.extensions.cursor | sqlite3.Cursor
+    :param user_id: The authenticated account ID selecting the authorized scope.
+    :type user_id: int
+    :raises FeedbackSessionLimit: The user or service active-checkpoint budget is exhausted.
+    """
     cursor.execute("SELECT pg_advisory_xact_lock(%s, %s)", _ADMISSION_LOCK)
     cursor.execute("""
         SELECT count(*) AS total, count(*) FILTER (WHERE user_id = %s) AS personal
@@ -130,6 +171,27 @@ def _check_capacity(cursor, user_id):
 
 def _lock_snapshot(cursor, user_id, base_id, snapshot_id, snapshot_hash, schema):
     # Match the account-first and base-first lock order used by the F38 commit.
+    """Lock and validate membership, schema and source snapshot for a feedback commit.
+
+    :param cursor: The transaction/query cursor owned by the caller.
+    :type cursor: psycopg2.extensions.cursor | sqlite3.Cursor
+    :param user_id: The authenticated account ID selecting the authorized scope.
+    :type user_id: int
+    :param base_id: The selected document-base database ID.
+    :type base_id: int
+    :param snapshot_id: The canonical snapshot database row ID.
+    :type snapshot_id: int
+    :param snapshot_hash: The expected digest of the current canonical snapshot.
+    :type snapshot_hash: str
+    :param schema: The selected database schema or expected schema identity.
+    :type schema: str
+    :raises PermissionError: If the operation cannot satisfy its state or persistence
+        preconditions.
+    :raises FeedbackSessionConflict: A feedback command no longer matches its durable checkpoint
+        or source.
+    :raises FeedbackSnapshotConflict: A concurrent canonical snapshot commit invalidated the
+        worker snapshot.
+    """
     cursor.execute("SELECT id FROM public.users WHERE id = %s FOR KEY SHARE", (user_id,))
     if cursor.fetchone() is None:
         raise PermissionError("Feedback session access denied.")
@@ -163,7 +225,48 @@ def save_session(user_id, session_id, base_id, snapshot_id, expected_snapshot,
                  expected_version=0, expected_phase=None, expected_attribute=None,
                  command=None, new_snapshot=None, expected_session_snapshot=None,
                  record_receipt=True):
-    """Advance the session against both its checkpoint hash and the loaded canonical BSON."""
+    """Advance the session against both its checkpoint hash and the loaded canonical BSON.
+
+    :param user_id: The authenticated account ID selecting the authorized scope.
+    :type user_id: int
+    :param session_id: The parent feedback-session UUID.
+    :type session_id: str
+    :param base_id: The selected document-base database ID.
+    :type base_id: int
+    :param snapshot_id: The canonical snapshot database row ID.
+    :type snapshot_id: int
+    :param expected_snapshot: The loaded snapshot bytes used by the commit guard.
+    :type expected_snapshot: bytes
+    :param attribute_schema_version: The stable schema UUID associated with the checkpoint.
+    :type attribute_schema_version: str
+    :param checkpoint: The encoded matching checkpoint to persist.
+    :type checkpoint: bytes
+    :param phase: The feedback checkpoint phase to persist or publish.
+    :type phase: str
+    :param attribute: The selected attribute name or domain attribute, as required here.
+    :type attribute: str | Attribute
+    :param expected_version: The displayed session integer version or schema UUID required by
+        this operation.
+    :type expected_version: int
+    :param expected_phase: The saved feedback phase required before advancing the checkpoint.
+    :type expected_phase: str | None
+    :param expected_attribute: The attribute expected in the current saved session phase.
+    :type expected_attribute: str | None
+    :param command: The command identity, version and replay fingerprint.
+    :type command: dict[str, object]
+    :param new_snapshot: Replacement canonical BSON committed with the checkpoint when supplied.
+    :type new_snapshot: bytes | None
+    :param expected_session_snapshot: The previously saved checkpoint snapshot digest.
+    :type expected_session_snapshot: str | None
+    :param record_receipt: Whether to retain a durable command outcome with the checkpoint
+        update.
+    :type record_receipt: bool
+    :returns: The resulting count, version, identifier or status code for this operation.
+    :rtype: int
+    :raises ValueError: If an input fails validation for this operation.
+    :raises FeedbackSessionConflict: A feedback command no longer matches its durable checkpoint
+        or source.
+    """
     expected_hash = sha256(expected_snapshot).hexdigest() if isinstance(expected_snapshot, bytes) else expected_snapshot
     prior_hash = expected_hash if expected_session_snapshot is None else expected_session_snapshot
     if not all(isinstance(digest, str) and re.fullmatch(r"[a-f0-9]{64}", digest)
@@ -248,7 +351,27 @@ def save_session(user_id, session_id, base_id, snapshot_id, expected_snapshot,
 
 
 def close_session(user_id, session_id, base_id, expected_version, command):
-    """Close one review session against its version, retaining current saved matches."""
+    """Close one review session against its version, retaining current saved matches.
+
+    :param user_id: The authenticated account ID selecting the authorized scope.
+    :type user_id: int
+    :param session_id: The parent feedback-session UUID.
+    :type session_id: str
+    :param base_id: The selected document-base database ID.
+    :type base_id: int
+    :param expected_version: The displayed session integer version or schema UUID required by
+        this operation.
+    :type expected_version: int | str
+    :param command: The command identity, version and replay fingerprint.
+    :type command: dict[str, object]
+    :returns: The resulting count, version, identifier or status code for this operation.
+    :rtype: int
+    :raises ValueError: If an input fails validation for this operation.
+    :raises PermissionError: If the operation cannot satisfy its state or persistence
+        preconditions.
+    :raises FeedbackSessionConflict: A feedback command no longer matches its durable checkpoint
+        or source.
+    """
     if (type(expected_version) is not int or expected_version < 1
             or not isinstance(command, dict) or not command.get("command_id")
             or not command.get("request_fingerprint") or command.get("session_id") != session_id

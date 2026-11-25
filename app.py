@@ -1,3 +1,4 @@
+"""Flask application setup, safe error responses and dependency readiness checks."""
 import logging
 import os
 from contextlib import closing
@@ -58,11 +59,20 @@ if os.environ.get('WANNADB_PRODUCTION') != '1':
 
 @app.before_request
 def assign_request_id():
+	"""Assign an opaque correlation ID to the current HTTP request.
+	"""
 	g.request_id = uuid4().hex
 
 
 @app.after_request
 def add_request_id(response):
+	"""Add the current request correlation ID to the response headers.
+
+	:param response: The outgoing HTTP response.
+	:type response: flask.Response
+	:returns: The HTTP response containing the scoped result or a safe request error.
+	:rtype: flask.Response
+	"""
 	request_id = getattr(g, "request_id", None)
 	if request_id:
 		response.headers["X-Request-ID"] = request_id
@@ -71,33 +81,75 @@ def add_request_id(response):
 
 @app.errorhandler(500)
 def unexpected_error(error):
+	"""Return a safe HTTP 500 response without exposing internal exception details.
+
+	:param error: The failure object or safe error text/code handled here.
+	:type error: BaseException | str
+	:returns: The HTTP response containing the scoped result or a safe request error.
+	:rtype: flask.Response
+	"""
 	app.logger.error("Unexpected request failure. request_id=%s", getattr(g, "request_id", "-"))
 	return make_response({"error": "The request failed."}, 500)
 
 
 @app.errorhandler(RequestEntityTooLarge)
 def request_too_large(error):
+	"""Return HTTP 413 for an oversized request or multipart body.
+
+	:param error: The failure object or safe error text/code handled here.
+	:type error: BaseException | str
+	:returns: The HTTP response containing the scoped result or a safe request error.
+	:rtype: flask.Response
+	"""
 	return make_response({"error": "The request exceeds the upload size or form part limit."}, 413)
 
 
 @app.errorhandler(WorkLimitError)
 def work_limit_reached(error):
+	"""Return HTTP 413 for a rejected work-budget submission.
+
+	:param error: The failure object or safe error text/code handled here.
+	:type error: BaseException | str
+	:returns: The HTTP response containing the scoped result or a safe request error.
+	:rtype: flask.Response
+	"""
 	return make_response({"error": str(error)}, 413)
 
 
 @app.errorhandler(QueueFullError)
 def queue_full(error):
+	"""Return HTTP 429 when task/session admission is exhausted.
+
+	:param error: The failure object or safe error text/code handled here.
+	:type error: BaseException | str
+	:returns: The HTTP response containing the scoped result or a safe request error.
+	:rtype: flask.Response
+	"""
 	return make_response({"error": str(error)}, 429)
 
 
 @app.errorhandler(RedisError)
 @app.errorhandler(OperationalError)
 def queue_unavailable(error):
+	"""Return HTTP 503 when the task broker or cache is unavailable.
+
+	:param error: The failure object or safe error text/code handled here.
+	:type error: BaseException | str
+	:returns: The HTTP response containing the scoped result or a safe request error.
+	:rtype: flask.Response
+	"""
 	return make_response({"error": "The task service is temporarily unavailable."}, 503)
 
 
 @app.errorhandler(404)
 def not_found_error(error):
+	"""Return the application HTTP 404 response.
+
+	:param error: The failure object or safe error text/code handled here.
+	:type error: BaseException | str
+	:returns: The HTTP response containing the scoped result or a safe request error.
+	:rtype: flask.Response
+	"""
 	return make_response({'error': f'Not Found  \n {error}'}, 404)
 
 
@@ -106,11 +158,21 @@ def not_found_error(error):
 @app.get('/')
 @app.get('/health/live')
 def liveness():
+	"""Report that the API process can answer requests.
+
+	:returns: The HTTP response containing the scoped result or a safe request error.
+	:rtype: flask.Response
+	"""
 	return make_response({'status': 'live'}, 200, {'Cache-Control': 'no-store'})
 
 
 @app.get('/health/ready')
 def readiness():
+	"""Check schema versions, Redis connectivity and both required queue consumers.
+
+	:returns: The HTTP response containing the scoped result or a safe request error.
+	:rtype: flask.Response
+	"""
 	queues = {}
 	try:
 		with closing(connectPG(connect_timeout=2)) as conn, conn.cursor() as cursor:

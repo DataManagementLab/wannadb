@@ -1,3 +1,4 @@
+"""Bounded propagation of explicit custom selections into additional candidates."""
 import re
 
 from wannadb.data.signals import ExtractorNameSignal, LabelSignal
@@ -14,6 +15,8 @@ class WebMatchPropagation:
 	"""Bound extra candidates before the shared matcher constructs and embeds them."""
 
 	def __init__(self):
+		"""Initialize WebMatchPropagation with its supplied dependencies and scope.
+		"""
 		self.remaining = MAX_PROPAGATION_HITS_PER_JOB
 		self.limited = False
 		self.documents = ()
@@ -21,17 +24,41 @@ class WebMatchPropagation:
 
 	def bind(self, documents, attribute):
 		# A snapshot retry gets fresh documents but shares the original job budget.
+		"""Select the current document set and attribute while retaining this job's hit budget.
+
+		:param documents: The document set or names/text references processed by this helper.
+		:type documents: Iterable[Document] | dict[str, str]
+		:param attribute: The selected attribute name or domain attribute, as required here.
+		:type attribute: str | Attribute
+		"""
 		self.documents = documents
 		self.attribute = attribute
 		self.limited = False
 
 	def __str__(self):
+		"""Return the stable display/serialization identifier for this component.
+
+		:returns: The str text or identifier.
+		:rtype: str
+		"""
 		return _EXTRACTOR_NAME
 
 	def to_config(self):
+		"""Serialize web match propagation into its web transport representation.
+
+		:returns: The serialized representation of this adapter or command.
+		:rtype: dict[str, object]
+		"""
 		return {"identifier": _EXTRACTOR_NAME}
 
 	def _propagated_count(self, document):
+		"""Count previously web-propagated candidates for this document/attribute.
+
+		:param document: The selected domain document or serialized source record.
+		:type document: Document | dict[str, object]
+		:returns: The resulting count, version, identifier or status code for this operation.
+		:rtype: int
+		"""
 		count = 0
 		for nugget in document.nuggets:
 			label = nugget.signals.get(LabelSignal.identifier)
@@ -45,6 +72,15 @@ class WebMatchPropagation:
 		return count
 
 	def __call__(self, nugget, remaining_documents):
+		"""Find additional exact occurrences within document, attribute and job hit caps.
+
+		:param nugget: The exact selected candidate or custom candidate text.
+		:type nugget: InformationNugget | str
+		:param remaining_documents: Documents still available for bounded propagation.
+		:type remaining_documents: Iterable[Document]
+		:returns: The call result.
+		:rtype: list[tuple[Document, int, int]]
+		"""
 		if self.attribute is None or not nugget.text or not remaining_documents:
 			return []
 

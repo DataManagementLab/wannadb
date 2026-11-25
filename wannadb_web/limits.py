@@ -1,8 +1,20 @@
+"""Configurable web work budgets and source-document admission validation."""
 import os
 import re
 
 
 def _positive_setting(name: str, default: int) -> int:
+	"""Read a positive integer environment setting or fail configuration validation.
+
+	:param name: The selected display name or operation identifier.
+	:type name: str
+	:param default: The fallback used when the setting is absent.
+	:type default: int
+	:returns: The resulting count, version, identifier or status code for this operation.
+	:rtype: int
+	:raises RuntimeError: If the operation cannot satisfy its state or persistence
+	    preconditions.
+	"""
 	try:
 		value = int(os.environ.get(name, default))
 	except ValueError:
@@ -33,14 +45,25 @@ _TOKEN_PARTS = re.compile(r"\w+|[^\w\s]")
 
 
 class WorkLimitError(RuntimeError):
+	"""A source-document, corpus or other web work budget was exceeded."""
 	pass
 
 
 class QueueFullError(RuntimeError):
+	"""Shared task or active-session admission has no remaining capacity."""
 	pass
 
 
 def validate_document_text(text: str) -> tuple[int, int]:
+	"""Validate UTF-8 byte size and estimate a document's admission token cost.
+
+	:param text: The complete source document text.
+	:type text: str
+	:returns: The UTF-8 byte count and inexpensive token estimate.
+	:rtype: tuple[int, int]
+	:raises ValueError: If the text cannot be encoded as UTF-8.
+	:raises WorkLimitError: If the document exceeds a byte or estimated-token budget.
+	"""
 	if len(text) > MAX_FILE_BYTES:
 		raise WorkLimitError(f"Document text exceeds the {MAX_FILE_BYTES}-byte limit.")
 	try:
@@ -59,6 +82,13 @@ def validate_document_text(text: str) -> tuple[int, int]:
 
 
 def validate_corpus(texts):
+	"""Validate the combined source-document budgets for one base.
+
+	:param texts: The document texts, including existing documents when adding files.
+	:type texts: Iterable[str]
+	:raises ValueError: If a document contains invalid Unicode text.
+	:raises WorkLimitError: If a document or the combined corpus exceeds a budget.
+	"""
 	total_bytes = total_tokens = 0
 	for count, text in enumerate(texts, 1):
 		if count > MAX_BASE_DOCUMENTS:
@@ -73,5 +103,11 @@ def validate_corpus(texts):
 
 
 def validate_attribute_count(count: int):
+	"""Check the maximum number of attributes allowed in one base.
+
+	:param count: The proposed total number of attributes.
+	:type count: int
+	:raises WorkLimitError: If the proposed count exceeds the attribute budget.
+	"""
 	if count > MAX_ATTRIBUTES:
 		raise WorkLimitError(f"A document base can contain at most {MAX_ATTRIBUTES} attributes.")

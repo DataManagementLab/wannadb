@@ -19,7 +19,16 @@ class AttributeSchemaConflict(RuntimeError):
 
 
 def parse_attribute_edit(version, operations):
-    """Validate and normalize the submitted edit before it is queued."""
+    """Validate and normalize the submitted edit before it is queued.
+
+    :param version: The publication version or schema UUID required by this layer.
+    :type version: int | str
+    :param operations: Validated explicit attribute add/remove/rename operations.
+    :type operations: list[dict[str, object]]
+    :returns: The validated schema UUID and normalized ordered edit operations.
+    :rtype: tuple[str, list[dict[str, object]]]
+    :raises ValueError: If an input fails validation for this operation.
+    """
     if not isinstance(version, str) or len(version) != 36:
         raise ValueError("An attribute schema version is required. Reload the page.")
     version = str(UUID(version))
@@ -56,7 +65,17 @@ def parse_attribute_edit(version, operations):
 
 
 def attribute_ids_for_snapshot(base, version, stored_ids):
-    """Keep IDs stable for legacy snapshots until their first schema edit."""
+    """Keep IDs stable for legacy snapshots until their first schema edit.
+
+    :param base: The authorized domain base or decoded snapshot record.
+    :type base: DocumentBase | dict[str, object]
+    :param version: The publication version or schema UUID required by this layer.
+    :type version: int | str
+    :param stored_ids: The persisted attribute-name to UUID mapping.
+    :type stored_ids: dict[str, str]
+    :returns: The attribute ids for snapshot mapping.
+    :rtype: dict[str, str]
+    """
     namespace = UUID(version)
     return {
         attribute["name"]: stored_ids.get(attribute["name"]) or str(uuid5(namespace, attribute["name"]))
@@ -67,6 +86,17 @@ def attribute_ids_for_snapshot(base, version, stored_ids):
 def get_attribute_schema_version(base_name, organisation_id):
     # The route has already authorized access to the base. The worker checks again
     # while holding the base lock.
+    """Read the stable schema UUID for the selected base, if it exists.
+
+    :param base_name: The exact document-base display name.
+    :type base_name: str
+    :param organisation_id: The organization database ID used to scope access.
+    :type organisation_id: int
+    :returns: The attribute schema version result.
+    :rtype: str | None
+    :raises RuntimeError: If the operation cannot satisfy its state or persistence
+        preconditions.
+    """
     result = execute_query(
         "SELECT attribute_schema_version::text FROM document_bases WHERE name = %s AND organisation_id = %s",
         (base_name, organisation_id),
@@ -77,6 +107,20 @@ def get_attribute_schema_version(base_name, organisation_id):
 
 
 def _apply_edits(base, ids, operations):
+    """Apply validated schema operations and return stable IDs, renames and removed names.
+
+    :param base: The authorized domain base or decoded snapshot record.
+    :type base: DocumentBase | dict[str, object]
+    :param ids: The ordered correction row IDs displayed in the group.
+    :type ids: list[int]
+    :param operations: Validated explicit attribute add/remove/rename operations.
+    :type operations: list[dict[str, object]]
+    :returns: The updated name-to-ID map, old-to-new names and removed attribute names.
+    :rtype: tuple[dict[str, str], dict[str, str], list[str]]
+    :raises AttributeSchemaConflict: A schema edit no longer matches the displayed attribute
+        version.
+    :raises ValueError: If an input fails validation for this operation.
+    """
     edits = {op["id"]: op for op in operations if op["op"] != "add"}
     if edits.keys() - set(ids.values()):
         raise AttributeSchemaConflict()
@@ -129,7 +173,28 @@ def _apply_edits(base, ids, operations):
 
 
 def edit_attribute_schema(user_id, base_id, base_name, organisation_id, expected_version, operations):
-    """Edit BSON, catalog metadata, and ratings in one base-scoped transaction."""
+    """Edit BSON, catalog metadata, and ratings in one base-scoped transaction.
+
+    :param user_id: The authenticated account ID selecting the authorized scope.
+    :type user_id: int
+    :param base_id: The selected document-base database ID.
+    :type base_id: int
+    :param base_name: The exact document-base display name.
+    :type base_name: str
+    :param organisation_id: The organization database ID used to scope access.
+    :type organisation_id: int
+    :param expected_version: The displayed session integer version or schema UUID required by
+        this operation.
+    :type expected_version: int | str
+    :param operations: Validated explicit attribute add/remove/rename operations.
+    :type operations: list[dict[str, object]]
+    :raises PermissionError: If the operation cannot satisfy its state or persistence
+        preconditions.
+    :raises AttributeSchemaConflict: A schema edit no longer matches the displayed attribute
+        version.
+    :raises RuntimeError: If the operation cannot satisfy its state or persistence
+        preconditions.
+    """
     with closing(connectPG()) as connection, connection, connection.cursor() as cursor:
         # Use the same base-first lock order as snapshot and document writes.
         cursor.execute(

@@ -1,3 +1,4 @@
+"""PostgreSQL connection pooling, query execution and safe failure reporting."""
 import logging
 import os
 from threading import Lock
@@ -18,7 +19,13 @@ DB_PORT = os.environ.get("DATABASE_PORT")
 
 
 def connectPG(*, connect_timeout=None):
-	"""Connect to PostgreSQL using the configured credentials."""
+	"""Connect to PostgreSQL using the configured credentials.
+
+	:param connect_timeout: The database connection establishment limit in seconds.
+	:type connect_timeout: int | None
+	:returns: The connect pg result.
+	:rtype: psycopg2.extensions.connection
+	"""
 	return psycopg2.connect(
 		dbname=DB_NAME,
 		user=DB_USER,
@@ -30,13 +37,33 @@ def connectPG(*, connect_timeout=None):
 
 def _log_failure(operation, error):
 	# PostgreSQL error details may contain values as well as the statement.
+	"""Log operation/error classification without sensitive SQL parameter values.
+
+	:param operation: The operation selector or callable invoked by this helper.
+	:type operation: str | Callable[..., object]
+	:param error: The failure object or safe error text/code handled here.
+	:type error: BaseException | str
+	"""
 	request_id = getattr(g, "request_id", "-") if has_request_context() else "-"
 	logger.error("PostgreSQL %s failed (%s, SQLSTATE=%s, request_id=%s).",
 		operation, type(error).__name__, getattr(error, "pgcode", None) or "unavailable", request_id)
 
 
 def execute_transaction(query, params=None, commit=False, fetch=True):
-	"""Return rows, None for no rows, True when no rows were requested, or False on failure."""
+	"""Return rows, None for no rows, True when no rows were requested, or False on failure.
+
+	:param query: The SQL statement validated by the calling layer.
+	:type query: str | psycopg2.sql.Composable
+	:param params: Bound SQL parameters; values are not interpolated into SQL text.
+	:type params: tuple[object, ...] | dict[str, object]
+	:param commit: Whether this helper commits its database changes.
+	:type commit: bool
+	:param fetch: Whether to fetch and return result rows.
+	:type fetch: bool
+	:returns: Fetched rows, a statement success flag, or the legacy empty/error sentinel when
+	    not raising.
+	:rtype: list[tuple[object, ...]] | bool | None
+	"""
 	conn = None
 	cur = None
 	try:
@@ -67,7 +94,12 @@ _read_pool = None
 
 
 def _read_connection():
-	"""Reuse connections in the HTTP worker; background jobs use their own connection."""
+	"""Reuse connections in the HTTP worker; background jobs use their own connection.
+
+	:returns: A database connection and its owning pool, or None when the caller must close the
+	    connection directly.
+	:rtype: tuple[psycopg2.extensions.connection, ThreadedConnectionPool | None]
+	"""
 	global _read_pool
 	if not has_request_context():
 		return connectPG(), None
@@ -84,7 +116,16 @@ def _read_connection():
 
 
 def execute_query(query: SQL, params=None):
-	"""Return rows, None for no rows, or False on failure."""
+	"""Return rows, None for no rows, or False on failure.
+
+	:param query: The SQL statement validated by the calling layer.
+	:type query: SQL
+	:param params: Bound SQL parameters; values are not interpolated into SQL text.
+	:type params: tuple[object, ...] | dict[str, object]
+	:returns: Fetched rows, a statement success flag, or the legacy empty/error sentinel when
+	    not raising.
+	:rtype: list[tuple[object, ...]] | bool | None
+	"""
 	conn = pool = None
 	discard = False
 	try:

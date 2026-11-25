@@ -1,3 +1,4 @@
+"""Legacy SQLite connection and statement helpers for web projections."""
 import logging
 import sqlite3
 from sqlite3 import Error
@@ -5,11 +6,14 @@ from sqlite3 import Error
 logger = logging.getLogger(__name__)
 
 def create_connection(db_file, user_id):
-	""" create a database connection to the SQLite database
-		specified by db_file with user-specific identifier
+	"""Open the user-scoped SQLite file or in-memory database.
+
 	:param db_file: general database file
+	:type db_file: str
 	:param user_id: user-specific identifier
-	:return: Connection object or None
+	:type user_id: int
+	:returns: Connection object or None
+	:rtype: sqlite3.Connection
 	"""
 	conn = None
 	try:
@@ -24,6 +28,15 @@ def create_connection(db_file, user_id):
 
 
 def alter_table(conn, entry):
+	"""Execute the supplied SQLite statement and return its last inserted row ID.
+
+	:param conn: The SQLite connection owned by the caller.
+	:type conn: sqlite3.Connection
+	:param entry: The SQLite statement to execute on the supplied connection.
+	:type entry: str
+	:returns: The alter table result.
+	:rtype: int | None
+	"""
 	if entry["type"] is None:
 		entry["type"] = 'text'
 	sql = ''' ALTER TABLE {} ADD COLUMN {} {}'''.format(entry["table"], entry["attribute"], entry["type"])

@@ -15,14 +15,39 @@ class PublicSuggestionConflict(PublicFeedbackConflict):
 
 
 def source_revision(text):
+    """Hash the exact UTF-8 source text used by public feedback.
+
+    :param text: The exact Unicode source text.
+    :type text: str
+    :returns: The source revision text or identifier.
+    :rtype: str
+    """
     return sha256(text.encode("utf-8")).hexdigest()
 
 
 def _digest(value):
+    """Hash a stable JSON representation for a source/mapping review identity.
+
+    :param value: The value to validate, store or convert as described above.
+    :type value: object
+    :returns: The digest text or identifier.
+    :rtype: str
+    """
     return sha256(json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode("utf-8")).hexdigest()
 
 
 def mapping_spans(document, attribute):
+    """Read sorted canonical code-point spans, distinguishing missing mapping from No Match.
+
+    :param document: The selected domain document or serialized source record.
+    :type document: Document | dict[str, object]
+    :param attribute: The selected attribute name or domain attribute, as required here.
+    :type attribute: str | Attribute
+    :returns: The mapping spans result.
+    :rtype: list[list[int]] | None
+    :raises RuntimeError: If the operation cannot satisfy its state or persistence
+        preconditions.
+    """
     if attribute not in document["attribute_mappings"]:
         return None
     spans = []
@@ -38,7 +63,15 @@ def mapping_spans(document, attribute):
 
 
 def mapping_revisions(document, attribute_ids):
-    """Hash the visible value and provenance while preserving stable rename identity."""
+    """Hash the visible value and provenance while preserving stable rename identity.
+
+    :param document: The selected domain document or serialized source record.
+    :type document: Document | dict[str, object]
+    :param attribute_ids: Displayed attribute names mapped to stable UUIDs.
+    :type attribute_ids: dict[str, str]
+    :returns: The mapping revisions mapping.
+    :rtype: dict[str, str]
+    """
     source = source_revision(document["text"])
     provisional = document.get("signals", {}).get("SuggestedAttributeMappingsSignal", [])
     return {
@@ -48,12 +81,36 @@ def mapping_revisions(document, attribute_ids):
 
 
 def suggestion_version(ids, revisions):
+    """Hash the displayed correction-group members and their revision identities.
+
+    :param ids: The ordered correction row IDs displayed in the group.
+    :type ids: list[int]
+    :param revisions: The correction revisions paired with the displayed IDs.
+    :type revisions: list[str]
+    :returns: The suggestion version text or identifier.
+    :rtype: str
+    """
     return _digest(list(zip(ids, revisions)))
 
 
 def load_review_base(cursor, base_id, organisation_id, user_id):
     # These modules expose the existing legacy snapshot and attribute-ID contracts.
     # Import them at use time because their query module also uses this helper.
+    """Read one authorized base snapshot and its stable attribute identities.
+
+    :param cursor: The transaction/query cursor owned by the caller.
+    :type cursor: psycopg2.extensions.cursor | sqlite3.Cursor
+    :param base_id: The selected document-base database ID.
+    :type base_id: int
+    :param organisation_id: The organization database ID used to scope access.
+    :type organisation_id: int
+    :param user_id: The authenticated account ID selecting the authorized scope.
+    :type user_id: int
+    :returns: The review base mapping.
+    :rtype: dict[str, object]
+    :raises PublicFeedbackConflict: The displayed source, stable attribute or canonical mapping
+        changed.
+    """
     from wannadb_web.postgres.attribute_schema import attribute_ids_for_snapshot
     from wannadb_web.postgres.queries import document_base_snapshot_query
 
@@ -80,6 +137,21 @@ def load_review_base(cursor, base_id, organisation_id, user_id):
 
 
 def load_review_document(cursor, document_id, user_id, *, base=None):
+    """Read source text and canonical review identities for an authorized document.
+
+    :param cursor: The transaction/query cursor owned by the caller.
+    :type cursor: psycopg2.extensions.cursor | sqlite3.Cursor
+    :param document_id: The source-document database ID.
+    :type document_id: int
+    :param user_id: The authenticated account ID selecting the authorized scope.
+    :type user_id: int
+    :param base: The authorized domain base or decoded snapshot record.
+    :type base: DocumentBase | dict[str, object]
+    :returns: The review document mapping.
+    :rtype: dict[str, object]
+    :raises PublicFeedbackConflict: The displayed source, stable attribute or canonical mapping
+        changed.
+    """
     if base is None:
         cursor.execute("""SELECT documentbaseid, organisationid FROM public.documents
             WHERE id = %s AND content IS NOT NULL""", (document_id,))
@@ -105,6 +177,19 @@ def load_review_document(cursor, document_id, user_id, *, base=None):
 
 
 def validate_displayed_document(context, content, attribute_ids, mappings):
+    """Reject vote counts when displayed text, attribute IDs or mapping spans changed.
+
+    :param context: The validated source/base review context.
+    :type context: dict[str, object]
+    :param content: The complete source text or snapshot payload for this operation.
+    :type content: str | bytes
+    :param attribute_ids: Displayed attribute names mapped to stable UUIDs.
+    :type attribute_ids: dict[str, str]
+    :param mappings: The exact displayed mapping spans or missing/No Match sentinels.
+    :type mappings: dict[str, object]
+    :raises PublicFeedbackConflict: The displayed source, stable attribute or canonical mapping
+        changed.
+    """
     document = context["document"]
     ids = context["base"]["attribute_ids"]
     expected = {name: mapping_spans(document, name) for name in ids}

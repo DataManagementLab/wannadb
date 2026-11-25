@@ -1,3 +1,4 @@
+"""Legacy development handlers; the application does not register this blueprint."""
 import logging
 from flask import Blueprint, make_response
 
@@ -11,6 +12,13 @@ logger = logging.getLogger(__name__)
 
 @dev_routes.route('/createTables/<schema>', methods=['POST'])
 def create_tables(schema):
+	"""Run legacy development table creation; this blueprint is not registered.
+
+	:param schema: The selected database schema or expected schema identity.
+	:type schema: str
+	:returns: The HTTP response containing the scoped result or a safe request error.
+	:rtype: flask.Response
+	"""
 	try:
 		create_schema(schema)
 		create_user_table(schema)
@@ -27,6 +35,13 @@ def create_tables(schema):
 
 @dev_routes.route('/dropTables/<schema>', methods=['POST']) # potential vulnerability
 def drop_tables(schema):
+	"""Legacy unregistered handler; its local name shadows the imported drop helper.
+
+	:param schema: The selected database schema or expected schema identity.
+	:type schema: str
+	:returns: The drop tables result.
+	:rtype: str | None
+	"""
 	try:
 		drop_tables(schema)
 		drop_schema(schema)
@@ -37,6 +52,13 @@ def drop_tables(schema):
 
 @dev_routes.route('/getDocument/<_id>', methods=['GET'])
 def get_document(_id):
+	"""Get document.
+
+	:param _id: The database ID supplied in this layer's expected representation.
+	:type _id: int | str
+	:returns: The HTTP response containing the scoped result or a safe request error.
+	:rtype: flask.Response
+	"""
 	try:
 		response = _get_document(_id)
 		return make_response(response, 200)

@@ -66,17 +66,36 @@ return {count, math.floor(math.max(0, now - oldest)), unknown}
 
 
 def connect_monitor():
-    """Bound health-check connections independently of normal task clients."""
+    """Bound health-check connections independently of normal task clients.
+
+    :returns: The connect monitor result.
+    :rtype: redis.Redis
+    """
     return connectRedis(timeout=1, retry=Retry(NoBackoff(), 0))
 
 
 def publish_heartbeat(redis, consumer_id: str, queues) -> None:
-    """Refresh only this consumer's live queue subscriptions using Redis time."""
+    """Refresh only this consumer's live queue subscriptions using Redis time.
+
+    :param redis: The configured Redis client.
+    :type redis: redis.Redis
+    :param consumer_id: This consumer's lease identifier.
+    :type consumer_id: str
+    :param queues: The queue subscriptions consumed by this worker.
+    :type queues: Iterable[str]
+    """
     redis.eval(_HEARTBEAT_SCRIPT, len(_HEARTBEAT_KEYS), *_HEARTBEAT_KEYS,
                consumer_id, HEARTBEAT_TTL, *(int(queue in queues) for queue in REQUIRED_QUEUES))
 
 
 def remove_heartbeat(redis, consumer_id: str) -> None:
+    """Remove this consumer's leases from the required queue-health sets.
+
+    :param redis: The configured Redis client.
+    :type redis: redis.Redis
+    :param consumer_id: This consumer's lease identifier.
+    :type consumer_id: str
+    """
     with redis.pipeline() as pipeline:
         for key in _HEARTBEAT_KEYS:
             pipeline.zrem(key, consumer_id)
@@ -84,7 +103,13 @@ def remove_heartbeat(redis, consumer_id: str) -> None:
 
 
 def queue_health(redis) -> dict:
-    """Read consumer freshness and broker waiting metrics without task contents."""
+    """Read consumer freshness and broker waiting metrics without task contents.
+
+    :param redis: The configured Redis client.
+    :type redis: redis.Redis
+    :returns: The queue health mapping.
+    :rtype: dict
+    """
     counts = redis.eval(_CONSUMERS_SCRIPT, len(_HEARTBEAT_KEYS), *_HEARTBEAT_KEYS)
     result = {}
     with Redis.from_url(os.environ["CELERY_BROKER_URL"],

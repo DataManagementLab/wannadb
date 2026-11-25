@@ -5,10 +5,26 @@ from wannadb.data.signals import SuggestedAttributeMappingsSignal
 
 
 def _text_digest(text):
+    """Hash source text for concurrent-feedback comparison without retaining a duplicate.
+
+    :param text: The exact Unicode source text.
+    :type text: str
+    :returns: The text digest text or identifier.
+    :rtype: str
+    """
     return sha256(text.encode("utf-8")).hexdigest()
 
 
 def _confirmed_mapping(document, attribute):
+    """Return confirmed spans while distinguishing provisional and missing decisions.
+
+    :param document: The selected domain document or serialized source record.
+    :type document: Document | dict[str, object]
+    :param attribute: The selected attribute name or domain attribute, as required here.
+    :type attribute: str | Attribute
+    :returns: The confirmed mapping result.
+    :rtype: list[list[int]] | None
+    """
     marker = SuggestedAttributeMappingsSignal
     if marker.identifier in document.signals and attribute in document[marker]:
         return None
@@ -19,16 +35,38 @@ def _confirmed_mapping(document, attribute):
 
 
 def observe_documents(document_base, attribute):
-    """Store only the text digest and confirmed span coordinates for each document."""
+    """Store only the text digest and confirmed span coordinates for each document.
+
+    :param document_base: The worker-local domain base.
+    :type document_base: DocumentBase
+    :param attribute: The selected attribute name or domain attribute, as required here.
+    :type attribute: str | Attribute
+    :returns: The observe documents mapping.
+    :rtype: dict[str, list[object]]
+    """
     return {document.name: [_text_digest(document.text), _confirmed_mapping(document, attribute)]
             for document in document_base.documents}
 
 
 def _nugget_span(nugget):
+    """Normalize a serialized candidate's code-point coordinates.
+
+    :param nugget: The exact selected candidate or custom candidate text.
+    :type nugget: InformationNugget | str
+    :returns: The nugspan result.
+    :rtype: list[int]
+    """
     return [int(nugget["start_char"]), int(nugget["end_char"])]
 
 
 def _targets(payload):
+    """Extract document references and proposed spans from the feedback command shape.
+
+    :param payload: The exact serialized feedback action being processed.
+    :type payload: dict[str, object]
+    :returns: The targets result.
+    :rtype: list[tuple[dict[str, object], list[list[int]]]]
+    """
     message = payload["message"]
     if message == "multi-match":
         return [(nugget["document"], [_nugget_span(nugget)]) for nugget in payload["nuggets"]]
@@ -42,7 +80,18 @@ def _targets(payload):
 
 
 def compare_feedback(payload, baseline, latest):
-    """Return conflicting documents, the remaining proposal, and whether it can be replaced."""
+    """Return conflicting documents, the remaining proposal, and whether it can be replaced.
+
+    :param payload: The exact serialized feedback action being processed.
+    :type payload: dict[str, object]
+    :param baseline: Source/decision observations saved in this reviewer's checkpoint.
+    :type baseline: dict[str, object]
+    :param latest: Current canonical source/decision observations.
+    :type latest: dict[str, object]
+    :returns: Conflicting document names, the remaining proposal and whether replacement is
+        allowed.
+    :rtype: tuple[list[str], dict[str, object] | None, bool]
+    """
     message = payload["message"]
     if message == "start-ranking" and payload.get("reset"):
         conflicts = [
@@ -77,6 +126,15 @@ def compare_feedback(payload, baseline, latest):
 
 
 def _preview(text, spans):
+    """Render selected source spans for conflict review without changing their identity.
+
+    :param text: The exact Unicode source text.
+    :type text: str
+    :param spans: The selected inclusive-start/exclusive-end code-point ranges.
+    :type spans: list[list[int]]
+    :returns: The preview result.
+    :rtype: str | None
+    """
     if not spans or text is None:
         return None
     remaining, parts = 160, []
@@ -90,12 +148,39 @@ def _preview(text, spans):
 
 
 def proposed_previews(payload, document_base):
+    """Build per-document previews of the proposed exact feedback selections.
+
+    :param payload: The exact serialized feedback action being processed.
+    :type payload: dict[str, object]
+    :param document_base: The worker-local domain base.
+    :type document_base: DocumentBase
+    :returns: The proposed previews mapping.
+    :rtype: dict[str, str | None]
+    """
     documents = {document.name: document.text for document in document_base.documents}
     return {reference["name"]: _preview(reference.get("text", documents.get(reference["name"])), spans)
             for reference, spans in _targets(payload)}
 
 
 def conflict_review(document_base, attribute, names, previews, *, can_replace, reset=False):
+    """Build the user-visible keep/replace comparison for concurrently changed documents.
+
+    :param document_base: The worker-local domain base.
+    :type document_base: DocumentBase
+    :param attribute: The selected attribute name or domain attribute, as required here.
+    :type attribute: str | Attribute
+    :param names: The selected attribute or document names.
+    :type names: list[str]
+    :param previews: Exact proposed occurrence previews keyed by document name.
+    :type previews: dict[str, str | None]
+    :param can_replace: Whether the conflicting proposal may replace the displayed canonical
+        decision.
+    :type can_replace: bool
+    :param reset: Whether to clear previous ranking progress before starting the attribute.
+    :type reset: bool
+    :returns: The conflict review mapping.
+    :rtype: dict[str, object]
+    """
     documents = {document.name: document for document in document_base.documents}
     items = []
     for name in names:
@@ -112,7 +197,15 @@ def conflict_review(document_base, attribute, names, previews, *, can_replace, r
 
 
 def clear_replaced_decisions(document_base, attribute, payload):
-    """Make only the explicitly replaced documents available to the matcher again."""
+    """Make only the explicitly replaced documents available to the matcher again.
+
+    :param document_base: The worker-local domain base.
+    :type document_base: DocumentBase
+    :param attribute: The selected attribute name or domain attribute, as required here.
+    :type attribute: str | Attribute
+    :param payload: The exact serialized feedback action being processed.
+    :type payload: dict[str, object]
+    """
     targets = {reference["name"] for reference, _ in _targets(payload)}
     marker = SuggestedAttributeMappingsSignal
     for document in document_base.documents:
@@ -128,11 +221,31 @@ def clear_replaced_decisions(document_base, attribute, payload):
 
 
 def compact_proposal(payload):
-    """Keep the original action without duplicating full texts in the checkpoint."""
+    """Keep the original action without duplicating full texts in the checkpoint.
+
+    :param payload: The exact serialized feedback action being processed.
+    :type payload: dict[str, object]
+    :returns: The compact proposal mapping.
+    :rtype: dict[str, object]
+    """
     def reference(document):
+        """Keep only a document name in a saved conflict proposal.
+
+        :param document: The selected domain document or serialized source record.
+        :type document: Document | dict[str, object]
+        :returns: The reference mapping.
+        :rtype: dict[str, str]
+        """
         return {"name": document["name"]}
 
     def nugget(value):
+        """Keep source identity and exact coordinates without duplicating document text.
+
+        :param value: The value to validate, store or convert as described above.
+        :type value: object
+        :returns: The nugget mapping.
+        :rtype: dict[str, object]
+        """
         start, end = _nugget_span(value)
         return {"document": reference(value["document"]), "start_char": start, "end_char": end}
 

@@ -48,6 +48,13 @@ class AuthProxyError(ValueError):
 
 
 def _normalize_ip(value):
+    """Normalize an IP address or reject malformed client identity context.
+
+    :param value: The value to validate, store or convert as described above.
+    :type value: object
+    :returns: The normalize ip text or identifier.
+    :rtype: str
+    """
     address = ipaddress.ip_address(value)
     if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped is not None:
         address = address.ipv4_mapped
@@ -55,7 +62,20 @@ def _normalize_ip(value):
 
 
 def auth_client_identity(headers, method: str, path: str, peer: str) -> str:
-    """Trust signed context, or the direct socket peer when no context is supplied."""
+    """Trust signed context, or the direct socket peer when no context is supplied.
+
+    :param headers: The incoming authentication request headers.
+    :type headers: Mapping[str, str]
+    :param method: The HTTP method bound to the signed client context.
+    :type method: str
+    :param path: The exact HTTP path bound to the signed client context.
+    :type path: str
+    :param peer: The direct socket-peer address.
+    :type peer: str
+    :returns: The auth client identity text or identifier.
+    :rtype: str
+    :raises AuthProxyError: Authentication context that cannot be trusted or verified.
+    """
     values = [headers.get(name) for name in _PROXY_HEADERS]
     if not any(value is not None for value in values):
         try:
@@ -81,7 +101,18 @@ def auth_client_identity(headers, method: str, path: str, peer: str) -> str:
 
 
 def auth_retry_after(action: str, identity: str, username=None) -> int:
-    """Consume all applicable budgets together only when every budget permits."""
+    """Consume all applicable budgets together only when every budget permits.
+
+    :param action: The authentication action or SQLite authorization action code.
+    :type action: str
+    :param identity: The verified client address identity used for admission.
+    :type identity: str
+    :param username: The account username used by this operation.
+    :type username: str | None
+    :returns: The resulting count, version, identifier or status code for this operation.
+    :rtype: int
+    :raises ValueError: If an input fails validation for this operation.
+    """
     if action == "register":
         client_maximum, global_maximum = REGISTRATIONS_PER_CLIENT, REGISTRATIONS_GLOBAL
     elif action == "login":

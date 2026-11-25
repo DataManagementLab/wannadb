@@ -1,3 +1,4 @@
+"""Scoped Celery work, feedback commands and safe worker lifecycle handling."""
 import logging
 import inspect
 import hashlib
@@ -33,19 +34,45 @@ _FEEDBACK_QUEUE = "feedback"
 
 
 def _task_user_id(args, kwargs):
+	"""Read the submitting user from positional or keyword task arguments.
+
+	:param args: Positional task/callback arguments.
+	:type args: tuple[object, ...]
+	:param kwargs: Keyword task/callback arguments.
+	:type kwargs: dict[str, object]
+	:returns: The task user id result.
+	:rtype: int | None
+	"""
 	return (kwargs or {}).get("user_id", args[0] if args else None)
 
 
 def _request_fingerprint(task_name, parameters):
+	"""Hash the task name and normalized parameters for exact replay validation.
+
+	:param task_name: The registered Celery task name included in the replay fingerprint.
+	:type task_name: str
+	:param parameters: Bound task arguments used to validate exact submission identity.
+	:type parameters: dict[str, object]
+	:returns: The request fingerprint text or identifier.
+	:rtype: str
+	"""
 	return hashlib.sha256(json.dumps([task_name, parameters], sort_keys=True).encode()).hexdigest()
 
 
 class BaseTask(Task):
+	"""Shared task admission, authorization, safe errors and lazy worker resource loading."""
 	name = "BaseTask"
 	soft_time_limit = COMPUTE_SECONDS
 	time_limit = COMPUTE_SECONDS + 30
 	@property
 	def _signals(self):
+		"""Return signal adapters for the authorized task-local user/base/session scope.
+
+		:returns: The signals result.
+		:rtype: Signals
+		:raises PermissionError: If the operation cannot satisfy its state or persistence
+		    preconditions.
+		"""
 		scope = get_signal_scope()
 		if scope is None:
 			raise PermissionError("No task session selected")
@@ -53,12 +80,34 @@ class BaseTask(Task):
 
 
 	def __init__(self):
+		"""Initialize BaseTask with its supplied dependencies and scope.
+		"""
 		super().__init__()
 
 	def run(self, *args, **kwargs):
+		"""Define the abstract task body that concrete web tasks must implement.
+
+		:param args: Positional task/callback arguments.
+		:type args: tuple[object, ...]
+		:param kwargs: Keyword task/callback arguments.
+		:type kwargs: dict[str, object]
+		:raises NotImplementedError: When the abstract operation has no concrete implementation.
+		"""
 		raise NotImplementedError("BaseTask is abstract")
 
 	def __call__(self, *args, **kwargs):
+		"""Run a task with safe public error classification and timing logs.
+
+		:param args: Positional task/callback arguments.
+		:type args: tuple[object, ...]
+		:param kwargs: Keyword task/callback arguments.
+		:type kwargs: dict[str, object]
+		:returns: The concrete task result; failures are classified before a safe exception is
+		    raised.
+		:rtype: object
+		:raises RuntimeError: If the operation cannot satisfy its state or persistence
+		    preconditions.
+		"""
 		started = time.monotonic()
 		try:
 			return super().__call__(*args, **kwargs)
@@ -83,6 +132,22 @@ class BaseTask(Task):
 			logger.info("Worker task ended. task=%s compute_seconds=%.3f", self.name, time.monotonic() - started)
 
 	def apply_async(self, args=None, kwargs=None, task_id=None, **options):
+		"""Reserve capacity and submit a scoped task with redacted broker arguments.
+
+		:param args: Positional task/callback arguments.
+		:type args: tuple[object, ...]
+		:param kwargs: Keyword task/callback arguments.
+		:type kwargs: dict[str, object]
+		:param task_id: The scoped Celery task/command UUID.
+		:type task_id: str | None
+		:param options: Additional client, task or worker options.
+		:type options: dict[str, object]
+		:returns: The handle for the admitted task or an exactly matching previous submission.
+		:rtype: celery.result.AsyncResult
+		:raises ValueError: If an input fails validation for this operation.
+		:raises PermissionError: If the operation cannot satisfy its state or persistence
+		    preconditions.
+		"""
 		parameters = inspect.signature(self.run).bind_partial(*(args or ()), **(kwargs or {})).arguments
 		user_id = parameters.get("user_id")
 		if user_id is None:
@@ -142,6 +207,18 @@ class BaseTask(Task):
 			raise
 
 	def before_start(self, task_id, args, kwargs):
+		"""Claim admission and establish authorized task/session scope before execution.
+
+		:param task_id: The scoped Celery task/command UUID.
+		:type task_id: str
+		:param args: Positional task/callback arguments.
+		:type args: tuple[object, ...]
+		:param kwargs: Keyword task/callback arguments.
+		:type kwargs: dict[str, object]
+		:raises Ignore: If the operation cannot satisfy its state or persistence preconditions.
+		:raises PermissionError: If the operation cannot satisfy its state or persistence
+		    preconditions.
+		"""
 		queued_at = (self.request.headers or {}).get("wannadb_queued_at")
 		if isinstance(queued_at, (float, int)):
 			logger.info("Worker task started. task=%s queue_wait_seconds=%.3f", self.name, max(0, time.time() - queued_at))
@@ -177,6 +254,21 @@ class BaseTask(Task):
 			SessionState(user_id, scope["base_id"], scope["session_id"]).initialize()
 
 	def after_return(self, status, retval, task_id, args, kwargs, einfo):
+		"""Finalize publication/admission and clear task-local state even if cleanup fails.
+
+		:param status: The state, HTTP status or emitted value required here.
+		:type status: str | int | object
+		:param retval: The task's returned value.
+		:type retval: object
+		:param task_id: The scoped Celery task/command UUID.
+		:type task_id: str
+		:param args: Positional task/callback arguments.
+		:type args: tuple[object, ...]
+		:param kwargs: Keyword task/callback arguments.
+		:type kwargs: dict[str, object]
+		:param einfo: Celery exception information for task finalization.
+		:type einfo: object
+		"""
 		try:
 			scope = get_signal_scope()
 			if scope is not None and not isinstance(self, FeedbackTask):
@@ -202,6 +294,8 @@ class BaseTask(Task):
 
 	@staticmethod
 	def load():
+		"""Initialize shared model resources lazily in the worker process.
+		"""
 		from wannadb import resources
 
 		if resources.MANAGER is None:
@@ -213,6 +307,19 @@ class BaseTask(Task):
 	@staticmethod
 	def _create_api(user_id, base_name, organisation_id, **options):
 		# Task submission uses these same classes in the Flask API.
+		"""Construct the worker-local orchestrator only when task processing needs it.
+
+		:param user_id: The authenticated account ID selecting the authorized scope.
+		:type user_id: int
+		:param base_name: The exact document-base display name.
+		:type base_name: str
+		:param organisation_id: The organization database ID used to scope access.
+		:type organisation_id: int
+		:param options: Additional client, task or worker options.
+		:type options: dict[str, object]
+		:returns: The create api result.
+		:rtype: WannaDB_WebAPI
+		"""
 		from wannadb_web.worker.Web_API import WannaDB_WebAPI
 
 		return WannaDB_WebAPI(user_id, base_name, organisation_id, **options)
@@ -221,6 +328,13 @@ class BaseTask(Task):
 			   state: State,
 			   meta: Optional[dict[str, Any]] = None,
 			   ) -> None:
+		"""Publish a task state using the stable web state enumeration.
+
+		:param state: The current serialized/worker matching state.
+		:type state: State
+		:param meta: The safe task metadata to publish alongside its state.
+		:type meta: Optional[dict[str, Any]]
+		"""
 		super().update_state(state=state.value, meta=meta)
 
 	def update_state(self,
@@ -229,14 +343,42 @@ class BaseTask(Task):
 					 meta: Any = None,
 					 **kwargs: Any
 					 ) -> None:
+		"""Publish scoped task metadata without a second non-atomic base payload.
+
+		:param task_id: The scoped Celery task/command UUID.
+		:type task_id: Optional[str]
+		:param state: The current serialized/worker matching state.
+		:type state: Optional[str]
+		:param meta: The safe task metadata to publish alongside its state.
+		:type meta: Any
+		:param kwargs: Keyword task/callback arguments.
+		:type kwargs: dict[str, Any]
+		:raises NotImplementedError: When the abstract operation has no concrete implementation.
+		"""
 		raise NotImplementedError("user update() instead")
 
 	@staticmethod
 	def check_api_error(api):
+		"""Raise when the worker API has published a task error.
+
+		:param api: The worker-local orchestrator for the authorized base.
+		:type api: WannaDB_WebAPI
+		:raises RuntimeError: If the operation cannot satisfy its state or persistence
+		    preconditions.
+		"""
 		if api.signals.error.msg is not None:
 			raise RuntimeError("TASK_FAILED")
 
 	def finish(self, api, persist: bool = False):
+		"""Optionally persist, complete the task publication and return a success receipt.
+
+		:param api: The worker-local orchestrator for the authorized base.
+		:type api: WannaDB_WebAPI
+		:param persist: Whether to save the staged canonical snapshot before task completion.
+		:type persist: bool
+		:returns: The finish mapping.
+		:rtype: dict[str, object]
+		"""
 		self.check_api_error(api)
 		if persist:
 			api.update_document_base_to_bson()
@@ -247,6 +389,19 @@ class BaseTask(Task):
 
 @task_revoked.connect
 def _release_revoked_task(sender, request, terminated, expired, **kwargs):
+	"""Release admission/publication state when Celery reports a revoked task.
+
+	:param sender: The Celery sender for the lifecycle signal.
+	:type sender: celery.Task
+	:param request: The Celery request describing the affected execution.
+	:type request: object
+	:param terminated: Whether Celery terminated the revoked task execution.
+	:type terminated: bool
+	:param expired: Whether Celery revoked this task because its execution deadline expired.
+	:type expired: bool
+	:param kwargs: Keyword task/callback arguments.
+	:type kwargs: dict[str, object]
+	"""
 	if isinstance(sender, BaseTask):
 		user_id = _task_user_id(request.args, request.kwargs)
 		if user_id is not None:
@@ -258,6 +413,21 @@ def _release_revoked_task(sender, request, terminated, expired, **kwargs):
 
 @task_failure.connect
 def _release_lost_task(sender, task_id, exception, args, kwargs, **extra):
+	"""Finalize admission when Celery reports a failed or lost task execution.
+
+	:param sender: The Celery sender for the lifecycle signal.
+	:type sender: celery.Task
+	:param task_id: The scoped Celery task/command UUID.
+	:type task_id: str
+	:param exception: The worker failure to classify without exposing sensitive details.
+	:type exception: BaseException
+	:param args: Positional task/callback arguments.
+	:type args: tuple[object, ...]
+	:param kwargs: Keyword task/callback arguments.
+	:type kwargs: dict[str, object]
+	:param extra: Additional Celery signal metadata.
+	:type extra: dict[str, object]
+	"""
 	if isinstance(sender, BaseTask) and isinstance(exception, (WorkerLostError, TimeLimitExceeded)):
 		user_id = _task_user_id(args, kwargs)
 		if user_id is not None:
@@ -265,10 +435,28 @@ def _release_lost_task(sender, task_id, exception, args, kwargs, **extra):
 
 
 class CreateDocumentBase(BaseTask):
+	"""Preprocess selected inputs and commit the new base and source links atomically."""
 	name = "CreateDocumentBase"
 
 	def run(self, user_id: int, document_ids: list[int], attributes_strings: list[str],
 			base_name: str, organisation_id: int):
+		"""Preprocess selected inputs and commit the new base and source links atomically.
+
+		:param user_id: The authenticated account ID selecting the authorized scope.
+		:type user_id: int
+		:param document_ids: The selected source IDs or publication name-to-ID map.
+		:type document_ids: list[int]
+		:param attributes_strings: The requested distinct attribute display names.
+		:type attributes_strings: list[str]
+		:param base_name: The exact document-base display name.
+		:type base_name: str
+		:param organisation_id: The organization database ID used to scope access.
+		:type organisation_id: int
+		:returns: The run mapping.
+		:rtype: dict[str, object]
+		:raises WorkLimitError: A source-document, corpus or other web work budget was exceeded.
+		:raises ValueError: If an input fails validation for this operation.
+		"""
 		signals = self._signals
 		if isinstance(document_ids, list) and len(document_ids) > MAX_BASE_DOCUMENTS:
 			raise WorkLimitError(f"Select at most {MAX_BASE_DOCUMENTS} documents.")
@@ -307,9 +495,28 @@ class CreateDocumentBase(BaseTask):
 
 
 class DocumentBaseLoad(BaseTask):
+	"""Load a scoped base or evaluate and cache a bounded SQL query."""
 	name = "DocumentBaseLoad"
 
 	def run(self, user_id: int, base_name: str, organisation_id: int, include_automatic_matches=False, sql_query=None, confirmed_only=False):
+		"""Load a scoped base or evaluate and cache a bounded SQL query.
+
+		:param user_id: The authenticated account ID selecting the authorized scope.
+		:type user_id: int
+		:param base_name: The exact document-base display name.
+		:type base_name: str
+		:param organisation_id: The organization database ID used to scope access.
+		:type organisation_id: int
+		:param include_automatic_matches: Whether provisional automatic matches are included in the
+		    projection.
+		:type include_automatic_matches: bool
+		:param sql_query: The read-only SQL text to evaluate.
+		:type sql_query: str | None
+		:param confirmed_only: Whether provisional matches must be excluded from the SQL view.
+		:type confirmed_only: bool
+		:returns: The run mapping.
+		:rtype: dict[str, object]
+		"""
 		self.load()
 		api = self._create_api(user_id, base_name, organisation_id, build_query_cache=False)
 		api.load_document_base_from_bson(publish_to_ui=False)
@@ -327,9 +534,23 @@ class DocumentBaseLoad(BaseTask):
 
 
 class DocumentBaseAddDocument(BaseTask):
+	"""Preprocess additions and commit their raw rows and base snapshot together."""
 	name = "DocumentBaseAddDocument"
 
 	def run(self, user_id: int, documents: list[list[str]], base_name: str, organisation_id: int):
+		"""Preprocess additions and commit their raw rows and base snapshot together.
+
+		:param user_id: The authenticated account ID selecting the authorized scope.
+		:type user_id: int
+		:param documents: The document set or names/text references processed by this helper.
+		:type documents: list[list[str]]
+		:param base_name: The exact document-base display name.
+		:type base_name: str
+		:param organisation_id: The organization database ID used to scope access.
+		:type organisation_id: int
+		:returns: The run mapping.
+		:rtype: dict[str, object]
+		"""
 		self.load()
 		api = self._create_api(user_id, base_name, organisation_id, build_query_cache=False)
 		api.mutate_documents(additions=[Document(name, content) for name, content in documents])
@@ -337,9 +558,25 @@ class DocumentBaseAddDocument(BaseTask):
 
 
 class DocumentBaseRemoveDocument(BaseTask):
+	"""Remove the selected source document from its authorized base."""
 	name = "DocumentBaseRemoveDocument"
 
 	def run(self, user_id: int, document_name: str, base_name: str, organisation_id: int, document_id: int):
+		"""Remove the selected source document from its authorized base.
+
+		:param user_id: The authenticated account ID selecting the authorized scope.
+		:type user_id: int
+		:param document_name: The exact source-document display name.
+		:type document_name: str
+		:param base_name: The exact document-base display name.
+		:type base_name: str
+		:param organisation_id: The organization database ID used to scope access.
+		:type organisation_id: int
+		:param document_id: The source-document database ID.
+		:type document_id: int
+		:returns: The run mapping.
+		:rtype: dict[str, object]
+		"""
 		self.load()
 		api = self._create_api(user_id, base_name, organisation_id, build_query_cache=False)
 		api.mutate_documents(removal=(document_id, document_name))
@@ -347,10 +584,30 @@ class DocumentBaseRemoveDocument(BaseTask):
 
 
 class DocumentBaseUpdateDocument(BaseTask):
+	"""Reprocess replacement text against the displayed original source."""
 	name = "DocumentBaseUpdateDocument"
 
 	def run(self, user_id: int, document_name: str, document_content: str, base_name: str, organisation_id: int,
 			document_id: int, old_content: str):
+		"""Reprocess replacement text against the displayed original source.
+
+		:param user_id: The authenticated account ID selecting the authorized scope.
+		:type user_id: int
+		:param document_name: The exact source-document display name.
+		:type document_name: str
+		:param document_content: The proposed complete replacement source text.
+		:type document_content: str
+		:param base_name: The exact document-base display name.
+		:type base_name: str
+		:param organisation_id: The organization database ID used to scope access.
+		:type organisation_id: int
+		:param document_id: The source-document database ID.
+		:type document_id: int
+		:param old_content: The original source text required by the replacement guard.
+		:type old_content: str
+		:returns: The run mapping.
+		:rtype: dict[str, object]
+		"""
 		self.load()
 		api = self._create_api(user_id, base_name, organisation_id, build_query_cache=False)
 		api.mutate_documents(replacement=(document_id, old_content, Document(document_name, document_content)))
@@ -358,9 +615,26 @@ class DocumentBaseUpdateDocument(BaseTask):
 
 
 class DocumentBaseUpdateAttributes(BaseTask):
+	"""Apply explicit attribute-schema operations against the displayed schema UUID."""
 	name = "DocumentBaseUpdateAttributes"
 
 	def run(self, user_id: int, operations: list[dict], base_name: str, organisation_id: int, expected_version: str):
+		"""Apply explicit attribute-schema operations against the displayed schema UUID.
+
+		:param user_id: The authenticated account ID selecting the authorized scope.
+		:type user_id: int
+		:param operations: Validated explicit attribute add/remove/rename operations.
+		:type operations: list[dict]
+		:param base_name: The exact document-base display name.
+		:type base_name: str
+		:param organisation_id: The organization database ID used to scope access.
+		:type organisation_id: int
+		:param expected_version: The displayed session integer version or schema UUID required by
+		    this operation.
+		:type expected_version: str
+		:returns: The run mapping.
+		:rtype: dict[str, object]
+		"""
 		try:
 			edit_attribute_schema(user_id, get_signal_scope()["base_id"], base_name, organisation_id,
 				expected_version, operations)
@@ -374,10 +648,35 @@ class DocumentBaseUpdateAttributes(BaseTask):
 
 
 class ReviewPublicSuggestion(BaseTask):
+	"""Apply an owner decision against exact suggestion identities and revisions."""
 	name = "ReviewPublicSuggestion"
 
 	def run(self, user_id, base_name, organisation_id, base_id, document_id, review, accepted):
+		"""Apply an owner decision against exact suggestion identities and revisions.
+
+		:param user_id: The authenticated account ID selecting the authorized scope.
+		:type user_id: int
+		:param base_name: The exact document-base display name.
+		:type base_name: str
+		:param organisation_id: The organization database ID used to scope access.
+		:type organisation_id: int
+		:param base_id: The selected document-base database ID.
+		:type base_id: int
+		:param document_id: The source-document database ID.
+		:type document_id: int
+		:param review: The displayed owner-review identities and expected revisions.
+		:type review: dict[str, object]
+		:param accepted: Whether the owner accepts rather than rejects the correction.
+		:type accepted: bool
+		:returns: The run mapping.
+		:rtype: dict[str, object]
+		"""
 		def prepare_nugget(nugget):
+			"""Prepare an accepted correction before its guarded owner-review commit.
+
+			:param nugget: The exact selected candidate or custom candidate text.
+			:type nugget: InformationNugget | str
+			"""
 			self.load()
 			api = self._create_api(user_id, base_name, organisation_id, build_query_cache=False)
 			api.prepare_public_nugget(nugget)
@@ -397,11 +696,23 @@ class ReviewPublicSuggestion(BaseTask):
 
 
 class DocumentBaseInteractiveTablePopulation(BaseTask):
+	"""Open a resumable matching session on the dedicated feedback queue."""
 	name = "DocumentBaseInteractiveTablePopulation"
 	queue = _FEEDBACK_QUEUE
 	track_started = False  # STARTED below means the base is loaded, not just dequeued.
 
 	def run(self, user_id: int, base_name: str, organisation_id: int):
+		"""Open a resumable matching session on the dedicated feedback queue.
+
+		:param user_id: The authenticated account ID selecting the authorized scope.
+		:type user_id: int
+		:param base_name: The exact document-base display name.
+		:type base_name: str
+		:param organisation_id: The organization database ID used to scope access.
+		:type organisation_id: int
+		:returns: The run mapping.
+		:rtype: dict[str, object]
+		"""
 		self.load()
 		api = self._create_api(user_id, base_name, organisation_id, build_query_cache=False)
 		api.load_document_base_from_bson(publish_to_ui=False)
@@ -413,9 +724,27 @@ class DocumentBaseInteractiveTablePopulation(BaseTask):
 
 class FeedbackTask(BaseTask):
 	# Each command performs one bounded compute step, then releases the worker.
+	"""One bounded decision step fenced by session version, command identity and lease."""
 	queue = _FEEDBACK_QUEUE
 
 	def _durable_replay(self, parameters, outcome, session_id, expected_version, command_id):
+		"""Validate exact saved command parameters and return its existing result handle.
+
+		:param parameters: Bound task arguments used to validate exact submission identity.
+		:type parameters: dict[str, object]
+		:param outcome: The saved command receipt used for recovery/replay.
+		:type outcome: dict[str, object]
+		:param session_id: The parent feedback-session UUID.
+		:type session_id: str
+		:param expected_version: The displayed session integer version or schema UUID required by
+		    this operation.
+		:type expected_version: int | str
+		:param command_id: The unique decision UUID used for exact replay.
+		:type command_id: str
+		:returns: The Celery handle for this scoped task or exact command replay.
+		:rtype: celery.result.AsyncResult
+		:raises ValueError: If an input fails validation for this operation.
+		"""
 		if (outcome["session_id"] != session_id or outcome["command_id"] != command_id or
 			outcome["expected_version"] != expected_version or
 			outcome["request_fingerprint"] != _request_fingerprint(self.name, parameters)):
@@ -423,7 +752,23 @@ class FeedbackTask(BaseTask):
 		return self.AsyncResult(task_id=command_id)
 
 	def existing_submission(self, args, *, session_id, expected_version, command_id, durable_outcome=None):
-		"""Return an exact replay of a recorded command without queuing it again."""
+		"""Return an exact replay of a recorded command without queuing it again.
+
+		:param args: Positional task/callback arguments.
+		:type args: tuple[object, ...]
+		:param session_id: The parent feedback-session UUID.
+		:type session_id: str
+		:param expected_version: The displayed session integer version or schema UUID required by
+		    this operation.
+		:type expected_version: int | str
+		:param command_id: The unique decision UUID used for exact replay.
+		:type command_id: str
+		:param durable_outcome: A previously committed command receipt for exact replay.
+		:type durable_outcome: dict[str, object] | None
+		:returns: The existing exact command result handle, or None when no submission is recorded.
+		:rtype: celery.result.AsyncResult | None
+		:raises ValueError: If an input fails validation for this operation.
+		"""
 		parameters = inspect.signature(self.run).bind(*args).arguments
 		if durable_outcome is not None:
 			return self._durable_replay(parameters, durable_outcome, session_id, expected_version, command_id)
@@ -439,6 +784,18 @@ class FeedbackTask(BaseTask):
 		return self.AsyncResult(task_id=command_id) if session.command(command_id) is not None else None
 
 	def apply_decision(self, feedback):
+		"""Claim one exact decision lease, advance its durable checkpoint and publish safely.
+
+		:param feedback: The feedback payload or adapter used by this step.
+		:type feedback: dict[str, object] | object
+		:raises PermissionError: If the operation cannot satisfy its state or persistence
+		    preconditions.
+		:raises FeedbackSessionConflict: A feedback command no longer matches its durable
+		    checkpoint or source.
+		:raises ValueError: If an input fails validation for this operation.
+		:raises RuntimeError: If the operation cannot satisfy its state or persistence
+		    preconditions.
+		"""
 		context = get_signal_scope()
 		user_id, command_id = int(context["user_id"]), context["command_id"]
 		scope = TaskAccess(user_id).task(command_id)
@@ -504,39 +861,91 @@ class FeedbackTask(BaseTask):
 
 
 class DocumentBaseStartRanking(FeedbackTask):
+	"""Start, reset or skip the exact attribute waiting in a feedback session."""
 	name = "DocumentBaseStartRanking"
 
 	@staticmethod
 	def payload(do_attribute: bool, reset: bool, attribute: str):
+		"""Encode the explicit start/reset/skip decision for the waiting attribute.
+
+		:param do_attribute: Whether to rank the waiting attribute rather than skip it.
+		:type do_attribute: bool
+		:param reset: Whether to clear previous ranking progress before starting the attribute.
+		:type reset: bool
+		:param attribute: The selected attribute name or domain attribute, as required here.
+		:type attribute: str
+		:returns: The payload mapping.
+		:rtype: dict[str, object]
+		"""
 		feedback = DoAttributeRanking(reset) if do_attribute else SkipAttributeRanking()
 		return dict(feedback.to_json(), attribute=attribute)
 
 	def run(self, user_id: int, do_attribute: bool, reset: bool, attribute: str):
+		"""Start, reset or skip the exact attribute waiting in a feedback session.
+
+		:param user_id: The authenticated account ID selecting the authorized scope.
+		:type user_id: int
+		:param do_attribute: Whether to rank the waiting attribute rather than skip it.
+		:type do_attribute: bool
+		:param reset: Whether to clear previous ranking progress before starting the attribute.
+		:type reset: bool
+		:param attribute: The selected attribute name or domain attribute, as required here.
+		:type attribute: str
+		:returns: The run mapping.
+		:rtype: dict[str, object]
+		"""
 		self.apply_decision(self.payload(do_attribute, reset, attribute))
 		return {"ok": True}
 
 
 class DocumentBaseStopMatching(FeedbackTask):
+	"""Stop the current ranked attribute while allowing the session to continue."""
 	name = "DocumentBaseStopMatching"
 
 	def run(self, user_id: int):
 
+		"""Stop the current ranked attribute while allowing the session to continue.
+
+		:param user_id: The authenticated account ID selecting the authorized scope.
+		:type user_id: int
+		:returns: The run mapping.
+		:rtype: dict[str, object]
+		"""
 		self.apply_decision(StopMatching())
 		return {"ok": True}
 
 
 class DocumentBaseCloseFeedbackSession(FeedbackTask):
+	"""Close one review session while preserving committed canonical matches."""
 	name = "DocumentBaseCloseFeedbackSession"
 
 	def run(self, user_id: int):
+		"""Close one review session while preserving committed canonical matches.
+
+		:param user_id: The authenticated account ID selecting the authorized scope.
+		:type user_id: int
+		:returns: The run mapping.
+		:rtype: dict[str, object]
+		"""
 		self.apply_decision({"message": "close-feedback-session"})
 		return {"ok": True}
 
 
 class ReloadDocumentBaseTask(FeedbackTask):
+	"""Refresh a feedback step or resolve an explicit keep/replace conflict choice."""
 	name = "ReloadDocumentBase"
 
 	def run(self, user_id: int, conflict_resolution=None):
+		"""Refresh a feedback step or resolve an explicit keep/replace conflict choice.
+
+		:param user_id: The authenticated account ID selecting the authorized scope.
+		:type user_id: int
+		:param conflict_resolution: The explicit keep/replace response to a displayed conflict.
+		:type conflict_resolution: str | None
+		:returns: The run mapping.
+		:rtype: dict[str, object]
+		:raises ValueError: If an input fails validation for this operation.
+		"""
 		if conflict_resolution not in (None, "keep", "replace"):
 			raise ValueError("Unsupported feedback conflict resolution.")
 		payload = ReloadDocumentBase().to_json()
@@ -547,6 +956,7 @@ class ReloadDocumentBaseTask(FeedbackTask):
 
 
 class DocumentBaseConfirmNugget(FeedbackTask):
+	"""Apply an exact candidate/custom-span decision to the current session."""
 	name = "DocumentBaseConfirmNugget"
 
 	def run(
@@ -555,18 +965,35 @@ class DocumentBaseConfirmNugget(FeedbackTask):
 	 	start_index: int, end_index: int, not_a_match_text: Optional[str],
    		not_a_match_start_index: Optional[int], not_a_match_end_index: Optional[int]
 	):
-		"""
+		"""Apply an exact candidate/custom-span decision to the current session.
+
 		:param user_id: user id
+		:type user_id: int
 		:param base_name: name of base document
+		:type base_name: str
 		:param organisation_id: organisation id of the document base
+		:type organisation_id: int
 		:param document_name: name of the document
+		:type document_name: str
 		:param document_text: text of the document
+		:type document_text: str
 		:param nugget: the Nugget that gets confirmed
-		:param start_index: start of the nugget in the document (optional) if start and end is None the nugget is not in the document
-		:param end_index: end of the nugget in the document (optional) if start and end is None the nugget is not in the document
+		:type nugget: str
+		:param start_index: start of the nugget in the document (optional) if start and end is None
+		    the nugget is not in the document
+		:type start_index: int
+		:param end_index: end of the nugget in the document (optional) if start and end is None the
+		    nugget is not in the document
+		:type end_index: int
 		:param not_a_match_text: text of the nugget that is not a match
+		:type not_a_match_text: Optional[str]
 		:param not_a_match_start_index: start of the nugget that is not a match
+		:type not_a_match_start_index: Optional[int]
 		:param not_a_match_end_index: end of the nugget that is not a match
+		:type not_a_match_end_index: Optional[int]
+		:returns: The run mapping.
+		:rtype: dict[str, object]
+		:raises ValueError: If an input fails validation for this operation.
 		"""
   
 		document = Document(document_name, document_text)
@@ -587,10 +1014,25 @@ class DocumentBaseConfirmNugget(FeedbackTask):
 	
 
 class DocumentBaseConfirmMultipleNuggets(FeedbackTask):
+	"""Apply one exact selection per distinct document in one feedback command."""
 	name = "DocumentBaseConfirmMultipleNuggets"
 
 	def run(self, user_id: int, base_name: str, organisation_id: int,
 		documents_and_nuggets: list[tuple[str, str, int, int]]):
+		"""Apply one exact selection per distinct document in one feedback command.
+
+		:param user_id: The authenticated account ID selecting the authorized scope.
+		:type user_id: int
+		:param base_name: The exact document-base display name.
+		:type base_name: str
+		:param organisation_id: The organization database ID used to scope access.
+		:type organisation_id: int
+		:param documents_and_nuggets: Document names, source text and exact code-point selections.
+		:type documents_and_nuggets: list[tuple[str, str, int, int]]
+		:returns: The run mapping.
+		:rtype: dict[str, object]
+		:raises ValueError: If an input fails validation for this operation.
+		"""
 		if not isinstance(documents_and_nuggets, list) or not documents_and_nuggets:
 			raise ValueError("Select at least one match")
 		nuggets = []
@@ -607,21 +1049,35 @@ class DocumentBaseConfirmMultipleNuggets(FeedbackTask):
 
 
 class DocumentBaseNoMatchForDocument(FeedbackTask):
+	"""Reject a candidate or record whole-document No Match for this session."""
 	name = "DocumentBaseNoMatchForDocument"
 
 	def run(self, user_id: int, base_name: str, organisation_id: int,
 			document_name: str, document_text: str,
    			nugget: Optional[str], start_index: Union[int, None], end_index: Union[int, None]
 		):
-		"""
+		"""Reject a candidate or record whole-document No Match for this session.
+
 		:param user_id: user id
+		:type user_id: int
 		:param base_name: name of base document
+		:type base_name: str
 		:param organisation_id: organisation id of the document base
+		:type organisation_id: int
 		:param document_name: name of the document
+		:type document_name: str
 		:param document_text: text of the document
+		:type document_text: str
 		:param nugget: the Nugget that gets confirmed
-		:param start_index: start of the nugget in the document (optional) if start and end is None the nugget is not in the document
-		:param end_index: end of the nugget in the document (optional) if start and end is None the nugget is not in the document
+		:type nugget: Optional[str]
+		:param start_index: start of the nugget in the document (optional) if start and end is None
+		    the nugget is not in the document
+		:type start_index: Union[int, None]
+		:param end_index: end of the nugget in the document (optional) if start and end is None the
+		    nugget is not in the document
+		:type end_index: Union[int, None]
+		:returns: The run mapping.
+		:rtype: dict[str, object]
 		"""
 
 		document = Document(document_name, document_text)
@@ -634,12 +1090,36 @@ class DocumentBaseNoMatchForDocument(FeedbackTask):
 
 
 def _validate_feedback_span(document: Document, start_index: int, end_index: int):
+	"""Reject an invalid or empty source-text selection before constructing feedback.
+
+	:param document: The selected domain document or serialized source record.
+	:type document: Document
+	:param start_index: The inclusive Unicode code-point offset.
+	:type start_index: int
+	:param end_index: The exclusive Unicode code-point offset.
+	:type end_index: int
+	:raises ValueError: If an input fails validation for this operation.
+	"""
 	if (not isinstance(document.text, str) or type(start_index) is not int or type(end_index) is not int or
 		not 0 <= start_index < end_index <= len(document.text) or not document.text[start_index:end_index].strip()):
 		raise ValueError("Selection must be a nonempty span inside the document")
 
 
 def nugget_exist(nugget: str, document: Document, start_index: int, end_index: int):
+	"""Validate the requested source span before checking a custom candidate selection.
+
+	:param nugget: The exact selected candidate or custom candidate text.
+	:type nugget: str
+	:param document: The selected domain document or serialized source record.
+	:type document: Document
+	:param start_index: The inclusive Unicode code-point offset.
+	:type start_index: int
+	:param end_index: The exclusive Unicode code-point offset.
+	:type end_index: int
+	:returns: True when the operation or predicate succeeds; otherwise False.
+	:rtype: bool
+	:raises ValueError: If an input fails validation for this operation.
+	"""
 	_validate_feedback_span(document, start_index, end_index)
 	if not isinstance(nugget, str) or document.text[start_index:end_index] != nugget:
 		raise ValueError("Selected text does not match the document span")
@@ -651,8 +1131,21 @@ def match_feedback(
 	start_index: Optional[int] = None, end_index: Optional[int] = None,
 	not_a_match: Optional[InformationNugget] = None
 ) -> Union[NuggetMatchFeedback, CustomMatchFeedback]:
-    """
-    Generate match feedback for a nugget.
+    """Generate match feedback for a nugget.
+
+    :param nugget: The exact selected candidate or custom candidate text.
+    :type nugget: Union[str, InformationNugget]
+    :param document: The selected domain document or serialized source record.
+    :type document: Document
+    :param start_index: The inclusive Unicode code-point offset.
+    :type start_index: Optional[int]
+    :param end_index: The exclusive Unicode code-point offset.
+    :type end_index: Optional[int]
+    :param not_a_match: An optional distinct candidate explicitly rejected by the reviewer.
+    :type not_a_match: Optional[InformationNugget]
+    :returns: The match feedback result.
+    :rtype: Union[NuggetMatchFeedback, CustomMatchFeedback]
+    :raises Exception: If required worker state or a dependency is unavailable.
     """
     if isinstance(nugget, str):
         if document is None:
@@ -668,15 +1161,30 @@ def match_feedback(
     raise Exception("Invalid nugget type")
 
 def multi_match_feedback(nuggets: list[InformationNugget]):
-    """
-    Generate match feedback for multiple nuggets.
+    """Generate match feedback for multiple nuggets.
+
+    :param nuggets: The selected candidates, preserving document identity.
+    :type nuggets: list[InformationNugget]
+    :returns: The multi match feedback result.
+    :rtype: MultiNuggetsMatchFeedback
     """
     logger.debug("multi_match_feedback")
     return MultiNuggetsMatchFeedback(nuggets, None)
 
 def no_match(nugget: Union[InformationNugget, str], document: Document, start_index: Optional[int] = None, end_index: Optional[int] = None) -> NoMatchFeedback:
-    """
-    Generate no match feedback for a nugget.
+    """Generate no match feedback for a nugget.
+
+    :param nugget: The exact selected candidate or custom candidate text.
+    :type nugget: Union[InformationNugget, str]
+    :param document: The selected domain document or serialized source record.
+    :type document: Document
+    :param start_index: The inclusive Unicode code-point offset.
+    :type start_index: Optional[int]
+    :param end_index: The exclusive Unicode code-point offset.
+    :type end_index: Optional[int]
+    :returns: The no match result.
+    :rtype: NoMatchFeedback
+    :raises Exception: If required worker state or a dependency is unavailable.
     """
     if isinstance(nugget, str):
         if document is None:

@@ -1,3 +1,4 @@
+"""Backend authorization roles and fixed-lifetime signed account credentials."""
 import datetime
 import logging
 import math
@@ -11,6 +12,7 @@ logger: logging.Logger = logging.getLogger(__name__)
 
 
 class Authorisation(Enum):
+	"""Stable owner, administrator and member role values used by the web backend."""
 	Owner = 0
 	Admin = 1
 	Member = 10
@@ -22,12 +24,26 @@ if len(_jwtkey.encode("utf-8")) < 32:
 
 
 def tokenEncode(obj: dict[str, Any]):
+	"""Sign account claims with a fixed one-hour expiry using the backend signing key.
+
+	:param obj: The account claims to sign.
+	:type obj: dict[str, Any]
+	:returns: The token encode text or identifier.
+	:rtype: str
+	"""
 	now = datetime.datetime.now(datetime.timezone.utc)
 	payload = dict(obj, iat=now, exp=now + datetime.timedelta(hours=1))
 	return jwt.encode(payload, _jwtkey, algorithm="HS256")
 
 
 def tokenDecode(string: str):
+	"""Validate a backend credential and reconstruct its account identity, or return None.
+
+	:param string: The optional Bearer-prefixed backend credential.
+	:type string: str
+	:returns: The token decode result.
+	:rtype: Token | None
+	"""
 	if not isinstance(string, str) or not string.strip():
 		return None
 	string = string.strip()
@@ -49,13 +65,28 @@ def tokenDecode(string: str):
 
 
 class Token:
+	"""Validated account identity and expiry associated with a backend credential."""
 	user: str
 	id: int
 
 	def __init__(self, user: str, _id: int, exp=None):
+		"""Initialize Token with its supplied dependencies and scope.
+
+		:param user: The account username.
+		:type user: str
+		:param _id: The database ID supplied in this layer's expected representation.
+		:type _id: int
+		:param exp: The credential expiry timestamp or datetime.
+		:type exp: float | datetime.datetime | None
+		"""
 		self.user = user
 		self.id = _id
 		self.exp = exp if exp is not None else datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=1)
 
 	def json(self):
+		"""Return account claims without copying the expiry into the unsigned claim dictionary.
+
+		:returns: The serialized representation of this adapter or command.
+		:rtype: dict[str, object]
+		"""
 		return {"user": self.user, "id": self.id}

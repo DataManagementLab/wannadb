@@ -76,6 +76,12 @@ class MigrationError(RuntimeError):
 
 
 def _validate_schema(cursor):
+    """Verify the columns, keys and relationships required by the web application.
+
+    :param cursor: The transaction/query cursor owned by the caller.
+    :type cursor: psycopg2.extensions.cursor | sqlite3.Cursor
+    :raises MigrationError: Migration history or database schema validation failed.
+    """
     cursor.execute(
         """
         SELECT columns.table_name, columns.column_name, columns.udt_name,
@@ -152,7 +158,12 @@ def _validate_schema(cursor):
 
 
 def migrate():
-    """Apply pending migrations and their version records in one PostgreSQL transaction."""
+    """Apply pending migrations and their version records in one PostgreSQL transaction.
+
+    :returns: The migrate result.
+    :rtype: list[object]
+    :raises MigrationError: Migration history or database schema validation failed.
+    """
     if not all(os.environ.get(name) for name in ("DATABASE_HOST", "DATABASE_NAME", "DATABASE_USER")):
         raise MigrationError("Set DATABASE_HOST, DATABASE_NAME and DATABASE_USER before running migrations.")
 
@@ -194,6 +205,11 @@ def migrate():
 
 
 def main():
+    """Run migrations as a process entry point and return its success/failure exit code.
+
+    :returns: The resulting count, version, identifier or status code for this operation.
+    :rtype: int
+    """
     try:
         applied = migrate()
     except MigrationError as error:
