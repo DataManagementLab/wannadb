@@ -24,6 +24,7 @@ from wannadb_web.postgres.attribute_schema import AttributeSchemaConflict, edit_
 from wannadb_web.postgres.feedback_sessions import FeedbackSessionConflict, close_session, extend_session_step, load_session
 from wannadb_web.postgres.queries import get_creation_documents, get_base_id, get_feedback_outcome
 from wannadb_web.worker.data import DoAttributeRanking, MultiNuggetsMatchFeedback, ReloadDocumentBase, Signals, NoMatchFeedback, NuggetMatchFeedback, CustomMatchFeedback, SkipAttributeRanking, StopMatching
+from wannadb_web.worker.runtime import configure_torch_threads
 from wannadb_web.worker.util import State
 from wannadb_web.postgres.transactions import PublicSuggestionConflict, review_public_suggestion
 
@@ -293,9 +294,10 @@ class BaseTask(Task):
 					admission.finish(status, expected_state="STARTED")
 
 	@staticmethod
-	def load():
-		"""Initialize shared model resources lazily in the worker process.
+	def load() -> None:
+		"""Initialize CPU thread settings and model resources lazily in the worker process.
 		"""
+		configure_torch_threads()
 		from wannadb import resources
 
 		if resources.MANAGER is None:

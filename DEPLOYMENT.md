@@ -55,6 +55,34 @@ Run `docker compose up -d --build` from the backend checkout. The development fi
 
 Upload/corpus, task, session, SQL and propagation budgets are described under [Limits and expiry](ROUTES.md#limits-and-expiry). Upload request size must fit the frontend proxy, reverse proxy and API limits, including multipart overhead. Change environment settings consistently in the API and workers and recreate the affected services; changing a local environment file alone does not update a running container.
 
+## Worker CPU and concurrency settings
+
+Both Compose files default to two compute processes with four Torch intra-op threads each. The dedicated feedback worker runs one process with two intra-op threads. Inter-op threads are fixed at one in each process. The OpenMP, MKL and OpenBLAS thread budgets follow that worker's intra-op count, and tokenizer parallelism is disabled to avoid additional tokenizer pools. Compute prefetch is reduced to one per process; task acknowledgement and admission policies stay unchanged. With early acknowledgements this can still reserve an extra waiting task per process; it is not a limit of two total queued/running tasks.
+
+In the default pool, a lone compute job still uses four threads; it does not automatically borrow the idle child's thread budget. These defaults target the measured eight-vCPU server. On the same four-document subsample, two parallel four-thread jobs finished in a median 70.4 seconds, versus 84.8 seconds for two sequential eight-thread jobs (three warm pairs per setup). The first result arrived after 68.8 seconds in parallel versus 42.7 seconds sequentially. Sampled combined warm PSS was 6.43 GiB versus 4.57 GiB; PSS apportions shared pages. These measurements exclude Celery scheduling and persistence. The feedback two-thread cap is a contention policy, not a separately measured feedback optimum. Simultaneous feedback and compute work still share CPU and memory; threads are budgets rather than reserved cores. Larger bases and all three active processes were not benchmarked together.
+
+| Compose setting | Default | Purpose |
+| --- | --- | --- |
+| `WANNADB_COMPUTE_CONCURRENCY` | `2` | Number of compute prefork processes. |
+| `WANNADB_COMPUTE_THREADS` | `4` | Torch/OpenMP/MKL/OpenBLAS threads per compute process. |
+| `WANNADB_FEEDBACK_THREADS` | `2` | Torch/OpenMP/MKL/OpenBLAS threads in the single feedback process. |
+
+Set these positive integers in the shell or Compose interpolation environment (`.env` or the file supplied with `--env-file`). A service's `env_file` alone does not supply Compose interpolation. The Compose files translate them into the worker-local `WANNADB_TORCH_THREADS` setting; `WANNADB_TORCH_INTEROP_THREADS` is one. Workers apply Torch settings once per process, before model-resource imports, and reuse their models across jobs. The first model-using task logs `Worker CPU runtime configured` with the actual thread counts. The API and Celery parent register tasks without importing Torch.
+
+To prioritize one job's latency, set compute concurrency to one and compute threads to eight when recreating the workers. This trades the measured parallel throughput benefit for a faster first result. For development:
+
+```sh
+WANNADB_COMPUTE_CONCURRENCY=1 WANNADB_COMPUTE_THREADS=8 docker compose up -d --no-deps --force-recreate worker feedback-worker
+```
+
+To apply the default throughput settings, finish running jobs and feedback steps, then run from the backend checkout:
+
+```sh
+docker compose up -d --no-deps --force-recreate worker feedback-worker
+```
+
+For production use the usual `compose` helper/environment and `compose up -d --build --no-deps --force-recreate worker feedback-worker` so the changed web worker code is baked into the image. Persistent overrides must be present on subsequent recreations too. No migration or frontend update is required. Check the compute banner reports concurrency two and that the first model-using tasks log four threads on compute and two on feedback. Verify readiness and one small creation job and feedback step after rollout; those live checks belong to the operator. The code/configuration checks are local and do not establish production throughput under concurrent feedback load.
+
 ## Authentication request limits
 
 The frontend authenticates client addresses for login and registration with a dedicated `AUTH_PROXY_SECRET`. Generate it once with `openssl rand -hex 32`, place the same value in the backend environment file and the frontend `.env`, and recreate the API and frontend services so they load it. Keep it separate from the backend JWT secret and `NEXTAUTH_SECRET`. Retain it on normal deployments. The API and frontend require at least 32 UTF-8 bytes for this shared secret when signing or verifying context.

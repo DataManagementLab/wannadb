@@ -53,7 +53,14 @@ services:
             dockerfile: Dockerfile
             target: worker
         tty: true
-        command: ['python', '-m', 'celery', '-A', 'celery_app', 'worker', '-l', 'info', '--concurrency=1', '-Q', 'celery']
+        command: ['python', '-m', 'celery', '-A', 'celery_app', 'worker', '-l', 'info', '--concurrency=${WANNADB_COMPUTE_CONCURRENCY:-2}', '--prefetch-multiplier=1', '-Q', 'celery']
+        environment:
+            WANNADB_TORCH_THREADS: "${WANNADB_COMPUTE_THREADS:-4}"
+            WANNADB_TORCH_INTEROP_THREADS: "1"
+            OMP_NUM_THREADS: "${WANNADB_COMPUTE_THREADS:-4}"
+            MKL_NUM_THREADS: "${WANNADB_COMPUTE_THREADS:-4}"
+            OPENBLAS_NUM_THREADS: "${WANNADB_COMPUTE_THREADS:-4}"
+            TOKENIZERS_PARALLELISM: "false"
         env_file:
             - wannadb_web/.env/.dev
         volumes:
@@ -76,6 +83,13 @@ services:
             target: worker
         tty: true
         command: ['python', '-m', 'celery', '-A', 'celery_app', 'worker', '-l', 'info', '--concurrency=1', '--prefetch-multiplier=1', '-Q', 'feedback']
+        environment:
+            WANNADB_TORCH_THREADS: "${WANNADB_FEEDBACK_THREADS:-2}"
+            WANNADB_TORCH_INTEROP_THREADS: "1"
+            OMP_NUM_THREADS: "${WANNADB_FEEDBACK_THREADS:-2}"
+            MKL_NUM_THREADS: "${WANNADB_FEEDBACK_THREADS:-2}"
+            OPENBLAS_NUM_THREADS: "${WANNADB_FEEDBACK_THREADS:-2}"
+            TOKENIZERS_PARALLELISM: "false"
         env_file:
             - wannadb_web/.env/.dev
         volumes:
